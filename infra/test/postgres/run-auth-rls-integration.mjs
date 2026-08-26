@@ -16,7 +16,6 @@ const ids = Object.freeze({
   adminB: '10000000-0000-4000-8000-000000000002',
   attestationA: '20000000-0000-4000-8000-000000000001',
   issuerConfigA1: '30000000-0000-4000-8000-000000000001',
-  issuerConfigA2: '30000000-0000-4000-8000-000000000002',
   publishCredential: '40000000-0000-4000-8000-000000000001',
   publishKey: '50000000-0000-4000-8000-000000000001',
   serviceCredential: '40000000-0000-4000-8000-000000000002',
@@ -30,7 +29,6 @@ const ids = Object.freeze({
   rotationGroup: '60000000-0000-4000-8000-000000000001',
   rotationShortGroup: '60000000-0000-4000-8000-000000000002',
   secretRefA1: '70000000-0000-4000-8000-000000000001',
-  secretRefA2: '70000000-0000-4000-8000-000000000002',
   workspaceA: '80000000-0000-4000-8000-000000000001',
   workspaceB: '80000000-0000-4000-8000-000000000002',
 });
@@ -43,7 +41,6 @@ const material = Object.freeze({
   rotationOldVerifier: randomBytes(32).toString('hex'),
   rotationReplacementVerifier: randomBytes(32).toString('hex'),
   rotationShortReplacementVerifier: randomBytes(32).toString('hex'),
-  stableSubjectHash: randomBytes(32).toString('hex'),
 });
 
 function bytea(hex) {
@@ -62,41 +59,6 @@ SELECT auth.establish_control_workspace_context(
 );
 ${body}
 COMMIT;`;
-}
-
-function verifierContextSql(body, options = {}) {
-  const { commit = true, verifier = material.publishVerifier } = options;
-  return `BEGIN;
-SELECT * FROM auth.authenticate_publish_exchange_credential(
-  '${ids.publishKey}',
-  ${bytea(verifier)}
-);
-${body}
-${commit ? 'COMMIT' : 'ROLLBACK'};`;
-}
-
-function consumeAssertionSql({
-  audience = 'better-agent:browser-exchange',
-  expiresAt = "clock_timestamp() + interval '120 seconds'",
-  issuer = 'https://host.example/identity',
-  issuerConfigId = ids.issuerConfigA1,
-  issuedAt = "clock_timestamp() - interval '1 second'",
-  keyVersion = 1,
-  nonceHash = randomBytes(32).toString('hex'),
-  origin = 'https://app.example',
-  subjectHash = material.stableSubjectHash,
-} = {}) {
-  return `SELECT * FROM auth.consume_browser_subject_assertion(
-  '${issuerConfigId}',
-  ${sqlLiteral(issuer)},
-  ${bytea(subjectHash)},
-  ${sqlLiteral(audience)},
-  ${sqlLiteral(origin)},
-  ${keyVersion},
-  ${bytea(nonceHash)},
-  ${issuedAt},
-  ${expiresAt}
-);`;
 }
 
 function serviceCredentialSnapshotSql(expectedScopes) {
@@ -205,6 +167,7 @@ WHERE relation.relkind = 'r'
     ('search_path=pg_catalog, app, pg_temp'),
     ('search_path=pg_catalog, auth, app, pg_temp'),
     ('search_path=pg_catalog, auth, pg_temp'),
+    ('search_path=pg_catalog, public, app, pg_temp'),
     ('search_path=pg_catalog, public, auth, app, pg_temp'),
     ('search_path=pg_catalog, public, auth, pg_temp')
 )
@@ -296,14 +259,25 @@ WHERE has_schema_privilege(attacker_roles.role_oid, definer_schemas.schema_name,
     await harness.queryScalar(
       'ba_migrator_test',
       `SELECT (
-  to_regclass('public.browser_sessions') IS NULL
-  AND to_regclass('public.agent_deployment_entry_grants') IS NULL
-  AND to_regclass('public.flow_deployment_entry_grants') IS NULL
+  (
+    SELECT count(*) = 3
+    FROM pg_catalog.pg_class AS relation
+    JOIN pg_catalog.pg_namespace AS namespace
+      ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND relation.relname IN (
+        'browser_sessions',
+        'agent_deployment_entry_grants',
+        'flow_deployment_entry_grants'
+      )
+      AND relation.relrowsecurity
+      AND relation.relforcerowsecurity
+  )
   AND to_regclass('public.service_principals') IS NULL
 );`,
     ),
     't',
-    'G0-05/G0-07 facts remain absent',
+    'G0-05 typed entry/session facts use FORCE RLS while G0-07 facts remain absent',
   );
 
   assertEqual(
@@ -838,143 +812,6 @@ SELECT auth.create_api_credential(
   );
 }
 
-async function assertSubjectAssertionBoundary() {
-  assertEqual(
-    await harness.queryScalar(
-      'ba_assertion_verifier_test',
-      `SELECT verifier_config.workspace_id::text
-FROM auth.authenticate_publish_exchange_credential(
-  '${ids.publishKey}', ${bytea(material.publishVerifier)}
-) AS authenticated
-CROSS JOIN LATERAL auth.get_browser_subject_verifier_config(
-  '${ids.issuerConfigA1}'
-) AS verifier_config;`,
-    ),
-    ids.workspaceA,
-    'verifier config is workspace scoped',
-  );
-
-  const firstNonce = randomBytes(32).toString('hex');
-  await harness.psql(
-    'ba_assertion_verifier_test',
-    verifierContextSql(consumeAssertionSql({ nonceHash: firstNonce })),
-  );
-  assertEqual(
-    await harness.queryScalar(
-      'ba_bootstrap_test',
-      `SELECT count(*)::text || ':' || (
-  SELECT count(*) FROM public.browser_subject_assertion_uses
-  WHERE workspace_id = '${ids.workspaceA}'
-)::text
-FROM public.end_user_principals
-WHERE workspace_id = '${ids.workspaceA}';`,
-    ),
-    '1:1',
-    'atomic end-user mapping and assertion consumption',
-  );
-
-  await expectDatabaseRejection(
-    'ba_assertion_verifier_test',
-    verifierContextSql(consumeAssertionSql({ nonceHash: firstNonce })),
-    /nonce was already consumed|23505/u,
-    'assertion nonce replay',
-  );
-
-  const rolledBackNonce = randomBytes(32).toString('hex');
-  await harness.psql(
-    'ba_assertion_verifier_test',
-    verifierContextSql(consumeAssertionSql({ nonceHash: rolledBackNonce }), { commit: false }),
-  );
-  await harness.psql(
-    'ba_assertion_verifier_test',
-    verifierContextSql(consumeAssertionSql({ nonceHash: rolledBackNonce })),
-  );
-
-  for (const [label, overrides, pattern] of [
-    ['issuer', { issuer: 'https://evil.example/identity' }, /issuer.*rejected|42501/u],
-    ['audience', { audience: 'wrong-audience' }, /audience.*rejected|42501/u],
-    ['origin', { origin: 'https://evil.example' }, /origin.*rejected|42501/u],
-    ['key-version', { keyVersion: 2 }, /key version rejected|42501/u],
-    [
-      'expired',
-      {
-        expiresAt: "clock_timestamp() - interval '1 second'",
-        issuedAt: "clock_timestamp() - interval '2 seconds'",
-      },
-      /time window rejected|42501/u,
-    ],
-  ]) {
-    await expectDatabaseRejection(
-      'ba_assertion_verifier_test',
-      verifierContextSql(consumeAssertionSql(overrides)),
-      pattern,
-      `subject assertion ${label}`,
-    );
-  }
-
-  const concurrentNonce = randomBytes(32).toString('hex');
-  const concurrentResults = await Promise.all([
-    harness.psql(
-      'ba_assertion_verifier_test',
-      verifierContextSql(consumeAssertionSql({ nonceHash: concurrentNonce })),
-      { allowFailure: true },
-    ),
-    harness.psql(
-      'ba_assertion_verifier_test',
-      verifierContextSql(consumeAssertionSql({ nonceHash: concurrentNonce })),
-      { allowFailure: true },
-    ),
-  ]);
-  assertEqual(
-    String(concurrentResults.filter((result) => result.exitCode === 0).length),
-    '1',
-    'concurrent assertion consume winner count',
-  );
-  const rejectedConcurrent = concurrentResults.find((result) => result.exitCode !== 0);
-  if (rejectedConcurrent === undefined) {
-    throw new Error('concurrent assertion consume did not produce a replay rejection');
-  }
-  assertRejected(
-    rejectedConcurrent,
-    /nonce was already consumed|23505/u,
-    'concurrent assertion consume loser',
-  );
-
-  const principalId = await harness.queryScalar(
-    'ba_bootstrap_test',
-    `SELECT id FROM public.end_user_principals
-WHERE workspace_id = '${ids.workspaceA}' AND issuer = 'https://host.example/identity';`,
-  );
-  await harness.psql(
-    'ba_control_test',
-    controlContextSql(`SELECT auth.revoke_end_user_principal(
-  '${principalId}', 'test principal revocation'
-);
-SELECT auth.create_secret_ref(
-  '${ids.secretRefA2}', 'vault', 'better-agent/test/issuer-v2', '2',
-  'browser-subject-verification', NULL, '{"classification":"public-key"}'::jsonb
-);
-SELECT auth.create_browser_subject_issuer_config(
-  '${ids.issuerConfigA2}',
-  'https://host.example/identity',
-  'better-agent:browser-exchange',
-  '${ids.secretRefA2}',
-  2,
-  ARRAY['https://app.example']::text[],
-  300,
-  30,
-  NULL,
-  NULL
-);`),
-  );
-  await expectDatabaseRejection(
-    'ba_assertion_verifier_test',
-    verifierContextSql(consumeAssertionSql({ issuerConfigId: ids.issuerConfigA2, keyVersion: 2 })),
-    /revoked end-user principal|42501/u,
-    'issuer key/config rotation cannot bypass principal revocation',
-  );
-}
-
 async function assertAppendOnlyAndRedaction() {
   await expectDatabaseRejection(
     'ba_bootstrap_test',
@@ -982,11 +819,18 @@ async function assertAppendOnlyAndRedaction() {
     /append-only|42501/u,
     'authorization audit append-only',
   );
-  await expectDatabaseRejection(
-    'ba_bootstrap_test',
-    'DELETE FROM public.browser_subject_assertion_uses;',
-    /append-only|42501/u,
-    'assertion use append-only',
+  assertEqual(
+    await harness.queryScalar(
+      'ba_migrator_test',
+      `SELECT count(*) = 1
+FROM pg_catalog.pg_trigger AS trigger_row
+WHERE trigger_row.tgrelid = 'public.browser_subject_assertion_uses'::regclass
+  AND trigger_row.tgname = 'browser_subject_assertion_uses_append_only'
+  AND NOT trigger_row.tgisinternal
+  AND trigger_row.tgenabled <> 'D';`,
+    ),
+    't',
+    'assertion use append-only trigger remains installed behind session exchange',
   );
 
   const logs = await harness.logs();
@@ -1020,11 +864,29 @@ async function main() {
   await assertRoleSeparation(prerequisiteSql);
   await assertRuntimeAndRlsBoundary();
   await assertCredentialLifecycle();
-  await assertSubjectAssertionBoundary();
+  assertEqual(
+    await harness.queryScalar(
+      'ba_migrator_test',
+      `SELECT (
+  NOT has_function_privilege(
+    'ba_subject_assertion_verifier',
+    'auth.consume_browser_subject_assertion(uuid,text,bytea,text,text,integer,bytea,timestamptz,timestamptz)',
+    'EXECUTE'
+  )
+  AND has_function_privilege(
+    'ba_subject_assertion_verifier',
+    'auth.exchange_browser_subject_assertion_for_session(uuid,bytea,text,text,text,text,timestamptz,uuid,text,bytea,text,integer,bytea,timestamptz,timestamptz)',
+    'EXECUTE'
+  )
+);`,
+    ),
+    't',
+    'subject assertion consumption is sealed behind atomic browser-session exchange',
+  );
   await assertAppendOnlyAndRedaction();
 
   process.stdout.write(
-    `PostgreSQL 16 auth/RLS integration passed: ${migrationCount} migrations, role separation, exact definer paths, authoritative credential snapshots, same-session transaction cleanup, FORCE RLS, credential lifecycle, verifier isolation, replay safety and stable principal revocation.\n`,
+    `PostgreSQL 16 auth/RLS integration passed: ${migrationCount} migrations, role separation, exact definer paths, authoritative credential snapshots, same-session transaction cleanup, FORCE RLS, credential lifecycle, verifier isolation, and assertion consumption sealed behind atomic session exchange.\n`,
   );
 }
 

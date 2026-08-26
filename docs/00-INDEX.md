@@ -4,7 +4,7 @@ BetterYeah AI 兼容面与私有化平台的文档设计。
 
 证据基线：官方手册全站 60+ 页 + **43 篇更新日志全量**（2024-04-19 → 2026-03-05）+ 3 个产品页。
 
-> 当前阶段：竞品逆向需求基线 + HLD + 局部 LLD + G0 工程底座。2026-08-26 第四轮最终架构 Review 未发现 P0/P1，Gate A 文档冻结通过；G0-01 Monorepo/CI、G0-02 契约工具链（含严格 breaking-response 与 credential-operation-policy 基线）、G0-03 PostgreSQL 测试框架和 G0-04 tenant/auth/principal/assertion/RLS 本地可执行底座已落地。真实 PostgreSQL 16 已通过迁移生命周期与 G0-04 权限/RLS/并发攻击 harness；G0-05 Release/Deployment/typed grant/browser session 及其后续 runtime 仍未实现，G0-08 未通过前不能进入 G1，本地 DDL/API 边界不能表述为已部署能力。
+> 当前阶段：竞品逆向需求基线 + HLD + 局部 LLD + G0 工程底座。2026-08-26 第四轮最终架构 Review 未发现文档级 P0/P1，Gate A 文档冻结通过；G0-01～G0-04 已落地，G0-05 的 strict contract、release-core、003 Release/Deployment/typed grant/browser-session 数据与无公开 handler 的组合框架已实现并进入代码 Review。审查发现的 publisher 自证 hash 与 grant revoke 竞态已按 fail-closed 修复：application control role 无 content-addressed publisher 权限，direct resolver 不接受 original-Run scope，最终加锁查询重新校验授权事实。Agent compiler/closure、Run/profile、公开 HTTP、真实连接池和后续 runtime 仍未实现；G0-08 未通过前不能进入 G1，本地 DDL/API 边界不能表述为已部署能力。
 
 | 文件 | 内容 |
 |---|---|
@@ -42,6 +42,7 @@ BetterYeah AI 兼容面与私有化平台的文档设计。
 | G0-02 | OpenAPI 3.1 lint/bundle/types、响应兼容与 operation-policy baseline、不可变 runtime policy registry、领域 Zod registry；11 个 operation / 314 个本地引用通过 | 尚无产品 handler/client |
 | G0-03 | 有序 migration runner、checksum ledger、受控 rollback/reapply、隔离 Docker PG16 harness | 不连接开发/生产数据库 |
 | G0-04 | 000～002 migration、auth 包、method/route/operation 预绑定的 API auth composition boundary；真实 PG16 权限/RLS/并发/同连接复用攻击集通过 | 只到 route-bound credential phase；G0-05 typed grant/browser session 与生产脱敏证据未完成 |
+| G0-05 | strict Experience/Strategy/Agent/Flow/Deployment/session 契约、release-core、003、typed entry admission 与 atomic browser exchange；真实 PG16 publisher deny、CAS、revoke race、epoch/verifier 攻击集通过 | content publisher owner-only；Agent/Deployment 发布、Run/profile、HTTP/CORS、真实 pool/APM 和生产状态未完成 |
 
 ## 兼容性原则
 

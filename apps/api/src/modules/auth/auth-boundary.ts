@@ -4,24 +4,17 @@ import {
   type CredentialPolicyPhasePassed,
   deriveCredentialVerifier,
   evaluateCredentialPolicyPhase,
-  inspectSubjectAssertionSelector,
   parseAccessKey,
   type ReviewedServiceCredentialRoute,
   type ServiceCredentialRouteBindingInput,
-  SubjectAssertionError,
-  type SubjectAssertionTrustConfig,
-  verifySubjectAssertion,
 } from '@better-agent/auth';
 import {
-  CallerPrincipalV1Schema,
   type CredentialKindV1,
   CredentialKindV1Schema,
   type InboundCredentialScopeV1,
   InboundCredentialScopeV1Schema,
   type TenantAuthContextV1,
   TenantAuthContextV1Schema,
-  UuidV1Schema,
-  type VerifiedSubjectAssertionV1,
 } from '@better-agent/domain-contracts';
 
 export class AuthBoundaryError extends Error {
@@ -60,40 +53,18 @@ export interface AuthenticatedCredentialRecord {
   workspaceId: string;
 }
 
-export interface ConsumedSubjectAssertionRecord {
-  assertionUseId: string;
-  principalId: string;
-  workspaceId: string;
-}
-
-export interface ConsumedSubjectAssertion {
-  assertionUseId: string;
-  callerPrincipal: Extract<TenantAuthContextV1['caller_principal'], { kind: 'end_user' }>;
-  workspaceId: string;
-}
-
 export interface AuthDatabaseTransaction {
   authenticateCredential(
     keyId: string,
     verifier: Uint8Array,
   ): Promise<AuthenticatedCredentialRecord | null>;
-  consumeSubjectAssertion(
-    assertion: VerifiedSubjectAssertionV1,
-  ): Promise<ConsumedSubjectAssertionRecord>;
-}
-
-export interface SubjectAssertionTrustRegistry {
-  get(issuerConfigId: string, keyVersion: number): Promise<SubjectAssertionTrustConfig | null>;
 }
 
 export interface AuthBoundaryDependencies {
   accessKeyPepper(): Promise<Uint8Array>;
-  assertionIdentityHashKey(workspaceId: string): Promise<Uint8Array>;
-  assertionTrustRegistry: SubjectAssertionTrustRegistry;
-  now?: () => Date;
 }
 
-export interface BoundAuthenticateAccessKeyInput {
+interface ScopedAuthenticateAccessKeyInput {
   accessKey: string;
   declaredWorkspaceId: string;
   transaction: AuthDatabaseTransaction;
@@ -105,30 +76,14 @@ export interface AuthenticatedAccessKeyContext {
   tenantAuthContext: TenantAuthContextV1;
 }
 
-export interface AuthenticateAndConsumeBrowserExchangeInput {
-  accessKey: string;
-  assertion: string;
-  declaredWorkspaceId: string;
-  expectedOrigin: string;
-  transaction: AuthDatabaseTransaction;
-}
-
-export interface AuthenticatedBrowserExchangeContext {
-  exchangeCredential: AuthenticatedAccessKeyContext;
-  subject: ConsumedSubjectAssertion;
-}
-
-export interface BoundServiceCredentialAuthenticator {
+interface BoundServiceCredentialAuthenticator {
   authenticateAccessKey(
-    input: BoundAuthenticateAccessKeyInput,
+    input: ScopedAuthenticateAccessKeyInput,
   ): Promise<AuthenticatedAccessKeyContext>;
 }
 
 export interface AuthBoundary {
   bindServiceRoute(route: ServiceCredentialRouteBindingInput): BoundServiceCredentialAuthenticator;
-  authenticateAndConsumeBrowserExchange(
-    input: AuthenticateAndConsumeBrowserExchangeInput,
-  ): Promise<AuthenticatedBrowserExchangeContext>;
 }
 
 interface NormalizedCredentialRecord {
@@ -173,36 +128,9 @@ function normalizeCredentialRecord(
   };
 }
 
-function normalizeConsumedSubject(
-  record: ConsumedSubjectAssertionRecord,
-  expectedWorkspaceId: string,
-): ConsumedSubjectAssertion {
-  const prefix = 'end_user:';
-  if (!record.principalId.startsWith(prefix) || record.workspaceId !== expectedWorkspaceId) {
-    throw new AuthBoundaryError();
-  }
-  const callerPrincipal = CallerPrincipalV1Schema.safeParse({
-    end_user_principal_id: record.principalId.slice(prefix.length),
-    kind: 'end_user',
-    schema_version: 'caller-principal/1',
-  });
-  if (
-    !callerPrincipal.success ||
-    callerPrincipal.data.kind !== 'end_user' ||
-    !UuidV1Schema.safeParse(record.assertionUseId).success
-  ) {
-    throw new AuthBoundaryError();
-  }
-  return {
-    assertionUseId: record.assertionUseId,
-    callerPrincipal: callerPrincipal.data,
-    workspaceId: record.workspaceId,
-  };
-}
-
 export function createAuthBoundary(dependencies: AuthBoundaryDependencies): AuthBoundary {
   async function authenticateAccessKey(
-    input: BoundAuthenticateAccessKeyInput,
+    input: ScopedAuthenticateAccessKeyInput,
     route: ReviewedServiceCredentialRoute,
   ): Promise<AuthenticatedAccessKeyContext> {
     let parsed: ReturnType<typeof parseAccessKey>;
@@ -265,72 +193,10 @@ export function createAuthBoundary(dependencies: AuthBoundaryDependencies): Auth
     }
 
     return Object.freeze({
-      authenticateAccessKey: (input: BoundAuthenticateAccessKeyInput) =>
+      authenticateAccessKey: (input: ScopedAuthenticateAccessKeyInput) =>
         authenticateAccessKey(input, route),
     });
   }
 
-  async function verifyAndConsumeSubjectAssertion(
-    input: AuthenticateAndConsumeBrowserExchangeInput,
-    credentialContext: AuthenticatedAccessKeyContext,
-  ): Promise<ConsumedSubjectAssertion> {
-    let selector: ReturnType<typeof inspectSubjectAssertionSelector>;
-    try {
-      selector = inspectSubjectAssertionSelector(input.assertion);
-    } catch {
-      throw new AuthBoundaryError();
-    }
-
-    let trust: SubjectAssertionTrustConfig | null;
-    try {
-      trust = await dependencies.assertionTrustRegistry.get(
-        selector.issuerConfigId,
-        selector.keyVersion,
-      );
-    } catch {
-      throw new AuthBoundaryError();
-    }
-    if (trust === null || trust.workspaceId !== credentialContext.tenantAuthContext.workspace_id) {
-      throw new AuthBoundaryError();
-    }
-
-    let identityHashKey: Buffer | undefined;
-    try {
-      identityHashKey = Buffer.from(await dependencies.assertionIdentityHashKey(trust.workspaceId));
-      const verified = verifySubjectAssertion(input.assertion, trust, {
-        expectedOrigin: input.expectedOrigin,
-        workspaceIdentityHashKey: identityHashKey,
-        ...(dependencies.now === undefined ? {} : { now: dependencies.now() }),
-      });
-      const consumed = await input.transaction.consumeSubjectAssertion(verified);
-      return normalizeConsumedSubject(consumed, credentialContext.tenantAuthContext.workspace_id);
-    } catch (error) {
-      if (error instanceof AuthContextForbiddenError) throw error;
-      if (error instanceof SubjectAssertionError && error.reason === 'origin') {
-        throw new AuthContextForbiddenError('BROWSER_ORIGIN_FORBIDDEN');
-      }
-      throw new AuthBoundaryError();
-    } finally {
-      identityHashKey?.fill(0);
-    }
-  }
-
-  const browserExchangeAuthenticator = bindServiceRoute({
-    method: 'POST',
-    operationId: 'exchangeBrowserSession',
-    routeTemplate: '/v1/oapi/browser/sessions/exchange',
-  });
-
-  return {
-    bindServiceRoute,
-    async authenticateAndConsumeBrowserExchange(input) {
-      const exchangeCredential = await browserExchangeAuthenticator.authenticateAccessKey({
-        accessKey: input.accessKey,
-        declaredWorkspaceId: input.declaredWorkspaceId,
-        transaction: input.transaction,
-      });
-      const subject = await verifyAndConsumeSubjectAssertion(input, exchangeCredential);
-      return { exchangeCredential, subject };
-    },
-  };
+  return { bindServiceRoute };
 }

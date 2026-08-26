@@ -62,7 +62,7 @@ export const CallerPrincipalSchema = CallerPrincipalV1Schema;
 export type CallerPrincipalV1 = z.infer<typeof CallerPrincipalV1Schema>;
 export type CallerPrincipal = CallerPrincipalV1;
 
-const CanonicalHttpsOriginV1Schema = z.string().superRefine((value, ctx) => {
+export const CanonicalHttpsOriginV1Schema = z.string().superRefine((value, ctx) => {
   try {
     const parsed = new URL(value);
     if (

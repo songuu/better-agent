@@ -32,6 +32,9 @@ importers:
       '@better-agent/domain-contracts':
         specifier: workspace:*
         version: link:../../packages/domain-contracts
+      '@better-agent/release-core':
+        specifier: workspace:*
+        version: link:../../packages/release-core
 
   packages/api-contract:
     devDependencies:
@@ -64,6 +67,12 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
+
+  packages/release-core:
+    dependencies:
+      '@better-agent/domain-contracts':
+        specifier: workspace:*
+        version: link:../domain-contracts
 
   packages/test-support: {}
 

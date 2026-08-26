@@ -26,6 +26,9 @@ export const NonNegativeIntegerSchema = z.number().int().nonnegative();
 export const PositiveIntegerSchema = z.number().int().positive();
 export const PositiveMillisecondsSchema = z.number().int().positive();
 export const ContractHashSchema = NonEmptyStringSchema;
+export const Sha256HexV1Schema = z
+  .string()
+  .regex(/^sha256:[a-f0-9]{64}$/u, 'expected sha256 followed by 64 lowercase hex characters');
 
 export const CanonicalBindingPathV1Schema = z
   .string()

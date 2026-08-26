@@ -62,15 +62,19 @@ type FlowDeploymentChannelV1 = "service_api" | "internal_preview";
 interface FlowDeploymentRevisionV1 {
   schema_version: "flow-deployment/1";
   deployment_kind: "flow";
+  workspace_id: string;
   flow_deployment_id: string;
   flow_deployment_revision_id: string;
+  flow_id: string;
   environment: "development" | "staging" | "production";
-  channel: FlowDeploymentChannelV1;
-  flow_version_id: string;
-  policy_profile_id: string;
-  entry_grant_policy_id: string;
-  entry_scope_policy_id: string;
+  ingress_channel: FlowDeploymentChannelV1;
+  flow_version: PublishedResourcePinV1 & { published_resource_kind: "FLOW_VERSION" };
+  policy_profile: ImmutableDeploymentPolicyPinV1 & { policy_kind: "deployment_profile" };
+  entry_grant_policy: ImmutableDeploymentPolicyPinV1 & { policy_kind: "entry_grant" };
+  entry_scope_policy: ImmutableDeploymentPolicyPinV1 & { policy_kind: "entry_scope" };
   credential_mappings: FlowDeploymentCredentialMappingV1[];
+  credential_mapping_hash: string;
+  dependency_manifest_hash: string;
   change_set_hash: string;
   revision_contract_hash: string; // SHA-256(JCS(candidate revision excluding this field))
 }
@@ -80,7 +84,7 @@ interface FlowDeploymentCredentialMappingBaseV1 {
   requirement_id: string;
   provider_id: string;
   audience: string;
-  credential_policy_ref: string;
+  credential_policy: ImmutableDeploymentPolicyPinV1;
   allowed_scopes: [string, ...string[]];
   mapping_hash: string; // SHA-256(JCS(mapping excluding this field))
 }
@@ -115,6 +119,13 @@ interface FlowDeploymentSecurityStateV1 {
   revoke_epoch: number; // 单调永久 fence
 }
 
+type FlowServiceApiEntryScopeV1 =
+  | "flow:run:create"
+  | "run:read"
+  | "run:cancel"
+  | "run:resume"
+  | "run:events:read";
+
 interface FlowDeploymentEntryGrantV1 {
   schema_version: "flow-deployment-entry-grant/1";
   entry_grant_id: string;
@@ -122,10 +133,10 @@ interface FlowDeploymentEntryGrantV1 {
   credential_id: string;
   credential_kind: "service_api";
   principal_mode: "credential_service_principal";
-  audience: "flow_runtime_api";
+  entry_audience: "flow_runtime_api";
   flow_deployment_id: string;
-  channel: "service_api";
-  scope: "flow:run:create";
+  ingress_channel: "service_api";
+  scope: FlowServiceApiEntryScopeV1;
   target_cardinality: "exactly_one_flow_deployment";
   status: "ACTIVE" | "REVOKED";
   authorization_epoch: number;
@@ -134,36 +145,40 @@ interface FlowDeploymentEntryGrantV1 {
   revoked_at?: string;
 }
 
-interface FlowAdmissionProfileV1 {
-  schema_version: "flow-admission-profile/1";
+interface FlowDeploymentEntryAdmissionSnapshotV1 {
+  schema_version: "flow-deployment-entry-admission-snapshot/1";
+  deployment_kind: "flow";
+  entry_source_kind: "service_credential";
   workspace_id: string;
   flow_deployment_id: string;
   flow_deployment_revision_id: string;
   flow_deployment_revision_contract_hash: string;
-  flow_version_id: string;
+  flow_version: PublishedResourcePinV1 & { published_resource_kind: "FLOW_VERSION" };
   admission_activation_epoch: number;
   observed_revoke_epoch: number;
-  authenticated_principal_id: string;
+  authenticated_principal: CallerPrincipalV1 & { kind: "credential" };
+  credential_id: string;
+  credential_authorization_epoch: number;
+  workspace_authorization_epoch: number;
   entry_grant_id: string;
   entry_grant_authorization_epoch: number;
   entry_credential_kind: "service_api";
   entry_principal_mode: "credential_service_principal";
   entry_audience: "flow_runtime_api";
   entry_channel: "service_api";
-  entry_scope: "flow:run:create";
+  entry_scope: FlowServiceApiEntryScopeV1;
   entry_target_cardinality: "exactly_one_flow_deployment";
-  entry_scope_policy_hash: string;
+  policy_profile_contract_hash: string;
+  entry_scope_policy_contract_hash: string;
   credential_mapping_hash: string;
-  resolved_credential_binding_summaries: SafeCredentialBindingSummaryV1[];
-  capability_closure_hash: string;
-  effective_policy_hash: string;
-  profile_hash: string;
+  dependency_manifest_hash: string;
+  snapshot_hash: string;
 }
 ```
 
-- `FlowDeploymentRevisionV1` 是不可变候选物；entry scope policy 与 credential mappings 随 revision 固定并进入 `change_set_hash`，`revision_contract_hash` 则覆盖除自身外的完整 canonical candidate，并作为共享 production promotion key 的 `candidate_revision_contract_hash`。`FlowDeploymentCredentialMappingV1` 是 closed 判别 union：每个 Flow Version `CredentialRequirementV1.requirement_id` 在 revision 内恰好匹配一条 mapping，`provider_id/audience` 逐字相等，`allowed_scopes` 是非空 required-scope 子集，`principal_mode` 位于 requirement allow-set 且只与对应的 source/principal 字段组合；它只引用 caller/service/team policy，不保存 secret material。重复/缺失 requirement、错 provider/audience/principal、空 scope 或未知字段拒绝 revision。
-- `FlowDeploymentEntryGrantV1` 是独立、closed、类型化授权 source，唯一合法组合是 `service_api + credential_service_principal + flow_runtime_api + service_api + flow:run:create + exactly_one_flow_deployment`，并且 credential、grant 与稳定 Flow Deployment 必须在同一 Workspace。它不能引用 Agent Deployment、publish credential、管理 preview 身份或通用 release grant；撤销/有效期/scope 进入自己的 epoch。数据库复合约束/受限写函数与 admission parser 都必须逐字验证 credential kind、principal、audience、channel、scope、目标 Deployment kind 和 cardinality，不能只靠 OpenAPI 分支。`flow_invoke` 只是 operation purpose，不是持久化 profile。`/v1/oapi/flow/run` 按当前 credential/audience/channel/scope 的有效 grants 统计 **distinct Flow Deployment**，必须恰好一个；同一目标的重复 scope 行不构成歧义，零个拒绝、多个返回 `FLOW_TARGET_AMBIGUOUS`。
-- 公开入口按稳定 `flow_deployment_id` 在一个准入事务锁定唯一 active pointer 与 security state，明确要求 `status="ACTIVE"`，把同一锁下读取的 `revoke_epoch` 保存为 `observed_revoke_epoch`，再读取 entry grant/policy、当前主体授权和 credential/resource grant，把上述 literal grant tuple 固定进只读 `FlowAdmissionProfileV1` 并创建 Run；profile tuple 与 grant/credential 任一不一致、`SUSPENDED|REVOKED` 或 pointer/state 漂移均在 reservation/outbox 前拒绝。上述 revision、mapping、grant 和 admission profile 都是 closed、versioned schema，不能忽略未知字段或在 Agent/Flow deployment kind 之间回退。
+- `FlowDeploymentRevisionV1` 是不可变候选物；stable Flow Deployment 固定 `workspace + flow + environment + ingress_channel + public selector`，revision 的同名轴必须逐字相等，跨环境/渠道创建新 Deployment。entry scope policy 与 credential mappings 随 revision 固定并进入 hash；所有 policy ref 是同 Workspace immutable typed pin。`revision_contract_hash` 覆盖除自身外的完整 canonical candidate，并作为共享 production promotion key 的 `candidate_revision_contract_hash`。`FlowDeploymentCredentialMappingV1` 是 closed 判别 union：每个 Flow Version 的 `requirement_id` 唯一并恰好匹配一条 mapping，`provider_id/audience` 逐字相等，G0 `allowed_scopes` 与 `required_scopes` 集合精确相等，`principal_mode` 只与对应 policy kind/source/principal 字段组合；它不保存 secret material。
+- `FlowDeploymentEntryGrantV1` 是独立、closed、类型化授权 source，合法 tuple 固定 `service_api + credential_service_principal + flow_runtime_api + service_api + FlowServiceApiEntryScopeV1 + exactly_one_flow_deployment`。`flow:run:create` 用于 direct Flow 创建；四个 `run:*` scope只用于 G0-06 已固定原 Flow target 的 read/cancel/resume/events，不重新选择 Deployment。credential、grant 与 stable Flow Deployment 必须同 Workspace；它不能引用 Agent Deployment、publish credential、管理 preview 身份或通用 release grant。
+- G0-05 公开 direct Flow resolver在同一事务锁定唯一 active pointer/security state，要求 `ACTIVE` 并把同一锁下的 revoke epoch保存进只读 `FlowDeploymentEntryAdmissionSnapshotV1`；snapshot不含 Run、resolved credential、closure或effective policy。G0-06 才在 Run/reservation/outbox同事务持久化 snapshot，G1-01 再生成完整 `FlowAdmissionProfileV1`/RunPlan。四个 `original_run_only` operation 的真实 Run readback归 G0-06/G0-08；G0-05只提供 target-bound owner-private resolver seam。
 - 客户端不得直接指定 `flow_version_id`、revision、entry grant 或 credential。只有隔离的内部 preview/test 路径可用管理身份指定未激活 revision，并且不能复用生产 entry credential。
 - active pointer promotion/rollback 不影响已接受 Run；不可变 `FlowDeploymentRevisionV1` 及 mapping 只以 revision/mapping hash 固定进 Plan，没有 status/revoke epoch，不能成为第二个可变安全状态源。唯一 Deployment revoke fence 来自稳定 `FlowDeploymentSecurityStateV1`：`ACTIVE → SUSPENDED|REVOKED` 原子递增 `revoke_epoch`，`REVOKED` 不可恢复。`SUSPENDED → ACTIVE` 不回退 epoch：旧 Run 的 observed 值永久失配，新 Run 才能按新值准入。
 - Flow production activation 与 Agent 共用 [Compiled Capability Closure v1 5.4](./compiled-capability-closure-v1.md#54-agentflow-共享的-production-promotion-gate) 唯一的 `ProductionPromotionGateDecisionV1` canonical key、状态、失效和单次消费 CAS；不得另立 Flow-only approval 或只凭 EvaluationRun ID 切 pointer。G0 只允许 development/staging active pointer，production pointer 的 INSERT/UPDATE/promotion 无条件 fail closed；G1 gate 落地后，受限函数仍须逐字匹配 candidate Flow Deployment revision contract、Flow Version pin、dependency/closure/evidence hashes 与当前 expected activation epoch，并在同一事务消费 decision。

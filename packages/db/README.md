@@ -1,8 +1,9 @@
 # `@better-agent/db`
 
-Executable G0-03 migration tooling plus the reviewed G0-04 tenant/auth/RLS
-foundation. `docs/database` remains design input; only the ordered SQL copied,
-re-cut and reviewed under `migrations/` is executable.
+Executable G0-03 migration tooling plus the reviewed G0-04 tenant/auth/RLS and
+G0-05 Release/Deployment/admission foundation. `docs/database` remains design
+input; only the ordered SQL re-cut and reviewed under `migrations/` is
+executable.
 
 ## Contract
 
@@ -67,10 +68,13 @@ rejected. In one transaction it first calls the publish-only
 `auth.authenticate_publish_exchange_credential`, resolves the versioned
 verification-key/trust limits through
 `auth.get_browser_subject_verifier_config`, verifies the signature outside
-PostgreSQL, then calls
-`auth.consume_browser_subject_assertion`. The consume signature accepts issuer,
-audience, canonical origin, time window, key version, subject/nonce hashes and
-never accepts `principal_id`; nonce consumption and principal mapping are atomic.
+PostgreSQL, then calls the G0-05 atomic
+`auth.exchange_browser_subject_assertion_for_session`. The underlying assertion
+consumer is no longer executable by the verifier role on its own. The exchange
+accepts issuer, audience, canonical origin, time window, key version,
+subject/nonce hashes and a derived session verifier, but never accepts
+`principal_id`, Deployment or revision authority; nonce consumption, typed
+target resolution and public/private session inserts share one transaction.
 The verifier-config row includes `workspace_id`, maximum TTL and clock skew so
 the adapter can select the workspace-scoped identity HMAC key without trusting
 an assertion-supplied tenant identifier.
@@ -106,7 +110,10 @@ auth.authenticate_publish_exchange_credential(uuid,bytea)
       credential_scopes text[], credential_authorization_epoch bigint,
       workspace_authorization_epoch bigint)
 auth.get_browser_subject_verifier_config(uuid)
-auth.consume_browser_subject_assertion(uuid,text,bytea,text,text,integer,bytea,timestamptz,timestamptz)
+auth.exchange_browser_subject_assertion_for_session(
+  uuid,bytea,text,text,text,text,timestamptz,uuid,text,bytea,
+  text,integer,bytea,timestamptz,timestamptz
+)
 ```
 
 The presented API/control verifier remains bearer-equivalent. Drivers must use
@@ -114,9 +121,46 @@ binary never-log parameters, and production admission must independently prove
 PostgreSQL, pooler, APM, error and support-export parameter redaction. The SQL
 schema cannot prove that deployment configuration by itself.
 
-Browser-session storage, Deployment entry grants/cardinality, business Release
-DDL, G0-07 phase roles, runtime handlers and production deployment are not part
-of this package state yet.
+## G0-05 Release and Deployment boundary
+
+`003_release_deployment.up.sql` adds append-only typed resource roots/Drafts,
+Strategy/Agent/Flow/Experience Releases, the canonical full-pin registry and
+derived dependency/requirement/handle projections. It also adds immutable
+policy versions, stable Agent/Flow Deployment axes, immutable revisions and
+credential mappings, separate CAS active pointers, monotonic security epochs,
+typed entry grants, promotion audit, and safe/public plus verifier/private
+browser-session facts.
+
+Draft append, stable Deployment creation, typed grant create/revoke, pointer
+promotion and security transitions are available only through fixed-kind
+`app.*` functions to `ba_control_executor`. Content-addressed publisher
+functions physically exist for the typed persistence schema, but remain
+executable only by the NOLOGIN `ba_authorization_owner`: the control role cannot
+self-assert a document, dependency-manifest, compiler or change-set hash. They
+must not be granted to an executable application role until a DB-verifiable
+compiler/preimage attestation is implemented. The disposable integration
+harness temporarily grants them only to seed downstream fixtures and revokes
+every grant before completion.
+
+`ba_runtime` receives only Agent/Flow service admission and browser-session
+authentication functions; the subject verifier receives only atomic browser
+exchange. Direct selector-based admission accepts only new-entry scopes
+(`agent:conversation:*`, `agent:run:create`, `flow:run:create`). Original-Run
+read/cancel/resume/events scopes remain reserved for a G0-06 resolver that starts
+from the persisted Run target. Admission locks and rechecks credential, grant,
+pointer and security facts after concurrent waits, returns a hashable snapshot,
+and deliberately does not create Run rows or compute a second SQL canonical
+hash. `@better-agent/release-core` validates/JCS-hashes prepared commands and API
+snapshots, but its output is not a database authorization credential.
+
+Production pointer promotion and activation fail closed. Reviewed schema down
+to `002` succeeds only while every G0-05 table and invalidation source is empty;
+after any durable fact, recovery is forward-only and business rollback uses
+pointer CAS plus audit.
+
+G0-06 Run/profile persistence, G0-07 phase roles, public HTTP handlers,
+production pools/APM/CORS and deployed infrastructure remain outside this
+package's verified state.
 
 Use only the documented discrete libpq environment variables (`PGHOST`,
 `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGPORT`, the supported `PGSSL*` variables
@@ -132,5 +176,6 @@ node packages/db/dist/cli.js down --to 0 --allow-down
 ```
 
 The integration harness under `infra/test/postgres` is the evidence path for an
-empty database, a second idempotent apply, checksum tamper rejection, reviewed
-rollback and the no-down fail-closed boundary.
+empty database, idempotent apply, checksum tamper rejection, empty G0-05
+down/reapply, FORCE RLS/ACL attacks, typed admission and browser exchange. It is
+local disposable PostgreSQL evidence only, not production-state evidence.

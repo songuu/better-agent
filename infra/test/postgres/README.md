@@ -12,13 +12,28 @@ management-issuer and subject-verifier logins.
 pnpm --filter @better-agent/db test:integration
 ```
 
-Each run owns a unique Compose project and executes both suites:
+Each run owns a unique Compose project and executes three suites serially:
 
 - `run-integration.mjs` proves the migration engine/version/ledger lifecycle;
 - `run-auth-rls-integration.mjs` applies the ordered G0-04 migrations as the
   non-superuser migrator and exercises role separation, exact definer
   `search_path` policy, FORCE RLS, signed transaction context, credential
   lifecycle, verifier isolation, assertion replay and append-only audit.
+- `run-release-deployment-integration.mjs` applies the G0-05 migration to a
+  fresh PostgreSQL 16 database and proves table ownership/FORCE RLS, function
+  ACL separation and default control-role publisher denial. To build downstream
+  fixtures it grants the owner-only publishers inside this disposable database,
+  exercises typed Draft-to-Release publication and Flow Deployment revision
+  assembly, then revokes and independently reads back every temporary grant.
+  It also verifies every executable platform role is denied the publisher helper,
+  proves Agent Conversation scope parity, activation CAS, production fail-closed behavior, a two-connection
+  grant-revoke race, selector-based original-Run-scope denial, typed service
+  admission, raw-DML denial, the non-empty rollback guard and secret-log
+  redaction. It also runs the browser Agent Release/Experience/Deployment path,
+  atomically exchanges a subject assertion for a session and checks the
+  public/private projection, correct/wrong verifier behavior and Deployment
+  revoke-epoch fence. Browser token issuance remains an API-layer concern and
+  is not claimed by this database harness.
 
 The auth/RLS suite also authenticates, commits, starts the next transaction and
 checks an empty context, then repeats the check after rollback—all through one

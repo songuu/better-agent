@@ -7,6 +7,15 @@ export class AuthenticationInputError extends Error {
   }
 }
 
+export class BrowserSessionTokenError extends Error {
+  readonly code = 'BROWSER_SESSION_TOKEN_INVALID';
+
+  constructor() {
+    super('browser session token input is invalid');
+    this.name = 'BrowserSessionTokenError';
+  }
+}
+
 export class AuthorizationBoundaryError extends Error {
   readonly code = 'AUTHORIZATION_CREDENTIAL_PHASE_REJECTED';
 

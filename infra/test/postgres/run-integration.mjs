@@ -208,6 +208,45 @@ VALUES (0, '${platformMigration.name}', '${platformMigration.checksum}', NULL);`
     'rollback ledger',
   );
 
+  await harness.psql(
+    'ba_migrator_test',
+    renderDownMigrationSql(migrations, 2, { allowDown: true }),
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_migrator_test',
+      `SELECT (
+  to_regclass('public.published_resource_versions') IS NULL
+  AND to_regclass('public.agent_deployments') IS NULL
+  AND to_regclass('auth.browser_session_auth_index') IS NULL
+);`,
+    ),
+    't',
+    'empty G0-05 reviewed rollback removes its catalog',
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_migrator_test',
+      'SELECT count(*) FROM better_agent_migrations.schema_migrations;',
+    ),
+    '3',
+    'G0-05 rollback ledger',
+  );
+
+  await harness.psql('ba_migrator_test', renderUpMigrationSql(migrations));
+  assertEqual(
+    await harness.queryScalar(
+      'ba_migrator_test',
+      `SELECT (
+  to_regclass('public.published_resource_versions') IS NOT NULL
+  AND to_regclass('public.agent_deployments') IS NOT NULL
+  AND to_regclass('auth.browser_session_auth_index') IS NOT NULL
+);`,
+    ),
+    't',
+    'G0-05 reapply restores its catalog',
+  );
+
   let failedClosed = false;
   try {
     renderDownMigrationSql(migrations, -1, { allowDown: true });

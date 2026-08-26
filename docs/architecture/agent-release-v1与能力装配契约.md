@@ -348,18 +348,45 @@ G0/G1 的 `PublishedResourcePin` 只允许 `binding_mode="pinned"`；`floating_l
 ```ts
 interface ExperienceReleaseV1 {
   schema_version: "experience-release/1";
+  experience_id: string;
   experience_release_id: string;
   compatible_agent_id: string;
-  content: ExperienceConfig;
-  required_binding_contracts: {
+  source_draft_revision_id: string;
+  opening_message?: string;
+  recommended_questions: string[];
+  quick_entries: {
+    quick_entry_id: string;
+    label: string;
     public_handle: string;
     operation_contract_hash: string;
     input_schema_hash: string;
+    default_inputs: Record<string, JSONValue>;
   }[];
   content_hash: string;
 }
 
 type AgentDeploymentChannelV1 = "browser" | "service_api" | "internal_preview";
+
+interface ImmutableDeploymentPolicyPinV1 {
+  schema_version: "deployment-policy-pin/1";
+  workspace_id: string;
+  policy_kind:
+    | "deployment_profile" | "entry_grant" | "entry_scope"
+    | "oauth_delegation" | "service_principal" | "team_credential";
+  policy_id: string;
+  policy_version_id: string;
+  contract_hash: string;
+}
+
+interface AgentDeploymentStableV1 {
+  schema_version: "agent-deployment-stable/1";
+  workspace_id: string;
+  agent_deployment_id: string;
+  agent_id: string;
+  public_selector: string;
+  environment: "development" | "staging" | "production";
+  ingress_channel: AgentDeploymentChannelV1;
+}
 
 interface AgentDeploymentCredentialMappingBaseV1 {
   schema_version: "agent-deployment-credential-mapping/1";
@@ -367,7 +394,7 @@ interface AgentDeploymentCredentialMappingBaseV1 {
   provider_id: string;
   audience: string;
   allowed_scopes: [string, ...string[]];
-  credential_policy_ref: string;
+  credential_policy: ImmutableDeploymentPolicyPinV1;
   mapping_hash: string; // SHA-256(JCS(mapping excluding this field))
 }
 
@@ -415,16 +442,16 @@ type AgentDeploymentEntryGrantV1 = AgentDeploymentEntryGrantBaseV1 & (
   | {
       credential_kind: "publish";
       principal_mode: "issuer_asserted_end_user";
-      audience: "browser_session_exchange";
-      channel: "browser";
+      entry_audience: "browser_session_exchange";
+      ingress_channel: "browser";
       scope: "browser-session:exchange";
       target_cardinality: "exactly_one_agent_deployment";
     }
   | {
       credential_kind: "service_api";
       principal_mode: "credential_service_principal";
-      audience: "agent_runtime_api";
-      channel: "service_api";
+      entry_audience: "agent_runtime_api";
+      ingress_channel: "service_api";
       scope: AgentServiceApiEntryScopeV1;
       target_cardinality: "exactly_one_agent_deployment";
     }
@@ -433,17 +460,24 @@ type AgentDeploymentEntryGrantV1 = AgentDeploymentEntryGrantBaseV1 & (
 interface AgentDeploymentRevisionV1 {
   schema_version: "agent-deployment/1";
   deployment_kind: "agent";
+  workspace_id: string;
   agent_deployment_id: string;
-  deployment_revision_id: string;
+  agent_deployment_revision_id: string;
+  agent_id: string;
   environment: "development" | "staging" | "production";
-  channel: AgentDeploymentChannelV1;
-  agent_release_id: string;
-  experience_release_id: string;
-  policy_profile_id: string;
+  ingress_channel: AgentDeploymentChannelV1;
+  agent_release: PublishedResourcePinV1 & { published_resource_kind: "AGENT_RELEASE" };
+  experience_release: PublishedResourcePinV1 & { published_resource_kind: "EXPERIENCE_RELEASE" };
+  policy_profile: ImmutableDeploymentPolicyPinV1 & { policy_kind: "deployment_profile" };
   credential_mappings: AgentDeploymentCredentialMappingV1[];
-  entry_grant_policy_id: string;
-  entry_scope_policy_id: string;
+  credential_mapping_hash: string;
+  entry_grant_policy: ImmutableDeploymentPolicyPinV1 & { policy_kind: "entry_grant" };
+  entry_scope_policy: ImmutableDeploymentPolicyPinV1 & { policy_kind: "entry_scope" };
+  allowed_origins?: string[]; // 仅 browser；RFC 6454 canonical HTTPS origin
+  browser_client_channels?: ("WEB_SDK" | "DINGTALK_WEB")[]; // 仅 browser
+  session_token_audience?: "agent_browser_api"; // 仅 browser
   conversation_contract_hash: string;
+  dependency_manifest_hash: string;
   change_set_hash: string;
   revision_contract_hash: string; // SHA-256(JCS(candidate revision excluding this field))
 }
@@ -461,8 +495,13 @@ interface AgentDeploymentSecurityStateV1 {
 }
 ```
 
-- Experience Release 只能通过公开 handle/schema 描述快捷入口，不持有 secret、内部 Resource Pin 或扩权信息；`required_binding_contracts` 的 canonical 内容必须进入 Experience `content_hash`。创建 Deployment revision 时，publisher 必须把每个 `required_binding_contracts[]` 与目标 Agent Release 的唯一 `public_capability_handles[]` 按 `public_handle + operation_contract_hash + input_schema_hash` 精确匹配；缺失、重复、schema 漂移或指向未启用 Binding 都拒绝。公共 handle 不得由客户端解析成内部 ID，入口触发后仍只能走完整 Plan/授权路径。
-- `AgentDeploymentCredentialMappingV1` 是 closed 判别 union：每个 Release `CredentialRequirementV1.requirement_id` 在 revision 内必须恰好匹配一条 mapping；`provider_id/audience` 必须逐字相等，`allowed_scopes` 必须是非空的 `required_scopes` 子集，`principal_mode` 必须在 requirement allow-set 内，且只允许与其对应的 `credential_source_kind`/主体字段组合。重复/缺失 requirement、未知字段、空 scope、错 provider/audience/principal 组合均拒绝 revision。mapping 只引用策略，不保存原始 credential；无凭据能力必须省略 requirement，不得用伪造的 `none` mapping 满足非空需求，也不得把用户委托静默降级为共享凭据。
+G0-05 的机器输出是 `AgentDeploymentEntryAdmissionSnapshotV1`，不是完整 Run profile。它是 `service_credential | browser_session` 的 closed 判别 union，只保存同一事务锁定的 authenticated principal、literal entry source、唯一 stable Deployment、active revision 与 Agent/Experience full pins、Workspace/credential/grant/session observed epoch、`admission_activation_epoch`、`observed_revoke_epoch`、policy/mapping/dependency hash 与 `snapshot_hash`。它明确禁止 `run_id`、credential material、resolved credential binding、effective policy、closure meet 和 ResolvedPlan。G0-06 才把 snapshot 与 Run/reservation/outbox 同事务持久化；G1-01 再把它与 closure/policy meet 合成为 effective AdmissionProfile/ResolvedAgentPlan。
+
+`publish` grant 只用于 exchange，撤销它只阻止新 session；exchange 成功后，后续 browser admission 的 typed source 是 `browser_sessions` 本身。session 固定 stable Deployment、end-user principal、`WEB_SDK|DINGTALK_WEB` client channel、canonical origin、`agent_browser_api` audience、principal `session_epoch` 与 Deployment observed revoke epoch；任一当前 epoch 失配都永久 fence 旧 session。原 assertion audience、entry audience 与 session token audience 是三个不同字段，不能混用。
+
+- Experience Release 只能通过公开 handle/schema 描述快捷入口，不持有 secret、内部 Resource Pin 或扩权信息；`quick_entries` 的 `public_handle + operation_contract_hash + input_schema_hash` canonical 投影必须进入 Experience `content_hash`。创建 Deployment revision 时，publisher 必须把每个 quick entry 与目标 Agent Release 的唯一 `public_capability_handles[]` 三元组精确匹配，并确认 Binding enabled；缺失、重复、schema 漂移或指向未启用 Binding 都拒绝。公共 handle 不得由客户端解析成内部 ID，入口触发后仍只能走完整 Plan/授权路径。
+- `AgentDeploymentCredentialMappingV1` 是 closed 判别 union：`requirement_id` 在一个 Release 内唯一，每个启用 requirement 在 revision 内必须恰好匹配一条 mapping；`provider_id/audience` 必须逐字相等，G0 的 `allowed_scopes` 必须与 `required_scopes` 集合精确相等，`principal_mode` 必须在 requirement allow-set 内，且只允许与其对应的 `credential_source_kind`/immutable policy pin/主体字段组合。重复/缺失 requirement、未知字段、空/额外/缺少 scope、错 provider/audience/principal 组合均拒绝 revision。mapping 只引用 immutable policy version，不保存原始 credential；无凭据能力必须省略 requirement，不得用伪造的 `none` mapping 满足非空需求，也不得把用户委托静默降级为共享凭据。
+- stable Agent Deployment 固定 `workspace + agent + environment + ingress_channel + public_selector`；revision 的同名轴必须逐字相等，跨环境或渠道必须创建新 Deployment。browser revision 必须同时给出非空 canonical exact-origin allowlist、非空 client-channel allowlist 与固定 `agent_browser_api` token audience；service/internal revision 禁止这些 browser-only 字段。所有 policy ref 使用同 Workspace immutable typed pin，裸 text ID 不得进入 revision。
 - `conversation_contract_hash` 由 canonical 的会话输入变量 schema、允许的 session-state key/value schema 与 history/context serialization ABI 计算，不包含 Prompt 文案、模型、Knowledge generation 或 Capability pin。新建 Conversation 固定当前 active revision 的该 hash；后续**每个未命中幂等事实的新 Chat Run 准入**只有在当前 active revision 的 hash 相等时才可继续，因此同一 Conversation 可以安全跨 Agent Release，但不能被新版本静默按另一套状态结构解释。顺序固定为认证/结构规范化 → 查询并重放 canonical idempotency receipt → 仅 miss 时解析 active revision 并比较 hash → 创建 Run/reservation/outbox。G1 不做自动会话迁移；不相等时在任何副作用前返回 `409 CONVERSATION_REVISION_INCOMPATIBLE`，调用方必须创建新 Conversation。
 - Deployment revision 是无可变激活状态的不可变候选物；`revision_contract_hash` 覆盖除自身外的完整 canonical candidate，并作为共享 production promotion key 的 `candidate_revision_contract_hash`。“已创建 revision”不等于“已上线”。稳定 `agent_deployment_id` 的独立 active pointer 是 Agent 公开入口的唯一激活事实源，promotion/rollback 以带 `activation_epoch` 的条件更新切换它，并在同一事务写 promotion audit。`activation_epoch` 只防止并发提升丢失更新并留下准入审计；它不是运行中授权 epoch。旧 revision 永久保留最小依赖摘要。`AgentReleaseV1` 不保存可变 `evaluation_gate/pass` 字段；suite、policy、evidence 与审批状态只存在于候选 revision 对应的共享 production promotion key/decision，避免 Release 与 Deployment 各自成为上线事实源。
 - `AgentDeploymentEntryGrantV1` 也是 closed 判别 union，并只绑定稳定 `agent_deployment_id`、不绑定 revision。合法组合只有：`publish + issuer_asserted_end_user + browser_session_exchange + browser + browser-session:exchange`，或 `service_api + credential_service_principal + agent_runtime_api + service_api + AgentServiceApiEntryScopeV1`；管理 preview 身份不写入该 grant。数据库复合约束/受限写函数与 admission parser 必须同时逐字验证 credential kind、principal、audience、channel、scope 和目标 Deployment kind，未知值或交叉组合 fail closed，不能仅靠 API 分支。OpenAPI 的 `deployment_publish|agent_invoke` 只是 operation purpose，不是持久化 profile。每次入口按当前 credential、audience、channel 与所需 scope 统计有效 grant 指向的 **distinct Agent Deployment**，必须恰好一个；同一 Deployment 的多条 scope 行不构成多目标，零个拒绝，多个返回 target ambiguous。准入事务随后原子读取 active pointer 并固定 `deployment_revision_id`。promotion 后 credential 默认继续有效但受新 revision 的入口策略重新检查。若将来需要 revision-specific token，必须定义另一种 credential kind，不能复用 publish token。

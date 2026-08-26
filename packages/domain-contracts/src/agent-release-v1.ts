@@ -564,6 +564,18 @@ export const AgentReleaseV1Schema = z
         'capability binding ids must be unique within a release',
       );
     }
+    const credentialRequirementIds = release.capability_bindings.flatMap((binding) =>
+      binding.credential_requirement === undefined
+        ? []
+        : [binding.credential_requirement.requirement_id],
+    );
+    if (!hasUniqueStrings(credentialRequirementIds)) {
+      addCustomIssue(
+        ctx,
+        ['capability_bindings'],
+        'credential requirement ids must be unique across capability bindings',
+      );
+    }
     if (!hasUniqueBy(release.instruction_skill_bindings, (binding) => binding.binding_id)) {
       addCustomIssue(
         ctx,

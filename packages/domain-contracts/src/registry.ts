@@ -1,6 +1,15 @@
 import type { z } from 'zod';
 
 import {
+  AgentDeploymentActivePointerV1Schema,
+  AgentDeploymentCredentialMappingV1Schema,
+  AgentDeploymentEntryAdmissionSnapshotV1Schema,
+  AgentDeploymentEntryGrantV1Schema,
+  AgentDeploymentRevisionV1Schema,
+  AgentDeploymentSecurityStateV1Schema,
+  AgentDeploymentV1Schema,
+} from './agent-deployment-v1.js';
+import {
   AgentGateSpecV1Schema,
   AgentReleaseV1Schema,
   AsyncChildPolicyV1Schema,
@@ -15,6 +24,7 @@ import {
   SubagentBindingConfigV1Schema,
   SubagentContextProjectionV1Schema,
 } from './agent-release-v1.js';
+import { AgentStrategyReleaseV1Schema } from './agent-strategy-release-v1.js';
 import {
   StrategyCheckpointV1Schema,
   StrategyGateRequestV1Schema,
@@ -26,12 +36,24 @@ import {
   TenantAuthContextV1Schema,
   VerifiedSubjectAssertionV1Schema,
 } from './auth-v1.js';
+import { BrowserSessionMetadataV1Schema } from './browser-session-v1.js';
 import {
   CompiledCapabilityClosureV1Schema,
   CompiledGateSpecEntryV1Schema,
   ProductionPromotionGateDecisionV1Schema,
   ProductionPromotionGateKeyV1Schema,
 } from './compiled-capability-closure-v1.js';
+import { ImmutableDeploymentPolicyPinV1Schema } from './deployment-common-v1.js';
+import { ExperienceReleaseV1Schema } from './experience-release-v1.js';
+import {
+  FlowDeploymentActivePointerV1Schema,
+  FlowDeploymentCredentialMappingV1Schema,
+  FlowDeploymentEntryAdmissionSnapshotV1Schema,
+  FlowDeploymentEntryGrantV1Schema,
+  FlowDeploymentRevisionV1Schema,
+  FlowDeploymentSecurityStateV1Schema,
+  FlowDeploymentV1Schema,
+} from './flow-deployment-v1.js';
 import { FlowGateSpecV1Schema, FlowIrV1Schema } from './flow-ir-v1.js';
 
 export type DomainContractErrorCode =
@@ -161,6 +183,54 @@ export const domainContractSchemaEntries = [
     schema: CredentialOperationPolicyV1Schema,
   },
   { schemaVersion: 'agent-release/1', schema: AgentReleaseV1Schema },
+  { schemaVersion: 'agent-strategy-release/1', schema: AgentStrategyReleaseV1Schema },
+  { schemaVersion: 'experience-release/1', schema: ExperienceReleaseV1Schema },
+  { schemaVersion: 'deployment-policy-pin/1', schema: ImmutableDeploymentPolicyPinV1Schema },
+  { schemaVersion: 'agent-deployment-stable/1', schema: AgentDeploymentV1Schema },
+  { schemaVersion: 'agent-deployment/1', schema: AgentDeploymentRevisionV1Schema },
+  {
+    schemaVersion: 'agent-deployment-credential-mapping/1',
+    schema: AgentDeploymentCredentialMappingV1Schema,
+  },
+  {
+    schemaVersion: 'agent-deployment-entry-grant/1',
+    schema: AgentDeploymentEntryGrantV1Schema,
+  },
+  {
+    schemaVersion: 'agent-deployment-active-pointer/1',
+    schema: AgentDeploymentActivePointerV1Schema,
+  },
+  {
+    schemaVersion: 'agent-deployment-security-state/1',
+    schema: AgentDeploymentSecurityStateV1Schema,
+  },
+  {
+    schemaVersion: 'agent-deployment-entry-admission-snapshot/1',
+    schema: AgentDeploymentEntryAdmissionSnapshotV1Schema,
+  },
+  { schemaVersion: 'flow-deployment-stable/1', schema: FlowDeploymentV1Schema },
+  { schemaVersion: 'flow-deployment/1', schema: FlowDeploymentRevisionV1Schema },
+  {
+    schemaVersion: 'flow-deployment-credential-mapping/1',
+    schema: FlowDeploymentCredentialMappingV1Schema,
+  },
+  {
+    schemaVersion: 'flow-deployment-entry-grant/1',
+    schema: FlowDeploymentEntryGrantV1Schema,
+  },
+  {
+    schemaVersion: 'flow-deployment-active-pointer/1',
+    schema: FlowDeploymentActivePointerV1Schema,
+  },
+  {
+    schemaVersion: 'flow-deployment-security-state/1',
+    schema: FlowDeploymentSecurityStateV1Schema,
+  },
+  {
+    schemaVersion: 'flow-deployment-entry-admission-snapshot/1',
+    schema: FlowDeploymentEntryAdmissionSnapshotV1Schema,
+  },
+  { schemaVersion: 'browser-session-metadata/1', schema: BrowserSessionMetadataV1Schema },
   { schemaVersion: 'agent-human-gate/1', schema: AgentGateSpecV1Schema },
   {
     schemaVersion: 'public-capability-handle/1',

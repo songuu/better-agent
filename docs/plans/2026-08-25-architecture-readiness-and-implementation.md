@@ -1,6 +1,6 @@
 ---
 type: sprint
-status: completed
+status: active
 created: 2026-08-25
 mode: auto
 ---
@@ -13,7 +13,7 @@ mode: auto
 
 ## 当前阶段
 
-`g0-04-implemented-locally`（第四轮最终架构 Review 未发现 P0/P1；Gate A 文档冻结通过；G0-01～G0-04 本地底座已落地，下一依赖项为 G0-05；G0-08 未通过前不得进入 G1）
+`g0-05-plan-complete`（G0-05 的契约、pure core、003 migration、组合边界与真实 PostgreSQL 16 验收已形成依赖有序的 L4 计划；下一步按 TDD 进入 Work；G0-08 未通过前不得进入 G1）
 
 ## Think：范围与产品边界
 
@@ -502,3 +502,251 @@ G1-01..06 ──> G1-07 evaluation/promotion ──> G1-08 vertical E2E gate
 - 公开 HTTP handler、SSE/browser projection、Agent/Flow/Knowledge/Database/Plugin/Skill/SubAgent runtime、Run/计费以及 G0-07 phase executor 均尚未实现。
 - 未执行生产部署，也未验证真实连接池、PostgreSQL 驱动 binary bind、APM、错误采集和支持导出链路对 bearer-equivalent verifier 的脱敏；本地 harness 通过不能替代这些部署证据。
 - Gate B / G0-08 仍为硬阻断；下一实现切片严格按依赖进入 G0-05，不提前创建 G1 handler/executor。
+
+## 2026-08-26 G0-05 Think：实施边界与安全默认决策
+
+### 结论
+
+G0-05 可以进入 Plan，但不能照旧把“完整 per-Run admission profile”和所有 OpenAPI purpose 一次性实现。本轮先关闭会迫使实现自行发明安全语义的接缝，再搭建 Release / Deployment / typed grant / browser-session 事实层。所有决策均为仓库内、可回滚改动，不涉及生产或外部状态。
+
+### 要做
+
+- 建立只允许存在 kind-specific schema、源表和受限 publisher 的 `published_resource_versions`，以及 append-only Draft、事务级 assembly/seal、不可变 Release/Version/Experience、dependency manifest；不得接受通用 opaque JSON 直接冒充已发布资源。
+- 为 Agent 与 Flow 分别建立稳定 Deployment、不可变 revision、active pointer、独立 security state/revoke epoch、credential mapping、typed entry grant、promotion audit 和事务内 admission resolver。
+- 建立 browser session 的公开安全元数据与 `auth` 私有 verifier 投影，以及 assertion consume → publish grant cardinality → ACTIVE Deployment 锁定 → session 创建的单事务 primitive。
+- 在领域契约、数据库和无公开路由的 API composition seam 中同步冻结 closed/versioned DTO、错误边界、hash 与 epoch 语义，并用真实 PostgreSQL 16 攻击夹具验证。
+
+### 不做
+
+- 不创建 Run、Conversation、reservation、billing、outbox、HumanGate、SSE/events cookie 或公开 HTTP handler；不为“per-Run”语义创建孤立 profile/假 Run 表。
+- 不实现 closure canonicalizer、policy meet、ResolvedPlan、Agent/Flow compiler/executor、Knowledge、Database、Plugin/MCP、Instruction Skill、Strategy 或 SubAgent runtime。
+- 不实现 production promotion decision/CAS、public preview token、匿名 browser session、URL secret、`floating_latest` 或 credential material 解析/回退。
+- 不把静态 schema、纯函数测试或本地生成物升级为真实数据库、客户端、部署或生产证据。
+
+### 已冻结的实现接缝
+
+1. **G0 snapshot 与 G1 profile 分层。** G0-05 定义并返回 closed `AgentDeploymentEntryAdmissionSnapshotV1` / `FlowDeploymentEntryAdmissionSnapshotV1`，只含认证主体、literal entry tuple、唯一稳定 Deployment、active revision/Release pins、activation audit epoch、observed revoke epoch、grant/credential/Workspace epoch 与 revision/policy/mapping hash。G0-06 才在创建 Run/reservation/outbox 的同一事务持久化它；G1-01 再把 snapshot 与 closure、credential resolution 和 policy meet 合成为 effective AdmissionProfile/ResolvedPlan。
+2. **原 Run operation 分期且 Agent/Flow 对称。** Flow service entry scope 扩展为 `flow:run:create | run:read | run:cancel | run:resume | run:events:read`；原 Run 操作不重新选择目标，只按 G0-06 固定的 target kind/Deployment 检查当前同类型 grant/scope/epoch。G0-05 验证 direct Agent/Flow resolver 与 target-bound resolver 接口，G0-06/G0-08 才用真实 Run 证明四个 `original_run_only` purpose。
+3. **Browser session 是独立 typed source。** `publish` entry grant 只允许 exchange 并只阻止新的 exchange；成功后以 `browser_sessions` 作为 browser bearer 的准入源。稳定 Agent Deployment 固定公开 selector、environment 与 ingress channel，browser revision 固定 canonical exact-origin allowlist、允许的 `WEB_SDK|DINGTALK_WEB` client channels 和 token audience `agent_browser_api`。entry audience、assertion audience、session audience 使用不同字段。session 保存 principal 当前 `session_epoch` 与 Deployment `observed_revoke_epoch`；任一当前值失配都永久 fence 旧 session。
+4. **Browser token 不可读。** 内部 token profile 固定为 `bs1.<uuid>.<32-byte random secret>`；应用层使用独立 pepper 计算 32-byte HMAC verifier，数据库只在 `auth` 私有投影保存 verifier，TTL 不超过 900 秒。assertion 原文、token、secret、verifier 不进入公开表、审计、日志、trace 或错误。
+5. **稳定 Deployment 轴不可漂移。** stable Deployment 固定 `workspace + kind + environment + ingress channel + stable Agent/Flow identity`；revision 中同名判别字段必须与 stable row 相等，跨环境或渠道必须创建新 Deployment。`policy_profile`、`entry_grant_policy`、`entry_scope_policy` 与 mapping credential policy 全部使用 workspace-scoped immutable typed policy pin（ID + version + kind + contract hash），禁止裸 text ID。
+6. **Release/Experience/mapping closed semantics。** G0 最小 Experience 只包含开场白、推荐问题与 quick entries；Agent Release 的 `public_handle + operation_contract_hash + input_schema_hash` 是权威映射，Deployment publisher 必须再验证 binding enabled 且三元组逐字一致。`requirement_id` 在一个 Release/Version 内唯一，每个启用 requirement 恰好一条 mapping；G0 的 `allowed_scopes` 必须与 `required_scopes` 精确相等，缺失、额外或静默 delegated→shared 回退均拒绝。
+7. **唯一可变授权 source。** authorization source vocabulary 加入稳定 Agent/Flow Deployment 与两类 entry grant；不可变 revision、active pointer 与 activation epoch 只作 pin/准入审计，不进入逐 Call revoke source。通用 Release grant 仅允许隔离的 SYSTEM 内部用途，不能替代 Agent/Flow typed entry grant。
+
+### 可观察的成功标准
+
+1. **WHEN** publisher 从 Draft 创建 Release/Experience/Deployment revision，**THE SYSTEM SHALL** 在一个受控事务中校验 kind、Workspace、typed dependency、策略 pin、credential requirement/mapping 与 public handle 三元组后 seal；Draft 不可准入，sealed assembly 及 registry/manifest 不可新增、修改或删除。
+2. **WHEN** G0-04 credential proof 请求 direct Agent/Flow operation，**THE SYSTEM SHALL** 在一个事务按 exact kind + literal scope + typed grant + distinct stable Deployment cardinality 锁定 ACTIVE pointer/security state并返回可重算 snapshot；零/多目标、wrong-kind、cross-workspace、过期/撤销、非 ACTIVE 或 tuple/hash 不一致均在任何 Run 副作用前失败。
+3. **WHEN** control actor promotion/rollback 或变更 Deployment security state，**THE SYSTEM SHALL** 以 expected activation epoch CAS 切 pointer并同写 audit，production 在 G0 数据库级拒绝；SUSPENDED/REVOKED 阻止新准入，恢复 ACTIVE 不回退 epoch，REVOKED 永不可恢复。
+4. **WHEN** browser exchange 成功，**THE SYSTEM SHALL** 同事务消费唯一 assertion、验证 publish grant/公开 selector/client channel/exact origin/audience/ACTIVE Deployment、创建唯一短期 session并只存私有 HMAC verifier；重放 assertion、错 Deployment/origin/audience/principal epoch、过期/撤销 session 或旧 Deployment epoch全部拒绝。
+5. **WHEN** G0-05 完成，**THE SYSTEM SHALL** 通过 strict TypeScript contract/纯核心性质测试、迁移重放与 rollback、真实 PostgreSQL 16 RLS/角色/并发/临时表/不可变/epoch/session 攻击 harness、独立只读 SQL readback及全仓 `pnpm check`；G0-06/G1/G0-08 证据仍单独标记未实现。
+
+### 风险、假设与待验证
+
+- 风险等级为 L4；003 migration 涉及不可变事实、RLS、授权 epoch、一次性 assertion 与 bearer-equivalent verifier，实施按“契约 → pure core → migration/control functions → service composition → PG16 attack harness”分段，每段先红测。
+- 复用现有 `ba_control_executor`、`ba_runtime`、`ba_subject_assertion_verifier` 与 NOLOGIN owner；不提前创建 G0-07 phase-executor roles。003 需扩展 authorization invalidation 的 closed source vocabulary，并保持普通角色无 verifier/原始 DML 权限。
+- migration 文件遵循仓库 loader，命名为 `003_release_deployment.up.sql`；现有 G0-04 harness 中“G0-05 表不存在”的阶段断言必须改为对应的安全存在性断言。
+- browser bearer 的公开 HTTP/CORS 行为与 events cookie 仍归 G1-06；G0-05 只验证 token primitive 与 transaction adapter，不宣称浏览器 E2E 已通过。
+
+### 下一步
+
+进入 Plan Phase，把 G0-05 拆成可独立验证的 contract、release-core、003 schema/control/admission/session、API composition 与 PostgreSQL 16 攻击任务；无开放产品决策阻断自动推进。
+
+## 2026-08-26 G0-05 Plan：Release / Deployment / Admission 基础框架
+
+### 方案概述与关键取舍
+
+- 采用五层单向依赖：规范与 strict domain contracts → deterministic `release-core` / browser token primitive → 003 数据事实与受限函数 → 无公开路由的 API composition → PostgreSQL 16 攻击门。高风险共享契约全部串行，不标 `[P]`。
+- 发布数据库只保存经过 kind-specific parser 的 canonical document、归一化安全关系与完整 pin；未来资源 kind 可以保留在 closed enum，但对应 schema/source/writer 未实现前不能插入 registry。
+- G0 admission resolver 返回 transaction-bound snapshot，不保存 Run/profile 行；DB 锁与 cardinality 是授权事实，TypeScript 只验证输入/输出契约和重算 hash，不能产生可伪造的 `authorized=true`。
+- Browser bearer 密码学归 `packages/auth`，Release/Deployment 装配与 canonical hash 归 `packages/release-core`；公开 safe session metadata 与私有 verifier 分表。
+- 003 提供 reviewed down migration，但只允许无 G0-05 事实、无后续依赖的预发布回退；一旦有数据或 004 依赖，只允许 forward-fix。产品 rollback 通过 immutable revision pointer CAS，不通过删表或改写 Release。
+
+### Before / After 契约与消费者
+
+| 边界 | Before | After | 直接消费者与一致性门 |
+|---|---|---|---|
+| Domain contracts | 只有 Agent Release、Flow IR、G0-04 auth；缺 Experience/Deployment/session/snapshot | closed/versioned Experience、Strategy Release、policy pin、Agent/Flow Deployment/mapping/grant/state/snapshot、browser safe metadata | `release-core`、003、API seam、G0-06；registry/strict-union tests |
+| Published resource | kind enum 存在，但无物理 registry/publisher | kind-specific source + full canonical pin + derived dependency manifest + transaction assembly/seal | DB composite FK/trigger、release-core prepared command、PG readback |
+| Admission | 只到 branded `credential_phase_passed` | DB 再证明 typed grant、distinct target、ACTIVE pointer/state并返回 hashable G0 snapshot | API deployment seam；G0-06 持久化；G1-01 policy meet |
+| Browser exchange | assertion 可单独 consume，不签 session | assertion consume、publish target、origin/channel/audience与 session public/private rows 原子提交 | auth token primitive、API exchange adapter、PG concurrency/replay tests |
+| Deployment safety | 无物理 pointer/revoke source/policy pin | stable axis、immutable revision、CAS pointer、独立 monotonic revoke epoch、immutable typed policy pin | direct admission、后续 Call fence、promotion/security audit |
+| 派生文件/投影 | domain registry、workspace lock、DB integration chain 不含 G0-05 | schema registry/export、new workspace importer、migration checksum/down checksum、PG suite chain同步 | `pnpm workspace:smoke`、registry tests、migration replay/checksum、`pnpm check` |
+
+### T1 — 规范回写与 G0-05 closed machine contracts
+
+- **目标：** 把 Think 已冻结的 snapshot/profile 分层、Flow 原 Run scopes、stable Deployment 轴、origin/client-channel/session audience、immutable policy pin、Experience 和 epoch source 写入规范，并以 Zod strict union 成为机器契约。
+- **文件集合：** `docs/architecture/agent-release-v1与能力装配契约.md`、`docs/architecture/flow-ir-v1与运行时契约.md`、`docs/05-数据模型.md`、`docs/adr/003-多租户与凭据模型.md`；新增 `packages/domain-contracts/src/{experience-release-v1,agent-strategy-release-v1,deployment-common-v1,agent-deployment-v1,flow-deployment-v1,browser-session-v1}.ts`；修改 `packages/domain-contracts/src/{primitives,index,registry}.ts`、`packages/domain-contracts/README.md`；新增 `packages/domain-contracts/test/g0-05-*.test.ts` 并更新 registry tests。
+- **依赖：** G0-05 Think 完成。
+- **风险：** L4（公开入口授权、跨阶段 ABI 与不可变身份）。
+- **先红测：** 未注册/未知 schema version、unknown field、wrong kind、Agent/Flow snapshot/grant 互换、mapping 判别字段串用、重复 requirement/handle/scope、allowed/required scopes 不等、cross-workspace policy pin、stable environment/channel 漂移、非 canonical origin、非法 client channel/audience/TTL、snapshot 含 Run/secret/closure effective facts。
+- **完成证据：** domain-contracts test/typecheck/build 全绿；规范与机器字段逐项一致；registry 只登记本轮已实现 schema，不把 future kind 变成可写 publisher。
+
+### T2 — 唯一 RFC 8785/JCS hash profile 与 pure release-core
+
+- **目标：** 新建无数据库/网络副作用的 `@better-agent/release-core`，提供 RFC 8785/JCS canonical bytes、SHA-256 profile、输入不可变校验和 typed errors。
+- **文件集合：** 新增 `packages/release-core/{package.json,tsconfig.json,tsconfig.build.json,vitest.config.ts}`、`packages/release-core/src/{errors,canonical-json,hash,index}.ts`、`packages/release-core/test/canonical-json.test.ts`；修改 `pnpm-lock.yaml`。
+- **依赖：** T1。
+- **风险：** L3（所有不可变 identity/hash 的共同底座）。
+- **先红测：** 对象键序不同但 canonical bytes/digest 相同；只有显式 set normalizer 可以排序数组；hash 字段从自身 preimage 排除；非有限数、`undefined`、稀疏数组、非 plain object、unpaired surrogate 全部拒绝；RFC 8785 golden vectors 与独立预计算 digest 逐字一致；不修改 caller object。
+- **完成证据：** `release-core` test/typecheck/build 全绿；固定 canonical bytes 与 `sha256:<64 lowercase hex>` digest 可读回；不存在第二套默认 JSON serializer 作为 release identity。
+
+### T3 — kind-safe publish、Experience 与 Deployment 纯装配
+
+- **目标：** 生成 DB publisher 可消费的 frozen prepared command，并在数据库前关闭 kind、dependency、public handle、credential mapping 和 hash 漂移。
+- **文件集合：** 新增 `packages/release-core/src/{publishable-resource,dependency-manifest,experience,credential-mapping,deployment,admission-snapshot}.ts`、相应 `packages/release-core/test/*.test.ts`，修改 `packages/release-core/src/index.ts`。
+- **依赖：** T2。
+- **风险：** L4。
+- **先红测：** Draft 直接 publish、declared kind/payload 不一致、未实现 future kind、cross-workspace pin、自由 dependency manifest、handle 缺失/重复/disabled/operation/input hash 漂移、Strategy pin 未注册、zero/multi mapping、额外/缺少 scope、wrong policy kind/provider/audience/principal fallback、Agent/Experience 不兼容、stable axis/revision/mapping/snapshot hash 篡改、activation epoch 冒充 revoke epoch。
+- **完成证据：** 同一语义输入产生相同 full pin/manifest/revision/snapshot hash；parser map 仅开放 `AGENT_STRATEGY_RELEASE|AGENT_RELEASE|FLOW_VERSION|EXPERIENCE_RELEASE|DEPLOYMENT_REVISION` 的本轮 typed path；prepared command 深冻结且无 secret/裸 locator/Run/effective policy。
+
+### T4 — `bs1` browser-session token primitive
+
+- **目标：** 在认证边界实现一次显示、不可自描述的短期 bearer token 格式与 domain-separated verifier。
+- **文件集合：** 新增 `packages/auth/src/browser-session-token.ts`、`packages/auth/test/browser-session-token.test.ts`；修改 `packages/auth/src/{errors,index}.ts`。
+- **依赖：** T1；为保持 L4 串行，在 T3 后执行。
+- **风险：** L4（bearer-equivalent secret）。
+- **先红测：** wrong version/UUID、31/33-byte secret、padding/非 canonical base64url、弱 pepper、Access-Key/session domain collision、异常回显 token、非 32-byte verifier；调用结束后 secret/verifier 未清零的 adapter fixture。
+- **完成证据：** token 固定 `bs1.<uuid>.<43-char base64url>`；HMAC domain 固定 `better-agent/browser-session-verifier/1\0`；auth test/typecheck/build 全绿，错误/DTO/log fixture 不含 bearer material。
+
+### T5 — 003 Release/Deployment 数据事实、控制面与准入函数
+
+- **目标：** 以一个 production migration 建立 kind-safe registry、事务 assembly/seal、Agent/Flow/Strategy/Experience、stable Deployment/revision/policy pin/mapping/grant/pointer/security/audit、browser session public/private facts和受限 mutation/admission primitive。
+- **文件集合：** 新增 `packages/db/migrations/003_release_deployment.{up,down}.sql`；修改 `packages/db/README.md`；按需要新增/修改 `packages/db/test/*release-deployment*.test.ts`，但不改写 000～002 已发布 migration。
+- **依赖：** T3、T4。
+- **风险：** L4（数据迁移、RLS、授权、bearer verifier、并发 CAS）。
+- **物理分组：**
+  1. append-only stable identity/Draft 与 Agent Strategy/Agent/Flow/Experience typed Release source；
+  2. `published_resource_versions` full pin、typed registration 与 derived dependency manifest；
+  3. private transaction-bound assembly token + commit-time sealed gate，Release child/handle/requirement seal 后全不可变；
+  4. immutable deployment policy version/pin、Agent/Flow stable Deployment/security/revision/mapping；
+  5. separate active pointer/promotion audit 与 Agent/Flow typed entry grant；
+  6. public `browser_sessions` safe metadata + private `auth.browser_session_auth_index` verifier projection；
+  7. expanded authorization invalidation source vocabulary、FORCE RLS、immutable/revoke triggers和 fixed-search-path definer functions。
+- **受限函数：** control-only draft/assembly/publish/create-revision/grant/revoke/pointer CAS/security transition/session revoke；runtime-only Agent/Flow direct/target-bound admission resolver；verifier-only atomic browser exchange；runtime-only constant-time browser session authentication。函数只从 signed transaction context/locked rows派生 Workspace、credential、principal、target/revision，不接受调用方 principal/revision/authority ID。每次合法 security transition恰好递增 revoke epoch；production pointer无条件拒绝。
+- **先红测：** raw DML、unsealed commit、sealed mutation、wrong kind/workspace/full pin、floating、manifest/handle/requirement/mapping drift、System/future registry旁路、grant tuple/kind/scope/cardinality、zero/multi target、expired/revoked、非 ACTIVE、production、lost-update CAS、pointer/audit半提交、revoke回活、old epoch；browser wrong role/selector/channel/origin/audience/TTL/HMAC、nonce并发重放、private verifier读取、principal/deployment epoch漂移与 temp-table/search-path 攻击。
+- **完成证据：** migration loader/render unit tests；所有新增 tenant 表 direct Workspace + composite candidate key + ENABLE/FORCE RLS；所有 definer 固定安全 path/最窄 EXECUTE；普通角色无表 DML/verifier读取；独立 SQL readback能重算 registry/manifest/pointer/audit/snapshot epoch。
+
+### T6 — Release/Deployment/API 无公开路由的组合边界
+
+- **目标：** 将 kind-specific prepared command、G0-04 branded credential proof、DB admission result与 browser token/exchange 串成不可绕过的 transaction adapter；保持 HTTP router、Run 与 G1 runtime 不存在。
+- **文件集合：** 新增 `apps/api/src/modules/releases/{release-boundary,index}.ts`、`apps/api/src/modules/deployments/{deployment-boundary,browser-session-boundary,index}.ts`、相应 `apps/api/test/{release-boundary,deployment-boundary,browser-session-boundary}.test.ts`；修改 `apps/api/package.json`、`apps/api/src/modules/auth/{auth-boundary,index}.ts`、`apps/api/test/auth-boundary.test.ts`、`packages/auth`/`release-core` workspace dependencies与 `pnpm-lock.yaml`。
+- **依赖：** T5。
+- **风险：** L4。
+- **先红测：** forged/non-issued credential proof、operation→Agent/Flow grant family替换、请求选择 target/revision/grant、DB snapshot wrong kind/hash/epoch、认证与 admission 使用不同 transaction、browser 仅 consume assertion 未建 session、token/pepper/verified assertion 泄漏、失败未清零、重复 exchange、generic DB error泄露候选资源。
+- **完成证据：** bound service route只能得到 `credential_phase_passed` 后调用对应 DB resolver；exchange 在同一 transaction method中消费 assertion并创建 session且只返回一次 raw token；对外只暴露 safe DTO/typed error，不导出 router/handler；API/auth/release-core test/typecheck/build 全绿。
+
+### T7 — PostgreSQL 16 migration/attack/readback gate
+
+- **目标：** 在固定 disposable PostgreSQL 16 环境证明 003 的迁移恢复、角色/RLS、immutable assembly、typed admission、promotion/revoke与 browser session 并发安全。
+- **文件集合：** 新增 `infra/test/postgres/run-release-deployment-integration.mjs`；修改 `infra/test/postgres/{run-integration,run-auth-rls-integration}.mjs`、`packages/db/package.json`、`infra/test/postgres/README.md`。G0-04 suite 仅把“G0-05 表不存在”替换为“G0-05 对 G0-04 低权角色不可旁路”，仍断言 G0-06/G0-07 不存在。
+- **依赖：** T5、T6。
+- **风险：** L4。
+- **测试矩阵：** fresh 000～003、checksum/replay、空事实 down→002→reapply、seed 后 down fail closed且 ledger/事实不变；assembly/registry/manifest/handle/mapping；Agent/Flow grant/cardinality/direct/target-bound snapshot；concurrent pointer CAS、production拒绝、security epoch/revoke；assertion+session并发一胜、wrong origin/channel/audience/HMAC/TTL、expiry/revoke/principal/deployment epoch；跨租户、角色组合、列级 verifier隔离、temp shadow、安全 search path、容器日志 secret 零命中。
+- **完成证据：** `pnpm --filter @better-agent/db test:integration` 与根 `pnpm db:test:postgres16` 在固定 PG16.12/pgvector 0.8.1/pgcrypto 1.3 镜像全绿；分别用 control/runtime/assertion-verifier/独立 catalog readback证明权限与事实；报告只声明本地 disposable PG16，不声明生产 pool/APM/HTTP/CORS。
+
+### T8 — 组合质量门与 Review 入口
+
+- **目标：** 证明所有 projection 同步、无阶段越界，并把实际证据回写为 Review 输入。
+- **文件集合：** 本轮全部修改文件与本计划；只做必要修复，不提交、不推送。
+- **依赖：** T1～T7。
+- **风险：** L3。
+- **完成证据：** 最窄包测试 → API/DB 集成 → `pnpm check` → `pnpm db:test:postgres16` → `git diff --check`；检索确认无公开 handler/Run/ResolvedPlan/production gate/floating latest/URL secret；Review 按 findings-first 独立核对授权、数据库和 API 三个面。
+
+### 测试策略与停止条件
+
+1. 每个任务先提交/运行能稳定失败的最窄红测，再实现到绿；不以同一实现逻辑生成 expected hash/SQL readback。
+2. TypeScript schema/pure core每次改动先跑包级 test/typecheck；跨包后跑 build/workspace smoke；migration后跑真实 PG16，而不是用静态 SQL parser替代。
+3. 任一以下情况立即停在 Work 修复，不进入 Review：existing migration 被改写；unsealed/opaque/future kind 可进入 registry；直接 DML或 verifier可读；zero/multi target可准入；production可激活；assertion可只消费不建 session；old revoke/session epoch可恢复；token/assertion出现在日志或错误。
+4. 真实 PG16 harness 若被环境 `spawn EPERM` 阻断，先保留包级证据并改走已批准的直接命令；仍失败则明确标为环境阻塞，不能把静态测试升级为 DB 通过。
+
+### 回滚、恢复与未知项
+
+- 003 up 由既有 renderer 包裹在单事务、advisory lock与 checksum guard中，失败自动回到完整 002。reviewed down只允许无 G0-05 事实、无新 invalidation、无后续 FK依赖；否则 SQLSTATE `55000` fail closed。
+- 有数据后的业务回滚只用 expected activation epoch 把非生产 pointer切回既有 immutable revision并写 audit；security epoch只增不减，REVOKED 不恢复。
+- 未知但不阻断本轮：真实驱动 binary bind/连接池 transaction affinity、APM/错误采集参数脱敏、公开 Browser Origin/CORS、G0-06 Run/profile原子持久化、G1 closure/policy meet与 production decision。它们必须分别在部署门、G0-06、G0-08/G1 验证，不能由本地 core/PG16证据代替。
+
+### 下一可执行动作
+
+进入 Work，从 T1 的文档/strict schema 红测开始，按 T1→T8 顺序推进；每完成一层立即运行其最窄验证并保留证据边界。
+
+## 2026-08-26 G0-05 Work：已实现框架与 Review 输入
+
+### 已实现
+
+- **T1：** Experience、Strategy Release、Agent/Flow Deployment、policy pin、typed entry grant、admission snapshot 与 browser-session strict contracts 已登记到 domain registry；规范同步冻结 stable Deployment 轴、origin/channel/audience、epoch source 和 G0 snapshot/G1 profile 分层。
+- **T2～T3：** 新增 `@better-agent/release-core`，统一 RFC 8785/JCS canonical bytes、SHA-256、dependency manifest、kind-safe prepared publish、Experience、credential mapping、Deployment revision 与 snapshot 校验。Review 后只有 Strategy/Flow/Experience 可生成发布命令；Agent Release 与 Deployment Revision 在 compiler/closure/conversation/change-set 前像尚未权威化时 fail closed，future dependency kind 也不能进入物理 registry manifest。
+- **T4：** 新增 `bs1.<uuid>.<32-byte-secret>` browser token primitive 和 domain-separated HMAC verifier；API 成功与失败路径均尽力清零可变 secret/verifier/pepper buffer。
+- **T5：** `003_release_deployment` 已建立 typed Draft/Release registry、Strategy/Agent/Flow/Experience、immutable policy、Agent/Flow stable Deployment/revision/mapping/pointer/security/audit/grant、browser session 公私投影，以及 control/runtime/verifier 最小权限函数。所有新增租户表直属 Workspace、composite FK、`ENABLE + FORCE RLS`；低权可执行角色无直接表 DML 或 verifier 读取。Review 后 content-addressed publisher 保持 NOLOGIN owner-only，control role 在 DB-verifiable attestation 到位前无执行权限。
+- **T6：** API 只保留无 router/handler 的内部 composition seam：factory-owned transaction 中串联 credential+Agent/Flow admission，以及单个原子数据库 exchange 的 browser-session 签发；Release/Deployment package export 已暂停，旧的 consume-only assertion API seam 已删除。
+- **T7：** 新增第三套 PG16 攻击夹具并串入 `@better-agent/db#test:integration`，覆盖 Draft→Release、Flow/Agent Deployment、CAS、production 拒绝、typed admission、原子 assertion→session、正确/错误 verifier、revoke-epoch fence、RLS/ACL、raw DML、非空 down guard 和 secret-log 边界。
+
+### 实施中的安全收敛
+
+- 原计划的“private assembly token”收敛为 kind-specific 原子 publisher：typed source、registry、manifest 和 child projection 在同一数据库函数/事务完成，提交前不存在可被准入的不完整中间态；registry typed-source trigger、composite FK 与 immutable trigger构成持久化 seal。未新增可泄漏或可重放的 assembly bearer。
+- 不实现脱离 Run 的 caller-selected target-bound resolver。direct service resolver 已落地；原 Run read/cancel/resume/events 必须等 G0-06 用已持久化 Run target 调用，否则会把 Deployment 选择权错误交给请求方。
+- 真实 PG16 迭代修复了临时 schema ownership、typed registry source、`current_api_credential_id` definer ACL、行锁最小列权限，以及 pre-context `FOR SHARE` 需要 UPDATE RLS 可见性的缺陷。最终采用 NOLOGIN auth owner 的 lock-only policy：`USING (true) WITH CHECK (false)`，只允许锁事实，不允许无上下文改写。
+
+### 已验证证据
+
+- `pnpm check`：7 个 workspace 的 format、lint、workspace smoke、OpenAPI/response baseline、typecheck、unit test 与 build 全部通过；Review 后最终计数为 domain contracts 23、release-core 33、auth 48、API 27、DB 22 passed + 1 skipped。
+- `pnpm db:test:postgres16`：在 disposable PostgreSQL 16.12、pgvector 0.8.1、pgcrypto 1.3 上三套 suite 全绿；覆盖 4 个生产 migration 的重放/checksum/受审空库 down→002→reapply、默认 publisher deny/临时夹具授权回收、grant revoke 双连接竞态、original-Run scope 拒绝，以及非空 003 down `55000` fail-closed 且事实/ledger 不变。
+- 静态阶段检索确认新 composition/core/migration 不含公开 router/handler、`ResolvedAgentPlan`、`floating_latest`、`authorized=true` 或 URL secret；`git diff --check` 作为进入 Review 前的最后门单独执行。
+
+### 仍未实现或未验证
+
+- Knowledge、Database、Plugin/MCP、Instruction Skill、Strategy 执行与 SubAgent runtime 仍只有架构 pin；没有 publisher/compiler/executor，不能作为已运行能力声明。
+- 没有 Run/profile 持久化、Conversation、reservation/billing、outbox、HumanGate、SSE/events cookie、公开 HTTP/CORS handler 或 G1 executor；G0-05 snapshot 不是最终授权结论。
+- 未连接生产数据库，未验证真实 PostgreSQL 驱动 binary bind、连接池 transaction affinity、APM/support-export 脱敏、客户端或云端部署。当前证据只属于仓库本地代码和 disposable PostgreSQL。
+
+### 下一可执行动作
+
+Work 门完成后进入 findings-first Review，独立核对数据库授权面、API composition 和阶段边界；Review 无 P0/P1 后再决定 sprint 收口，不提交、不推送。
+
+## 2026-08-26 G0-05 Review：P1 收敛记录
+
+### 独立审查发现
+
+- **发布内容身份：** Agent Release 的 `compiled_hash`/`capability_closure_hash`、Deployment 的 conversation/change-set hash 仍只有格式，没有可核验前像；SQL publisher 也会信任 prepared command 中调用方提交的 document/manifest hash。若把这些函数授予共享 control role，调用方可永久 seal 自证内容身份。
+- **准入竞态：** Agent/Flow/browser resolver 先无锁收集 ACTIVE grant，再按 id 加锁；最终查询原先未重验 grant lifecycle/window，READ COMMITTED 下 concurrent revoke 可在等待后返回已撤销 grant 的新 admission。
+- **目标语义：** selector-based resolver 原先接受 `run:read/cancel/resume/events`，但没有 persisted Run id 与原始 Deployment/revision pin，未来复用会把历史 Run 错绑到当前 pointer。
+- **契约漂移：** SQL grant/resolver 原先使用 `conversation:write/read`，而 domain/OpenAPI/auth policy 使用 `agent:conversation:write/read`，导致合法 Conversation route 无法创建 grant 或完成 admission。
+- **API 组合：** 外部 DTO 可携带 transaction 或 registry pins；provider-owned Buffer 被边界清零；内部 Release/Deployment authority adapter 被 package export。三者都会破坏事务所有权、权威数据来源或后续调用稳定性。
+
+### Fail-closed 修复
+
+- `preparePublishedResource` 暂停 Agent Release 与 Deployment Revision，直到 compiler/closure/conversation/change-set 前像成为权威输入；dependency kind 必须属于当前物理 registry writer allowlist；Agent capability binding 的 credential `requirement_id` 全局唯一。
+- 003 仍保留 typed publisher 物理函数和 schema 约束，但所有 content-addressed publisher 只归 NOLOGIN owner，默认不授予 `ba_control_executor`。PG harness 仅在 disposable fixture 内临时授权，完成下游测试后逐函数撤销并独立 readback。
+- Agent/Flow/browser 最终锁定查询重新校验 credential/grant kind、scope、tuple、status 与时间窗；direct resolver 只接受新入口 scope，original-Run scope 等 G0-06 persisted-target resolver。
+- Agent Conversation scope 在 SQL table check、resolver、domain/OpenAPI/auth policy 中统一为 `agent:conversation:write/read`；API seam 与真实 PG service Deployment 均有同值 readback。
+- Release/Deployment/browser 外部 DTO 不再接受 transaction；factory `withTransaction(callback)` 统一持有同一 transaction。provider key/pepper 只复制并清理局部 Buffer，调用方拥有的 source 不被修改；Release/Deployment package export 暂停。Release registry pins 必须由同一数据库 transaction 读取，不能由请求方提交。
+
+### 新增回归证据
+
+- 领域/纯核心：重复 credential requirement、paused Agent/Deployment publication、future physical dependency kind 均先红后绿。
+- 迁移静态门：control grant block 不含任何 content publisher；Agent/Flow direct resolver 不含 original-Run scope。
+- PostgreSQL 16：默认 control publisher 调用 `42501`；测试授权后完整 fixture 可执行且最终 ACL 全部回到 deny；双连接 revoke 在 resolver 最终加锁前提交时，准入失败；target-bound Run scope 拒绝；secret-log 扫描仍为零命中。
+
+Review 只有在 API 权威 registry-pin 修复、全仓质量门与完整 PG16 suite 再次通过且独立复核无剩余 P0/P1 后才可进入 Compound/sprint close。
+
+## 2026-08-26 G0-05 Compound：证据筛选与 no-op
+
+### 已验证事实
+
+- 最终独立 Review 为 P0 `0`、P1 `0`；`pnpm check`、`pnpm db:test:postgres16` 与 `git diff --check` 均已通过。本轮证据只覆盖仓库本地代码与 disposable PostgreSQL 16，不覆盖生产或客户端。
+- “content-addressed publisher 不能信任调用方自证 hash/manifest，应在权威前像与数据库可验证 attestation 就绪前保持 owner-only”已写入本计划 Review 记录、003 migration 权限注释与 PG ACL readback。
+- “READ COMMITTED 准入必须在最终锁定后重验 grant/credential lifecycle；original-Run scope 必须绑定已持久化 Run target，不能复用 selector resolver”已写入本计划 Review 记录与双连接 revoke-race/target-bound 拒绝夹具。
+- 当前仓库没有 `docs/solutions/`，也没有 `scripts/sync-solution-index.js`；因此不存在可安全更新并验证的 canonical solution index。
+
+### 推断与未知项
+
+- 上述两种模式具有跨项目复用价值，但当前计划、代码注释和攻击夹具已经包含根因、修复与预防证据；仅为本次 Compound 新建一套 solution-index 基础设施会扩大 G0-05 范围，暂无新增价值。
+- 是否要把这些模式提升为跨项目 solution 或行为学习候选，需要后续明确启用仓库 solution infrastructure 或单独授权持久化学习；本轮不写 Codex memory/homunculus，不提出、批准或提升行为学习候选。
+
+### Compound 结果
+
+Solution index: unchanged 0 entries -> docs/solutions/index.jsonl; Claude projection: unchanged; AGENTS projection: disabled
+
+Learning candidates: proposed 0; needs-review 0; evaluated 0; shadow 0; approve/promote: not run
+
+G0-05 的 Think、Plan、Work、Review 与 Compound 均已闭环；下一切片是 G0-06 Run/profile 原子持久化，必须作为新 Sprint 重新进入 Think，不能从本地 G0-05 证据推断其已实现。
