@@ -1,0 +1,22 @@
+openapi: 3.1.0
+info:
+  title: Local anchor fixture
+  version: 1.0.0
+paths:
+  /widgets:
+    get:
+      operationId: listAnchoredWidgets
+      responses:
+        '200':
+          description: Anchored widgets
+          content:
+            application/json:
+              schema:
+                $ref: '#WidgetList'
+components:
+  schemas:
+    WidgetList:
+      $anchor: WidgetList
+      type: array
+      items:
+        type: string

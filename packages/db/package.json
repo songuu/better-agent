@@ -1,0 +1,26 @@
+{
+  "name": "@better-agent/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fail-closed PostgreSQL migration tooling for better-agent",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json --pretty false --stopBuildOnErrors",
+    "lint": "biome lint src test vitest.config.ts",
+    "migrate": "node dist/cli.js up",
+    "test": "vitest run --config vitest.config.ts --configLoader native",
+    "test:integration": "pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
+  }
+}

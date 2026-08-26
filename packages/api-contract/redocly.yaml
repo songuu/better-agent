@@ -1,0 +1,16 @@
+extends:
+  - spec
+rules:
+  no-invalid-media-type-examples: error
+  no-invalid-parameter-examples: error
+  no-invalid-schema-examples: error
+  no-unresolved-refs: error
+  operation-operationId: error
+  operation-operationId-unique: error
+  operation-parameters-unique: error
+  path-declaration-must-exist: error
+  path-parameters-defined: error
+  # x-sse-event-schema deliberately carries a local schema pointer; our preflight
+  # resolves every local $ref, including vendor extensions, before Redocly lint.
+  spec-strict-refs: off
+  struct: error

@@ -1,0 +1,27 @@
+{
+  "name": "@better-agent/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Better Agent contract-first API composition root",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    "./auth": {
+      "types": "./dist/modules/auth/index.d.ts",
+      "import": "./dist/modules/auth/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json --pretty false --stopBuildOnErrors",
+    "lint": "biome lint src test vitest.config.ts",
+    "test": "vitest run --config vitest.config.ts --configLoader native",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@better-agent/auth": "workspace:*",
+    "@better-agent/domain-contracts": "workspace:*"
+  }
+}

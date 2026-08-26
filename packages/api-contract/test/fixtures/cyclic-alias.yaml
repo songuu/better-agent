@@ -1,0 +1,17 @@
+openapi: 3.1.0
+info:
+  title: Cyclic alias fixture
+  version: 1.0.0
+paths:
+  /widgets:
+    get:
+      operationId: listCyclicWidgets
+      responses:
+        '200':
+          description: Cyclic widgets
+          content:
+            application/json:
+              schema: &recursive_schema
+                type: object
+                properties:
+                  self: *recursive_schema

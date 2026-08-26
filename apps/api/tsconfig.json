@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@better-agent/auth": ["../../packages/auth/src/index.ts"],
+      "@better-agent/domain-contracts": ["../../packages/domain-contracts/src/index.ts"]
+    },
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
+  "references": [
+    { "path": "../../packages/domain-contracts/tsconfig.build.json" },
+    { "path": "../../packages/auth/tsconfig.build.json" }
+  ]
+}

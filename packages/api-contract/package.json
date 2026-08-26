@@ -1,0 +1,40 @@
+{
+  "name": "@better-agent/api-contract",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenAPI 3.1 validation, bundling, and generated TypeScript contract artifacts",
+  "license": "UNLICENSED",
+  "type": "module",
+  "types": "./generated/openapi.d.ts",
+  "exports": {
+    ".": {
+      "types": "./generated/openapi.d.ts"
+    },
+    "./credential-operation-policy-registry.js": {
+      "types": "./generated/credential-operation-policy-registry.d.ts",
+      "import": "./generated/credential-operation-policy-registry.js"
+    }
+  },
+  "files": [
+    "baseline/response-compatibility.json",
+    "generated/credential-operation-policy-registry.d.ts",
+    "generated/credential-operation-policy-registry.js",
+    "generated/openapi.bundle.json",
+    "generated/openapi.d.ts"
+  ],
+  "scripts": {
+    "accept-response-baseline": "node src/cli.mjs accept-response-baseline",
+    "build": "node src/cli.mjs check",
+    "contract:check": "node src/cli.mjs check",
+    "generate": "node src/cli.mjs generate",
+    "lint": "biome lint src test redocly.yaml",
+    "test": "node test/contract-toolchain.test.mjs",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
+  },
+  "devDependencies": {
+    "@redocly/openapi-core": "2.47.0",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3",
+    "yaml": "2.9.0"
+  }
+}

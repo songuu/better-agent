@@ -1,0 +1,136 @@
+# `@better-agent/db`
+
+Executable G0-03 migration tooling plus the reviewed G0-04 tenant/auth/RLS
+foundation. `docs/database` remains design input; only the ordered SQL copied,
+re-cut and reviewed under `migrations/` is executable.
+
+## Contract
+
+- Files are named `NNN_snake_case.up.sql`; a reviewed
+  `NNN_snake_case.down.sql` is optional.
+- Versions start at `000` and are contiguous. Missing, duplicated, symlinked,
+  non-UTF-8 or self-transactional migrations fail before a connection opens.
+- One PostgreSQL transaction and one advisory lock cover an invocation.
+- Applied up/down SHA-256 checksums are immutable. Editing either side of an applied migration aborts.
+- PostgreSQL older than 16 aborts. Migration `000` verifies the `vector`
+  and `pgcrypto` extensions and the platform role boundary.
+- Rollback requires both `--allow-down` and `--to`; if any selected migration
+  lacks a reviewed down file, nothing is sent to PostgreSQL.
+
+## Platform bootstrap
+
+Run `bootstrap/platform-roles.sql` against the target database as a DBA before
+the application migration runner. It installs the two extensions, revokes
+untrusted `CREATE` on schema `public`, and creates only these NOLOGIN roles:
+
+- `ba_migrator`, `ba_auth_owner`, `ba_authorization_owner`;
+- `ba_runtime`, `ba_control_executor`;
+- `ba_management_attestation_issuer`, `ba_subject_assertion_verifier`.
+
+The actual deployment login is provisioned separately as a non-superuser and
+granted `ba_migrator`. Migration `000` rejects a superuser/BYPASSRLS runner,
+missing ADMIN OPTION on the two owner roles, login-capable owner/group roles, or
+owner-role membership inherited by an executable role.
+
+G0-07 phase executors and internal-service attestations are intentionally absent.
+They must arrive in their own migration and cannot be simulated with an external
+API credential.
+
+## G0-04 control/auth boundary
+
+`001_tenant_identity.up.sql` creates Workspace-direct facts for role/member,
+secret reference, five credential kinds, closed scopes, permission callbacks,
+browser assertion issuer configs, end-user principals, one-use assertion facts
+and durable authorization invalidation. `002_auth_context_rls.up.sql` adds the
+private auth projection, append-only redacted audit, signed transaction-local
+tenant context, FORCE RLS, one-way lifecycle triggers and least-privilege ACLs.
+
+Low-privilege callers do not write these tables directly. After a trusted
+management gateway issues an attestation, `ba_control_executor` establishes its
+transaction context and uses the reviewed functions:
+
+```text
+auth.create_secret_ref(uuid,text,text,text,text,timestamptz,jsonb)
+auth.create_api_credential(uuid,uuid,text,text,bytea,text[],text[],timestamptz,timestamptz,uuid)
+auth.add_api_credential_scope(uuid,text)
+auth.transition_api_credential(uuid,text,timestamptz,uuid,text)
+auth.create_browser_subject_issuer_config(uuid,text,text,uuid,integer,text[],integer,integer,timestamptz,timestamptz)
+auth.transition_browser_subject_issuer_config(uuid,text,text)
+auth.create_permission_callback(uuid,text,text,uuid,integer)
+auth.transition_permission_callback(uuid,text,text)
+auth.revoke_end_user_principal(uuid,text)
+```
+
+The subject assertion adapter uses a dedicated login that is a member only of
+`ba_subject_assertion_verifier`; membership in `ba_runtime` is explicitly
+rejected. In one transaction it first calls the publish-only
+`auth.authenticate_publish_exchange_credential`, resolves the versioned
+verification-key/trust limits through
+`auth.get_browser_subject_verifier_config`, verifies the signature outside
+PostgreSQL, then calls
+`auth.consume_browser_subject_assertion`. The consume signature accepts issuer,
+audience, canonical origin, time window, key version, subject/nonce hashes and
+never accepts `principal_id`; nonce consumption and principal mapping are atomic.
+The verifier-config row includes `workspace_id`, maximum TTL and clock skew so
+the adapter can select the workspace-scoped identity HMAC key without trusting
+an assertion-supplied tenant identifier.
+
+Both credential authenticators return a versioned authorization snapshot only
+after the signed transaction-local context has been established and revalidated
+through the FORCE-RLS-protected source tables. The snapshot contains sorted
+`credential_scopes`, `credential_authorization_epoch` and
+`workspace_authorization_epoch`; it never contains the presented verifier or
+the stored verifier HMAC. The private auth index remains only the verifier and
+lifecycle authentication projection, not a second source of scopes or epochs.
+Every rejected authentication returns zero rows.
+
+Management attestation issuance/revocation and control-context establishment
+also use separate logins. A login must never inherit both
+`ba_management_attestation_issuer` and `ba_control_executor`; migration 000 and
+both sides of the runtime handshake reject that combination recursively.
+No executable login may also inherit `ba_migrator`, `ba_auth_owner`, or
+`ba_authorization_owner`, including through indirect role membership.
+
+The authentication/control entry-point signatures are:
+
+```text
+auth.issue_control_session_attestation(uuid,uuid,uuid,name,text,bytea,bytea,timestamptz)
+auth.revoke_control_session_attestation(uuid,text)
+auth.establish_control_workspace_context(uuid,bytea)
+auth.authenticate_api_credential(uuid,bytea)
+  -> (workspace_id uuid, credential_id uuid, credential_kind text,
+      credential_scopes text[], credential_authorization_epoch bigint,
+      workspace_authorization_epoch bigint)
+auth.authenticate_publish_exchange_credential(uuid,bytea)
+  -> (workspace_id uuid, credential_id uuid, credential_kind text,
+      credential_scopes text[], credential_authorization_epoch bigint,
+      workspace_authorization_epoch bigint)
+auth.get_browser_subject_verifier_config(uuid)
+auth.consume_browser_subject_assertion(uuid,text,bytea,text,text,integer,bytea,timestamptz,timestamptz)
+```
+
+The presented API/control verifier remains bearer-equivalent. Drivers must use
+binary never-log parameters, and production admission must independently prove
+PostgreSQL, pooler, APM, error and support-export parameter redaction. The SQL
+schema cannot prove that deployment configuration by itself.
+
+Browser-session storage, Deployment entry grants/cardinality, business Release
+DDL, G0-07 phase roles, runtime handlers and production deployment are not part
+of this package state yet.
+
+Use only the documented discrete libpq environment variables (`PGHOST`,
+`PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGPORT`, the supported `PGSSL*` variables
+and `PGCONNECT_TIMEOUT`). The child process receives an explicit allowlist; the
+CLI rejects `DATABASE_URL`, `PGSERVICE`, `PGOPTIONS`, `PGPASSFILE` and other
+ambient libpq controls.
+
+```powershell
+pnpm --filter @better-agent/db build
+node packages/db/dist/cli.js up
+node packages/db/dist/cli.js status
+node packages/db/dist/cli.js down --to 0 --allow-down
+```
+
+The integration harness under `infra/test/postgres` is the evidence path for an
+empty database, a second idempotent apply, checksum tamper rejection, reviewed
+rollback and the no-down fail-closed boundary.

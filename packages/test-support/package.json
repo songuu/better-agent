@@ -1,0 +1,23 @@
+{
+  "name": "@better-agent/test-support",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared test infrastructure for the better-agent workspace",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json --pretty false --stopBuildOnErrors",
+    "lint": "biome lint src test scripts vitest.config.ts",
+    "test": "vitest run --config vitest.config.ts --configLoader native",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
+  }
+}

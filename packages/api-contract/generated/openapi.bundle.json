@@ -1,0 +1,4864 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "better-agent Compatibility and Operation API",
+    "version": "0.1.0-draft",
+    "description": "文档设计阶段的 G1 机器可读入口契约：覆盖 browser session exchange、Agent Chat、显式会话、Flow Run、Run 查询/取消、Human Gate resume/SSE\n及浏览器 events session。兼容 BetterYeah 的公开路径和 task 字段；durable Run、幂等、取消、等待恢复、SSE\n及安全语义以 SSE与异步操作契约 和 ADR-001 至 ADR-004 为准。历史 agent/push、info 等未列入\n 本文件的 compatibility inventory 不是 G1 实现承诺。\n"
+  },
+  "x-credential-operation-policy-contract": {
+    "version": "CredentialOperationPolicyV1",
+    "persistence": "derived_only",
+    "description": "operation_purpose 是由当前 OpenAPI operation 决定的审计/路由标签，不是 credential kind、\n数据库 profile 或独立授权事实。中间件必须在同一准入事务中同时满足 allowed_kinds、\nrequired_scopes、typed_grant_family 与 target_cardinality；对原 Run 操作还要回读原 Run 已固定的\ntarget kind/Deployment 和当前 grant/epoch。不得持久化或查询 deployment_publish、agent_invoke、\nflow_invoke 作为新的权限源。\n",
+    "authoritative_fact_sources": [
+      "api_credentials.credential_kind/status/time_window/authorization_epoch",
+      "api_credential_scopes",
+      "typed_deployment_entry_grants",
+      "original_run_target_and_authorization_sources_when_applicable"
+    ]
+  },
+  "x-subject-assertion-contract": {
+    "version": "subject-assertion-jws-eddsa/1",
+    "serialization": "compact_jws",
+    "alg": "EdDSA",
+    "typ": "ba-subject-assertion+jwt",
+    "claim_version": "subject-assertion/1",
+    "key_selection": "pinned_local_key_version",
+    "kid_format": "{issuer_config_id}.v{key_version}",
+    "max_ttl_seconds": 300,
+    "max_clock_skew_seconds": 30,
+    "required_claims": [
+      "version",
+      "issuer_config_id",
+      "iss",
+      "sub",
+      "aud",
+      "nonce",
+      "iat",
+      "exp",
+      "origin",
+      "key_version"
+    ],
+    "raw_assertion_persistence": "forbidden",
+    "description": "subject_assertion 是 compact JWS，protected header 固定 alg=EdDSA、\ntyp=ba-subject-assertion+jwt；payload version 固定 subject-assertion/1，kid 必须为\n{issuer_config_id}.v{key_version} 并选择 issuer 配置中本地固定的 key_version，禁止远程 key\ndiscovery。签发到过期最多 300 秒，验证时 clock skew 不得超过 30 秒。验证完成后只保留 issuer、\naudience、canonical origin、key version、时间以及 subject/nonce 的不可逆摘要；原 assertion、sub、\nnonce、protected header 和签名不得写入数据库、日志、trace 或支持导出。\n"
+  },
+  "servers": [
+    {
+      "url": "https://{host}",
+      "variables": {
+        "host": {
+          "default": "api.example.invalid"
+        }
+      }
+    }
+  ],
+  "paths": {
+    "/v1/oapi/browser/sessions/exchange": {
+      "post": {
+        "operationId": "exchangeBrowserSession",
+        "summary": "宿主后端为已验证最终用户换取短期 browser session",
+        "description": "仅宿主后端调用。稳定 Deployment publish credential 必须留在服务端，并与预配置 issuer\n签名的短期 subject_assertion 一起验证。服务端从 assertion 的 issuer/subject 映射平台 principal，\n不接受 principal_id，也不把 user.id 当作身份。返回的 Bearer token 固定 workspace、稳定 Deployment、\nchannel、principal、exact origin、audience、expiry 与 session_epoch；G1 不签发匿名 session。\n",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "deployment_publish",
+          "allowed_kinds": [
+            "publish"
+          ],
+          "required_scopes": [
+            "browser-session:exchange"
+          ],
+          "typed_grant_family": "agent_deployment_entry_grants",
+          "target_cardinality": "exactly_one_deployment"
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/ClientRequestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserSessionExchangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已签发短期 browser session；宿主后端必须通过自身已认证 bootstrap 交给对应用户。",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Pragma": {
+                "$ref": "#/components/headers/NoCache"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/agent/conversation": {
+      "post": {
+        "operationId": "createAgentConversation",
+        "summary": "创建 Agent 会话",
+        "description": "Chat 不会隐式创建会话。robot_id 必须与 credential/browser session 的稳定 Deployment binding 一致；\n创建的 conversation 固定属于当前 workspace、principal 和 deployment_id。每次 Run 准入再解析 active revision。\nG1 本端点不接受 Idempotency-Key，也不承诺网络重放去重。\n",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          },
+          {
+            "browserSessionBearer": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "agent_invoke",
+          "allowed_kinds": [
+            "service_api"
+          ],
+          "required_scopes": [
+            "agent:conversation:write"
+          ],
+          "typed_grant_family": "agent_deployment_entry_grants",
+          "target_cardinality": "exactly_one_deployment"
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ClientRequestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "会话已创建",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/agent/conversations": {
+      "get": {
+        "operationId": "listAgentConversations",
+        "summary": "列出当前 Agent 可见会话",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          },
+          {
+            "browserSessionBearer": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "agent_invoke",
+          "allowed_kinds": [
+            "service_api"
+          ],
+          "required_scopes": [
+            "agent:conversation:read"
+          ],
+          "typed_grant_family": "agent_deployment_entry_grants",
+          "target_cardinality": "exactly_one_deployment"
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/RobotId"
+          },
+          {
+            "$ref": "#/components/parameters/ListCursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "会话分页；cursor 为不透明值，只能用于同一 Agent/credential 范围。",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/agent/conversation/messages": {
+      "get": {
+        "operationId": "listAgentConversationMessages",
+        "summary": "读取会话历史消息",
+        "description": "只返回当前 principal 可见、经过 schema 脱敏的 user/assistant 公共投影；内部 system prompt、Strategy/Instruction Skill、工具上下文和隐藏控制消息不属于本资源。",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          },
+          {
+            "browserSessionBearer": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "agent_invoke",
+          "allowed_kinds": [
+            "service_api"
+          ],
+          "required_scopes": [
+            "agent:conversation:read"
+          ],
+          "typed_grant_family": "agent_deployment_entry_grants",
+          "target_cardinality": "exactly_one_deployment"
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConversationId"
+          },
+          {
+            "$ref": "#/components/parameters/ListCursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "消息分页；不可见会话按不存在处理。",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationMessagesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/ConversationNotFoundError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/agent/chat": {
+      "post": {
+        "operationId": "createAgentChatRun",
+        "summary": "创建 Agent Chat 运行",
+        "description": "response_mode=streaming 时总是返回 202 operation。\nresponse_mode=blocking 时仅在等待窗口内终态才返回 200，否则返回 202；\nHTTP 连接断开不会取消 durable Run。robot_id 与 conversation_id 必须在当前\ncredential/browser-session workspace/principal 的同一 Agent 范围内。不可见 conversation 返回 404。\n带 Idempotency-Key 的重放先认证并确认原 Run 可读，再以稳定的公开客户端 intent 比较；命中总是返回\n保存的 canonical 202 acceptance receipt，不重放首次 blocking 连接的 200，也不重新解析当前 Deployment、Release、binding 或 Plan。\n只有幂等 miss 才在同一事务固定 active Deployment revision；每个新 Chat Run 都必须将其\nconversation_contract_hash 与 conversation 创建时保存的 hash 比较，相等后才能创建 Run、积分预留、\nrun.accepted 或 outbox。不相等返回 409 CONVERSATION_REVISION_INCOMPATIBLE；G1 不做隐式迁移。\n",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          },
+          {
+            "browserSessionBearer": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "agent_invoke",
+          "allowed_kinds": [
+            "service_api"
+          ],
+          "required_scopes": [
+            "agent:run:create"
+          ],
+          "typed_grant_family": "agent_deployment_entry_grants",
+          "target_cardinality": "exactly_one_deployment"
+        },
+        "x-admission-order": [
+          "authenticate_and_normalize_public_request",
+          "idempotency_lookup",
+          "on_hit_read_original_run_or_return_run_not_found",
+          "on_hit_compare_intent_and_replay_canonical_202_or_reject_conflict",
+          "on_miss_pin_active_deployment_revision",
+          "on_miss_compare_conversation_contract_hash",
+          "on_miss_authorize_compile_and_atomically_accept"
+        ],
+        "x-idempotency-replay-read-failure": {
+          "status": 404,
+          "error_code": "RUN_NOT_FOUND",
+          "schema": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ErrorResponse"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "integer",
+                    "const": 404
+                  },
+                  "error": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/ErrorDetail"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "const": "RUN_NOT_FOUND"
+                          },
+                          "category": {
+                            "type": "string",
+                            "const": "AUTHORIZATION"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ClientRequestId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentChatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "仅首次 blocking 等待窗口内已终态的兼容响应；幂等重放不会返回此投影。",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockingRunResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "$ref": "#/components/responses/OperationAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "402": {
+            "$ref": "#/components/responses/CreditsError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentChatNotFoundError"
+          },
+          "409": {
+            "$ref": "#/components/responses/AgentChatConflictError"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/flow/run": {
+      "post": {
+        "operationId": "createFlowRun",
+        "summary": "创建已发布 Flow 的运行",
+        "description": "此 compatibility 路径的 body 不含 flow_id。Access-Key 必须是仅绑定一个已发布 Flow 的\nservice_api credential；flow_invoke 仅为本 operation 的 purpose 标签，授权须命中\nflow:run:create scope 与 exactly-one-flow 的类型化 Flow Deployment entry grant；\n服务端在授权/接受事务中解析 flow_id 和已发布 flow_version_id，\n并将版本固定进 Run。多目标 credential 返回 409 FLOW_TARGET_AMBIGUOUS；inputs 必须满足\n该固定版本的 input schema。幂等重放先确认原 Run 可读，再以稳定公开 intent 比较；已解析目标/版本\n与 Plan 只保存在首次接受记录，命中时返回 canonical 202 acceptance receipt，绝不重新解析最新版本\n或当前 credential binding；公开 receipt 不返回 flow_version_id 或其他内部 pin。\n与 Agent Chat 共用 Run、幂等、计费、取消和 SSE 生命周期。\n",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "flow_invoke",
+          "allowed_kinds": [
+            "service_api"
+          ],
+          "required_scopes": [
+            "flow:run:create"
+          ],
+          "typed_grant_family": "flow_deployment_entry_grants",
+          "target_cardinality": "exactly_one_flow"
+        },
+        "x-admission-order": [
+          "authenticate_and_normalize_public_request",
+          "idempotency_lookup",
+          "on_hit_read_original_run_or_return_run_not_found",
+          "on_hit_compare_intent_and_replay_canonical_202_or_reject_conflict",
+          "on_miss_resolve_exactly_one_flow_grant_and_pin_version",
+          "on_miss_authorize_compile_and_atomically_accept"
+        ],
+        "x-idempotency-replay-read-failure": {
+          "status": 404,
+          "error_code": "RUN_NOT_FOUND",
+          "schema": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ErrorResponse"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "integer",
+                    "const": 404
+                  },
+                  "error": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/ErrorDetail"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "const": "RUN_NOT_FOUND"
+                          },
+                          "category": {
+                            "type": "string",
+                            "const": "AUTHORIZATION"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/ClientRequestId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "仅首次 blocking 等待窗口内已终态的兼容响应；幂等重放不会返回此投影。",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockingRunResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "$ref": "#/components/responses/OperationAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "402": {
+            "$ref": "#/components/responses/CreditsError"
+          },
+          "403": {
+            "$ref": "#/components/responses/FlowExecutionForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RunNotFoundError"
+          },
+          "409": {
+            "$ref": "#/components/responses/FlowRunConflictError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/runs/{run_id}": {
+      "get": {
+        "operationId": "getRun",
+        "summary": "读取 Run 快照",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          },
+          {
+            "browserSessionBearer": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "run_read",
+          "allowed_kinds": [
+            "service_api"
+          ],
+          "required_scopes": [
+            "run:read"
+          ],
+          "typed_grant_family": "original_run_entry_grant",
+          "allowed_original_run_target_kinds": [
+            "agent",
+            "flow"
+          ],
+          "target_cardinality": "original_run_only"
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前或终态 Run 快照",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunSnapshotResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RunNotFoundError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "requestRunCancellation",
+        "summary": "请求取消非终态 Run",
+        "description": "Idempotency-Key 可选：携带非空 key 时使用 keyed mutation 幂等并保存首次响应；省略时仍持久化取消意图，\n但不创建 mutation idempotency record，也不承诺网络重放去重。keyed intent_hash 使用路径模板\n`/v1/oapi/runs/{run_id}/cancel`、path parameter `run_id` 与规范化空 body `{}`；\nhost、query、实际 URL 和 transport request_id 不参与比较。mutation 唯一范围不含目标 Run，\n因此同一 principal/key 跨 Run 复用会因 intent 不同返回 409。keyed hit 必须先读取历史目标；\n当前主体不可读时固定返回 404 RUN_NOT_FOUND，不比较 intent、也不回放 receipt。详见 SSE 契约 §2.4。\n",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          },
+          {
+            "browserSessionBearer": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "run_cancel",
+          "allowed_kinds": [
+            "service_api"
+          ],
+          "required_scopes": [
+            "run:cancel"
+          ],
+          "typed_grant_family": "original_run_entry_grant",
+          "allowed_original_run_target_kinds": [
+            "agent",
+            "flow"
+          ],
+          "target_cardinality": "original_run_only"
+        },
+        "x-admission-order": {
+          "common": [
+            "authenticate_and_normalize_public_request",
+            "branch_on_idempotency_key_presence"
+          ],
+          "keyed": [
+            "lock_keyed_mutation_scope_and_lookup",
+            "on_hit_read_original_run_or_return_run_not_found",
+            "on_hit_compare_intent_and_replay_original_200_or_202_or_reject_conflict",
+            "on_miss_lock_current_run",
+            "on_miss_terminal_persist_keyed_200_receipt",
+            "on_miss_nonterminal_atomically_persist_cancel_intent_event_and_202_receipt"
+          ],
+          "unkeyed": [
+            "lock_and_read_current_run_without_idempotency_record",
+            "terminal_return_current_200_without_idempotency_record",
+            "nonterminal_atomically_persist_cancel_intent_and_event_without_idempotency_record"
+          ]
+        },
+        "x-idempotency-replay-read-failure": {
+          "applies_when": "keyed_hit",
+          "status": 404,
+          "error_code": "RUN_NOT_FOUND",
+          "schema": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ErrorResponse"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "integer",
+                    "const": 404
+                  },
+                  "error": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/ErrorDetail"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "const": "RUN_NOT_FOUND"
+                          },
+                          "category": {
+                            "type": "string",
+                            "const": "AUTHORIZATION"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/ClientRequestId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run 已是终态，返回原终态",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Idempotent-Replay": {
+                "$ref": "#/components/headers/IdempotentReplay"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunSnapshotResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "$ref": "#/components/responses/CancellationAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RunNotFoundError"
+          },
+          "409": {
+            "$ref": "#/components/responses/RunCancelConflictError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/runs/{run_id}/gates/{gate_id}/resume": {
+      "post": {
+        "operationId": "resumeHumanGate",
+        "summary": "提交 Human Gate 输入或审批决策",
+        "description": "这是必带 Idempotency-Key 的持久 mutation。actor 只从认证 context 获得；请求不得提交\nworkspace、approver、credential、Release、operation hash 或 resume token。缺少或空 key 返回 400。\n认证后先锁 workspace/principal/fixed route template/key：命中时先对历史目标执行 read gate，再比较\nrun_id/gate_id/action/input 的 JCS intent；相同即重放保存的 202，不检查 Gate 当前状态、过期、active latest\n或当前授权，不同返回 409。只有 miss 才原子 claim gate，重新验证原 Plan/operation、actor policy、过期、\ncredential/resource epoch 与预算，再保存 decision 和不可变首次 receipt。正向 decision 若仍有后续 cohort，\n只物化下一 Gate、写 run.waiting 并返回 NEXT_GATE_WAITING，不创建 run.resumed、attempt 或 Worker outbox；\n只有最后一个正向 decision 返回 RUN_RESUMED 并原子写 run.resumed、下一 attempt 与恢复 outbox；\nreject 返回 TERMINAL_INTENT_ACCEPTED，只写终态意图并唤醒唯一 finalizer，不写 run.resumed 或下一 attempt。\n恢复固定原 Deployment/Release/Plan，不解析 active latest。\n",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          },
+          {
+            "browserSessionBearer": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "run_resume",
+          "allowed_kinds": [
+            "service_api"
+          ],
+          "required_scopes": [
+            "run:resume"
+          ],
+          "typed_grant_family": "original_run_entry_grant",
+          "allowed_original_run_target_kinds": [
+            "agent",
+            "flow"
+          ],
+          "target_cardinality": "original_run_only"
+        },
+        "x-admission-order": [
+          "authenticate_and_lock_mutation_key",
+          "on_hit_read_gate_compare_intent_and_replay",
+          "on_miss_lock_run_and_gate",
+          "on_miss_revalidate_and_claim_decision",
+          "on_positive_with_deferred_cohort_materialize_next_gate_and_stay_waiting",
+          "on_final_positive_atomically_resume",
+          "on_reject_persist_terminal_intent_and_wake_unique_finalizer"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/GateId"
+          },
+          {
+            "$ref": "#/components/parameters/ClientRequestId"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanGateResumeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/GateResumeAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "402": {
+            "$ref": "#/components/responses/CreditsError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RunNotFoundError"
+          },
+          "409": {
+            "$ref": "#/components/responses/GateResumeConflictError"
+          },
+          "410": {
+            "$ref": "#/components/responses/GoneError"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/runs/{run_id}/events": {
+      "get": {
+        "operationId": "streamRunEvents",
+        "summary": "订阅可重放的 Run 事件",
+        "description": "事件按 run 内 sequence 严格递增，SSE id 等于该 sequence；run_id 已由 URL 绑定。\n认证可使用 Access-Key + Workspace-Id，或同源 events session cookie。cursor 与 Last-Event-ID\n同时存在时必须相同；请求必须协商 Accept: text/event-stream。cursor 早于终态后至少 7 天的\n保留窗口返回 410，未来 cursor 返回 409。按 ID 不可见统一返回 typed 404，不以 403 暴露存在性。\n",
+        "security": [
+          {
+            "workspaceAccessKey": [],
+            "workspaceId": []
+          },
+          {
+            "runEventSessionCookie": []
+          }
+        ],
+        "x-service-credential-policy": {
+          "schema_version": "credential-operation-policy/1",
+          "operation_purpose": "run_events_read",
+          "allowed_kinds": [
+            "service_api"
+          ],
+          "required_scopes": [
+            "run:events:read"
+          ],
+          "typed_grant_family": "original_run_entry_grant",
+          "allowed_original_run_target_kinds": [
+            "agent",
+            "flow"
+          ],
+          "target_cardinality": "original_run_only"
+        },
+        "x-required-request-accept": "text/event-stream",
+        "x-browser-origin-policy": {
+          "security_scheme": "runEventSessionCookie",
+          "origin_parameter": "BrowserEventOrigin",
+          "canonicalization": "rfc6454_ascii_serialization",
+          "compare_with": [
+            "cookie_origin",
+            "current_deployment_exact_allowlist"
+          ],
+          "cross_origin_header_required": true,
+          "allow_null_origin": false,
+          "cors_allow_origin": "exact_echo",
+          "cors_vary_origin": true,
+          "cors_wildcard_with_credentials": false
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccessKey"
+          },
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/LastEventId"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserEventOrigin"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/event-stream；业务事件的 id 等于 run 内 data.sequence，事件外形为 RunEvent。",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "RunEvent JSON 逐帧置于 data:，详见 SSE与异步操作契约中的 RunEventV1。"
+                },
+                "x-sse-event-schema": {
+                  "$ref": "#/components/schemas/RunEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RunNotFoundError"
+          },
+          "409": {
+            "$ref": "#/components/responses/EventCursorConflictError"
+          },
+          "410": {
+            "$ref": "#/components/responses/EventCursorExpiredError"
+          }
+        }
+      }
+    },
+    "/v1/oapi/runs/{run_id}/events/session": {
+      "post": {
+        "operationId": "createBrowserRunEventSession",
+        "summary": "为同源浏览器创建 Run events cookie session",
+        "description": "浏览器 SDK 以 credentials: include 和 exchange 后的短期 Bearer session 调用此端点；稳定 publish credential\n不得出现在浏览器请求。成功只通过 Set-Cookie 交付不透明 capability，\n不返回 token body。cookie 名称必须以 __Secure- 开头、host-only 且不得含 Domain，并设置\nHttpOnly、Secure、SameSite=Strict、Max-Age 不超过 60 秒；仅授权指定 run_id，且 Path 限定至\n该 Run 的 events URL。Set-Cookie 是值唯一允许出现的位置，整个头不得进入日志/trace；响应 no-store。\n请求必须通过 session origin/current allowlist 校验；跨源 EventSource 不受支持。\n",
+        "security": [
+          {
+            "browserSessionBearer": []
+          }
+        ],
+        "x-browser-origin-policy": {
+          "security_scheme": "browserSessionBearer",
+          "origin_parameter": "BrowserOriginRequired",
+          "canonicalization": "rfc6454_ascii_serialization",
+          "compare_with": [
+            "session_origin",
+            "current_deployment_exact_allowlist"
+          ],
+          "cross_origin_header_required": true,
+          "allow_null_origin": false,
+          "cors_allow_origin": "exact_echo",
+          "cors_vary_origin": true,
+          "cors_wildcard_with_credentials": false
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/BrowserOriginRequired"
+          },
+          {
+            "$ref": "#/components/parameters/ClientRequestId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已设置短期单 Run events cookie session。",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/RunEventSessionCookie"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Pragma": {
+                "$ref": "#/components/headers/NoCache"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RunNotFoundError"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "workspaceAccessKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Access-Key",
+        "description": "兼容头；服务端映射至 scoped、可轮换且仅存 hash 的入口 credential。持久化 kind 仅为 service_api、publish、webhook、mcp 或 permission_callback；deployment_publish、agent_invoke、flow_invoke 只是 OpenAPI operation purpose，不存入数据库也不单独授权。publish 仅供宿主后端 browser exchange，不得下发浏览器或直接调用 Chat、Conversation、Run、cancel、resume、events。",
+        "x-credential-kinds": [
+          "service_api",
+          "publish",
+          "webhook",
+          "mcp",
+          "permission_callback"
+        ],
+        "x-operation-purpose-is-derived-only": true,
+        "x-operation-policy-required": true
+      },
+      "workspaceId": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Workspace-Id",
+        "description": "必须与 credential 所属工作空间一致。"
+      },
+      "runEventSessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Secure-ba_run_event_session",
+        "description": "同源浏览器专用、短期且单 Run 绑定的 host-only HttpOnly events session；不得设置 Domain，只可由 events/session 端点通过已从日志/trace 排除的 Set-Cookie 设置。",
+        "x-request-origin-policy": {
+          "canonicalization": "rfc6454_ascii_serialization",
+          "compare_with": [
+            "cookie_origin",
+            "current_deployment_exact_allowlist"
+          ],
+          "cross_origin_header_required": true,
+          "allow_null_origin": false,
+          "cors_allow_origin": "exact_echo",
+          "cors_vary_origin": true,
+          "cors_wildcard_with_credentials": false
+        }
+      },
+      "browserSessionBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque",
+        "description": "exchange 后的短期 browser session；绑定 workspace、Deployment、channel、principal、RFC 6454 canonical origin、audience、expiry 与 session_epoch。每次请求执行 request-origin/current allowlist 校验；user.id 不是主体，origin 也不是 bearer 的密码学持有证明。",
+        "x-request-origin-policy": {
+          "canonicalization": "rfc6454_ascii_serialization",
+          "compare_with": [
+            "session_origin",
+            "current_deployment_exact_allowlist"
+          ],
+          "cross_origin_header_required": true,
+          "allow_null_origin": false,
+          "cors_allow_origin": "exact_echo",
+          "cors_vary_origin": true,
+          "cors_wildcard_with_credentials": false
+        }
+      }
+    },
+    "parameters": {
+      "AccessKey": {
+        "name": "Access-Key",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "使用 workspaceAccessKey security alternative 时必须与 Workspace-Id 一起出现；browserSessionBearer alternative 必须省略。Studio 管理 API 不使用该凭据。"
+      },
+      "WorkspaceId": {
+        "name": "Workspace-Id",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "使用 workspaceAccessKey security alternative 时必填且必须与 credential 一致；browser principal 的 workspace 从 token 推导。"
+      },
+      "BrowserOrigin": {
+        "name": "Origin",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "format": "uri",
+          "x-format": "rfc6454-origin",
+          "maxLength": 2048
+        },
+        "x-required-with-security-scheme": "browserSessionBearer",
+        "description": "browserSessionBearer 分支的 request origin。跨源请求必填并须为 RFC 6454 canonical origin；同源 GET/HEAD 合法省略时只能由受信任网关从外部 request target 推导。服务 credential 分支不得把该值当作身份。"
+      },
+      "BrowserEventOrigin": {
+        "name": "Origin",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "format": "uri",
+          "x-format": "rfc6454-origin",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "x-required-with-security-scheme": "runEventSessionCookie",
+        "description": "runEventSessionCookie 分支的 request origin。跨源请求必填并须为 RFC 6454 canonical origin；同源 GET/HEAD 合法省略时只能由受信任网关从外部 request target 推导。服务 credential 分支不得把该值当作身份。"
+      },
+      "BrowserOriginRequired": {
+        "name": "Origin",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uri",
+          "x-format": "rfc6454-origin",
+          "maxLength": 2048
+        },
+        "description": "events-session 是 browser-only 写操作；必须与 browser session 固定 origin 及当前 Deployment exact allowlist 相同，null/opaque/非规范 origin 被拒绝。"
+      },
+      "ClientRequestId": {
+        "name": "X-Client-Request-Id",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "description": "可选调用方关联值。服务端仍为该 HTTP exchange 生成 UUIDv7 X-Request-Id。"
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "x-replay-lifecycle": {
+          "while_target_nonterminal": "never_release",
+          "terminal_grace_seconds_default": 86400,
+          "retention_must_cover_grace": true
+        },
+        "description": "可省略；提供非空 key 时唯一范围为 workspace_id、principal_id、fixed route template、key。关联 Run 非终态时 key 永不释放；目标终态后默认 replay grace 至少 24 小时且记录保留覆盖该窗口。Run 创建重放按稳定公开 intent_hash 比较并总是返回 canonical 202 acceptance receipt，不含当前 binding、已解析目标/版本、授权决策或 Plan；这些仅作为首次 accepted_plan_hash 的事实保存。G1 conversation create 不使用本参数。"
+      },
+      "RequiredIdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "x-replay-lifecycle": {
+          "while_target_nonterminal": "never_release",
+          "terminal_grace_seconds_default": 86400,
+          "retention_must_cover_grace": true
+        },
+        "description": "Human Gate resume 必填；唯一范围为 workspace、认证 principal、fixed resume route template、key，不含 target。规范化 run_id、gate_id、action、input 位于 JCS intent；跨 Run/Gate 复用同 key 返回 409。命中先 read-gate/hash/replay，不能先检查 Gate 当前状态；关联 Run 非终态时 key 不释放，终态后至少保留 replay grace。"
+      },
+      "RunId": {
+        "name": "run_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "GateId": {
+        "name": "gate_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "RobotId": {
+        "name": "robot_id",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "兼容 Agent ID；服务端必须与 scoped credential 一起解析为唯一 active Deployment，不能由调用方选择 Release。"
+      },
+      "ConversationId": {
+        "name": "conversation_id",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "ListCursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "description": "会话或消息列表的服务器生成不透明 cursor。"
+      },
+      "PageSize": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        }
+      },
+      "LastEventId": {
+        "name": "Last-Event-ID",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        }
+      }
+    },
+    "headers": {
+      "RequestId": {
+        "description": "当前 HTTP exchange 由服务端生成的 UUIDv7 请求标识；错误响应也必须返回。",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "Location": {
+        "description": "新建 Run 的资源地址。",
+        "schema": {
+          "type": "string",
+          "format": "uri-reference"
+        }
+      },
+      "IdempotentReplay": {
+        "description": "true 表示本 HTTP exchange 重放了同一稳定 intent 的首次保存响应；当前 request_id 仍为新值。",
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      "NoStore": {
+        "description": "含 browser token 或 events cookie 的响应禁止缓存。",
+        "schema": {
+          "type": "string",
+          "const": "no-store"
+        }
+      },
+      "NoCache": {
+        "description": "为不正确实现 Cache-Control 的旧代理提供兼容禁缓存指示。",
+        "schema": {
+          "type": "string",
+          "const": "no-cache"
+        }
+      },
+      "RunEventSessionCookie": {
+        "description": "cookie 值唯一允许出现的交付位置；名称以 __Secure- 开头，host-only、不得有 Domain，且必须具有 HttpOnly、Secure、SameSite=Strict、Max-Age <= 60 和 events URL Path 属性。整个 Set-Cookie 头不得进入应用/代理日志、trace 或支持导出。",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "BrowserSessionExchangeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "robot_id",
+          "subject_assertion",
+          "origin",
+          "channel"
+        ],
+        "properties": {
+          "robot_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "稳定公开 Agent selector；必须与 publish credential 的唯一 Deployment binding 一致，不能选择 revision/Release。"
+          },
+          "subject_assertion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192,
+            "writeOnly": true,
+            "description": "compact JWS EdDSA v1；typ 固定 ba-subject-assertion+jwt，payload version 固定 subject-assertion/1，kid 使用本地固定 key version，TTL 不超过 300 秒且 clock skew 不超过 30 秒；claims 必须含 issuer_config_id/iss/sub/aud/nonce/iat/exp/origin/key_version。服务端验证并映射 principal 后，只保留安全摘要 DTO，不保存或记录 assertion 原文、sub、nonce、protected header 或签名。"
+          },
+          "origin": {
+            "type": "string",
+            "format": "uri",
+            "x-format": "rfc6454-origin",
+            "description": "exact browser origin（scheme、host、port；不得含 path/query/fragment），必须命中 Deployment allowlist。"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "WEB_SDK",
+              "DINGTALK_WEB"
+            ],
+            "description": "G1 已认证浏览器渠道；匿名 public 渠道不在本契约内。"
+          }
+        }
+      },
+      "BrowserSessionData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "expires_at"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "minLength": 1,
+            "readOnly": true,
+            "description": "短期不透明 browser session token；宿主后端只通过自身已认证 bootstrap 交付，浏览器以内存态 Bearer 使用。"
+          },
+          "token_type": {
+            "type": "string",
+            "const": "Bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 900,
+            "description": "秒；G1 上限 15 分钟。"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BrowserSessionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 201
+          },
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "$ref": "#/components/schemas/BrowserSessionData"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "ConversationCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "robot_id"
+        ],
+        "properties": {
+          "robot_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "variables": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "client_type": {
+            "type": "string",
+            "enum": [
+              "PC",
+              "MOBILE",
+              "DINGTALK_WEB",
+              "CLIENT"
+            ]
+          }
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversation_id",
+          "robot_id",
+          "created_at"
+        ],
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "robot_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "client_type": {
+            "type": "string",
+            "enum": [
+              "PC",
+              "MOBILE",
+              "DINGTALK_WEB",
+              "CLIENT"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ConversationResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 201
+          },
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Conversation"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "ConversationListData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Conversation"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ConversationListResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 200
+          },
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ConversationListData"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "PublicRedactedPayload": {
+        "description": "由端点固定的业务 schema 完成可见性裁剪和字段脱敏后的 JSON 值；这是唯一允许承载用户/工具动态内容的显式叶节点，不得含内部版本 pin、Plan/closure hash、credential、secret reference、endpoint 或数据库资源 ID。",
+        "x-data-classification": "SENSITIVE",
+        "x-redaction-required": true,
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicRedactedPayload"
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PublicRedactedPayload"
+            }
+          }
+        ]
+      },
+      "PublicTaskMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "icon": {
+            "type": "string",
+            "format": "uri-reference"
+          },
+          "color": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "capability_kind": {
+            "type": "string",
+            "enum": [
+              "knowledge",
+              "flow",
+              "plugin",
+              "database",
+              "subagent",
+              "skill_pack"
+            ],
+            "description": "仅调用方获准知晓类型时出现。"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        }
+      },
+      "ConversationMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message_id",
+          "role",
+          "timestamp"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "description": "公共 history 不返回内部 system/instruction/control 记录。"
+          },
+          "content": {
+            "$ref": "#/components/schemas/PublicRedactedPayload"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          },
+          "timestamp": {
+            "type": "integer"
+          }
+        }
+      },
+      "ConversationMessagesData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationMessage"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ConversationMessagesResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 200
+          },
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ConversationMessagesData"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "AgentChatRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "robot_id",
+          "conversation_id",
+          "content",
+          "inputs"
+        ],
+        "properties": {
+          "robot_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conversation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string"
+          },
+          "inputs": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "response_mode": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "streaming"
+            ],
+            "default": "blocking"
+          }
+        }
+      },
+      "FlowRunRequest": {
+        "type": "object",
+        "description": "flow_id 有意不在 body 中；flow_invoke 仅为 operation purpose，目标由 service_api credential 的 scope 与 exactly-one-flow 类型化 Flow Deployment entry grant 解析并固定。",
+        "additionalProperties": false,
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "response_mode": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "streaming"
+            ],
+            "default": "blocking"
+          }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "type",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "TEXT",
+              "FUNCTION",
+              "RELATED_QUESTIONS"
+            ]
+          },
+          "tool_type": {
+            "type": "string",
+            "enum": [
+              "dataset",
+              "flow",
+              "plugin",
+              "system"
+            ],
+            "description": "兼容枚举不扩展：knowledge=dataset、flow=flow、plugin=plugin；database、subagent、skill_pack 均为 system。"
+          },
+          "tool_id": {
+            "type": "string",
+            "description": "仅限已授权观察者的稳定、公开能力投影 ID；不是数据库/资源/版本/endpoint 的原始 ID。"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "STARTED",
+              "SUCCEEDED",
+              "FAILED"
+            ]
+          },
+          "content": {
+            "$ref": "#/components/schemas/PublicRedactedPayload"
+          },
+          "duration_time": {
+            "type": "number"
+          },
+          "metadata": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicTaskMetadata"
+              }
+            ],
+            "description": "可见性裁剪和 schema 脱敏后的白名单展示信息；不得含未获授权资源、版本 pin、连接、endpoint 或 secret reference。"
+          },
+          "upgrade_consume": {
+            "type": "number"
+          }
+        }
+      },
+      "BlockingRunData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "duration_time",
+          "tasks",
+          "timestamp",
+          "run_id",
+          "accepted_request_id",
+          "billing_pending",
+          "billing_state"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "SUCCEEDED"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "result"
+              ],
+              "not": {
+                "required": [
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMED_OUT"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "error"
+              ],
+              "not": {
+                "required": [
+                  "result"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "const": "SIDE_EFFECT_UNKNOWN"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ]
+                }
+              },
+              "required": [
+                "error"
+              ]
+            },
+            "then": {
+              "properties": {
+                "status": {
+                  "const": "FAILED"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "billing_state": {
+                  "const": "SETTLED"
+                }
+              },
+              "required": [
+                "billing_state"
+              ]
+            },
+            "then": {
+              "required": [
+                "billing_settled_at"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "billing_state": {
+                  "enum": [
+                    "PENDING",
+                    "NEEDS_ATTENTION"
+                  ]
+                }
+              },
+              "required": [
+                "billing_state"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "billing_settled_at"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "SUCCEEDED",
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMED_OUT"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "FAILED"
+                  },
+                  "error": {
+                    "properties": {
+                      "code": {
+                        "const": "SIDE_EFFECT_UNKNOWN"
+                      }
+                    },
+                    "required": [
+                      "code"
+                    ]
+                  }
+                },
+                "required": [
+                  "error"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "billing_state": {
+                    "enum": [
+                      "NEEDS_ATTENTION",
+                      "SETTLED"
+                    ]
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "billing_state": {
+                    "const": "SETTLED"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "FAILED",
+              "CANCELLED",
+              "TIMED_OUT"
+            ]
+          },
+          "duration_time": {
+            "type": "number"
+          },
+          "message": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          },
+          "timestamp": {
+            "type": "integer"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accepted_request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "首次接受该 Run 的服务端 request_id；幂等重放时不变。"
+          },
+          "billing_pending": {
+            "type": "boolean",
+            "const": false,
+            "description": "G1 不可变 terminal-time compatibility snapshot；公开 child policy 只允许 join，因此固定为 false。G2 detach 必须通过后续版本 schema 表达，不得放宽本契约。"
+          },
+          "billing_state": {
+            "$ref": "#/components/schemas/BillingState"
+          },
+          "billing_settled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "仅 billing_state=SETTLED 时存在；这是当前结算投影，不属于不可变 terminal event。"
+          },
+          "result": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicRedactedPayload"
+              }
+            ],
+            "description": "仅 SUCCEEDED 存在，读取 Run 上不可变终态公开结果快照。"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        }
+      },
+      "BlockingRunResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 200
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "$ref": "#/components/schemas/BlockingRunData"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "OperationData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "accepted_request_id",
+          "status",
+          "operation_url",
+          "events_url",
+          "cancel_url"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accepted_request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "首次接受该 Run 的服务端 request_id；幂等重放时不变。"
+          },
+          "status": {
+            "type": "string",
+            "const": "QUEUED",
+            "description": "canonical acceptance receipt 的接受时状态，不是当前 Run 状态；重放后应通过 operation_url 查询。"
+          },
+          "operation_url": {
+            "type": "string",
+            "format": "uri-reference"
+          },
+          "events_url": {
+            "type": "string",
+            "format": "uri-reference"
+          },
+          "cancel_url": {
+            "type": "string",
+            "format": "uri-reference"
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "仅 Agent Chat compatibility receipt 可返回的既有公开会话 selector。"
+          }
+        }
+      },
+      "OperationAcceptedResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 202
+          },
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "message": {
+            "type": "string",
+            "const": "accepted"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "当前 HTTP exchange 的 request_id；幂等重放时重新生成，不属于保存后逐字复用的 receipt data。"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OperationData"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "RunMutationData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "accepted_request_id",
+          "status",
+          "operation_url",
+          "events_url"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accepted_request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "原 Run 首次接受时的 request_id；mutation 重放时不变。"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "CANCEL_REQUESTED"
+            ],
+            "description": "mutation 首次提交时保存的公开状态投影；重放原样返回，当前状态另由 operation_url 查询。"
+          },
+          "operation_url": {
+            "type": "string",
+            "format": "uri-reference"
+          },
+          "events_url": {
+            "type": "string",
+            "format": "uri-reference"
+          }
+        }
+      },
+      "RunMutationAcceptedResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 202
+          },
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "当前 mutation HTTP exchange 的 request_id；重放时重新生成。"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RunMutationData"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "HumanGateMutationData": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Human Gate 首次接受时保存的安全结果投影；相同 actor/key/intent 重放原 outcome，当前 Run 状态另由 operation_url 查询。",
+        "required": [
+          "run_id",
+          "accepted_request_id",
+          "status",
+          "outcome",
+          "operation_url",
+          "events_url"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accepted_request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "原 Run 首次接受时的 request_id；Gate mutation 重放时不变。"
+          },
+          "status": {
+            "type": "string",
+            "const": "RUNNING",
+            "description": "decision 提交事务结束时保存的公开 Run 状态；不表示 finalizer 或后续 attempt 已完成。"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "NEXT_GATE_WAITING",
+              "RUN_RESUMED",
+              "TERMINAL_INTENT_ACCEPTED"
+            ],
+            "description": "NEXT_GATE_WAITING 表示仅物化下一 Gate；RUN_RESUMED 表示最后一个正向 decision 已创建恢复；TERMINAL_INTENT_ACCEPTED 表示 reject 只提交终态意图。"
+          },
+          "pending_action": {
+            "$ref": "#/components/schemas/PendingHumanAction"
+          },
+          "operation_url": {
+            "type": "string",
+            "format": "uri-reference"
+          },
+          "events_url": {
+            "type": "string",
+            "format": "uri-reference"
+          }
+        },
+        "oneOf": [
+          {
+            "title": "Next gate waiting",
+            "properties": {
+              "outcome": {
+                "const": "NEXT_GATE_WAITING"
+              }
+            },
+            "required": [
+              "outcome",
+              "pending_action"
+            ]
+          },
+          {
+            "title": "Run resumed",
+            "properties": {
+              "outcome": {
+                "const": "RUN_RESUMED"
+              }
+            },
+            "required": [
+              "outcome"
+            ],
+            "not": {
+              "required": [
+                "pending_action"
+              ]
+            }
+          },
+          {
+            "title": "Terminal intent accepted",
+            "properties": {
+              "outcome": {
+                "const": "TERMINAL_INTENT_ACCEPTED"
+              }
+            },
+            "required": [
+              "outcome"
+            ],
+            "not": {
+              "required": [
+                "pending_action"
+              ]
+            }
+          }
+        ]
+      },
+      "HumanGateMutationAcceptedResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 202
+          },
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "当前 Gate mutation HTTP exchange 的 request_id；重放时重新生成。"
+          },
+          "data": {
+            "$ref": "#/components/schemas/HumanGateMutationData"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "HumanGateResumeRequest": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/HumanGateInputResumeRequest"
+          },
+          {
+            "$ref": "#/components/schemas/HumanGateApprovalResumeRequest"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "action",
+          "mapping": {
+            "submit": "#/components/schemas/HumanGateInputResumeRequest",
+            "approve": "#/components/schemas/HumanGateApprovalResumeRequest",
+            "reject": "#/components/schemas/HumanGateApprovalResumeRequest"
+          }
+        }
+      },
+      "HumanGateInputResumeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "input"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "submit"
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "必须满足该 input gate 的公开 JSON Schema；敏感值不进入 SSE、日志或幂等响应投影。"
+          }
+        }
+      },
+      "HumanGateApprovalResumeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          }
+        }
+      },
+      "PendingHumanAction": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PendingHumanInputAction"
+          },
+          {
+            "$ref": "#/components/schemas/PendingHumanApprovalAction"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "input": "#/components/schemas/PendingHumanInputAction",
+            "approval": "#/components/schemas/PendingHumanApprovalAction"
+          }
+        }
+      },
+      "PendingHumanInputAction": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gate_id",
+          "type",
+          "schema",
+          "actions",
+          "expires_at"
+        ],
+        "properties": {
+          "gate_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "const": "input"
+          },
+          "schema": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "经可见性和数据分类裁剪的公开表单 schema。"
+          },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "const": "submit"
+            }
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PendingHumanApprovalAction": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gate_id",
+          "type",
+          "actions",
+          "expires_at"
+        ],
+        "properties": {
+          "gate_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "const": "approval"
+          },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "approve",
+                "reject"
+              ]
+            }
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "HumanGateWaitingEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pending_action"
+        ],
+        "properties": {
+          "pending_action": {
+            "$ref": "#/components/schemas/PendingHumanAction"
+          }
+        }
+      },
+      "HumanGateResumedEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gate_id",
+          "action",
+          "resumed_at"
+        ],
+        "properties": {
+          "gate_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "submit",
+              "approve"
+            ],
+            "description": "仅最后一个正向 Human Gate decision 产生 run.resumed；reject 不属于恢复事件。"
+          },
+          "resumed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BillingState": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "SETTLED",
+          "NEEDS_ATTENTION"
+        ],
+        "description": "当前账务结算投影；PENDING 表示仍有预留/分配或结算工作，SETTLED 表示可展示最终费用/进入清理，NEEDS_ATTENTION 表示需人工对账并阻止清理。"
+      },
+      "RunSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "status",
+          "accepted_request_id",
+          "last_sequence",
+          "billing_state"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "SUCCEEDED"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "result"
+              ],
+              "not": {
+                "required": [
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMED_OUT"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "error"
+              ],
+              "not": {
+                "required": [
+                  "result"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "const": "SIDE_EFFECT_UNKNOWN"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ]
+                }
+              },
+              "required": [
+                "error"
+              ]
+            },
+            "then": {
+              "properties": {
+                "status": {
+                  "const": "FAILED"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "QUEUED",
+                    "RUNNING",
+                    "CANCEL_REQUESTED"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "billing_state": {
+                  "const": "PENDING"
+                }
+              },
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "result"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "billing_pending"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "billing_settled_at"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "pending_action"
+              ]
+            },
+            "then": {
+              "properties": {
+                "status": {
+                  "const": "RUNNING"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "SUCCEEDED",
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMED_OUT"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "required": [
+                "billing_pending"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "billing_state": {
+                  "const": "SETTLED"
+                }
+              },
+              "required": [
+                "billing_state"
+              ]
+            },
+            "then": {
+              "required": [
+                "billing_settled_at"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "billing_state": {
+                  "enum": [
+                    "PENDING",
+                    "NEEDS_ATTENTION"
+                  ]
+                }
+              },
+              "required": [
+                "billing_state"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "billing_settled_at"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "SUCCEEDED",
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMED_OUT"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "FAILED"
+                  },
+                  "error": {
+                    "properties": {
+                      "code": {
+                        "const": "SIDE_EFFECT_UNKNOWN"
+                      }
+                    },
+                    "required": [
+                      "code"
+                    ]
+                  }
+                },
+                "required": [
+                  "error"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "billing_state": {
+                    "enum": [
+                      "NEEDS_ATTENTION",
+                      "SETTLED"
+                    ]
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "billing_state": {
+                    "const": "SETTLED"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accepted_request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "首次接受该 Run 的服务端 request_id；不是当前 GET exchange 的 request_id。"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "CANCEL_REQUESTED",
+              "SUCCEEDED",
+              "FAILED",
+              "CANCELLED",
+              "TIMED_OUT"
+            ]
+          },
+          "pending_action": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PendingHumanAction"
+              }
+            ],
+            "description": "仅内部 WAITING 状态存在；兼容 status 保持 RUNNING，但 Worker lease 已释放。"
+          },
+          "last_sequence": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "Run 上持久化的单调最大 event cursor；以十进制字符串输出，event retention 后不从剩余事件重新聚合。"
+          },
+          "result": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicRedactedPayload"
+              }
+            ],
+            "description": "经固定业务 schema 脱敏的公开结果；不得含内部 Release/version/generation pin、Plan/closure hash、credential binding 或 resource UUID。"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          },
+          "billing_pending": {
+            "type": "boolean",
+            "const": false,
+            "description": "仅终态存在，取自 G1 不可变 terminal-time snapshot；公开 child policy 只允许 join，因此固定为 false。G2 detach 必须通过后续版本 schema 表达。"
+          },
+          "billing_state": {
+            "$ref": "#/components/schemas/BillingState"
+          },
+          "billing_settled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "仅 billing_state=SETTLED 时存在。客户端只以 billing_state 判断当前最终费用和清理资格，不以历史 billing_pending 推断。"
+          }
+        }
+      },
+      "RunTerminalEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "duration_time",
+          "last_sequence",
+          "billing_pending"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "status": {
+                "const": "SUCCEEDED"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "status": {
+                "enum": [
+                  "FAILED",
+                  "CANCELLED",
+                  "TIMED_OUT"
+                ]
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "not": {
+              "required": [
+                "result"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "FAILED",
+              "CANCELLED",
+              "TIMED_OUT"
+            ]
+          },
+          "duration_time": {
+            "type": "number"
+          },
+          "result": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicRedactedPayload"
+              }
+            ],
+            "description": "经固定业务 schema 脱敏的公开终态结果；不得含内部 Release/version/generation pin、Plan/closure hash、credential binding 或 resource UUID。"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          },
+          "last_sequence": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "该唯一 terminal event 的 Run cursor；以十进制字符串输出，并与终态 Run snapshot 相同。"
+          },
+          "billing_pending": {
+            "type": "boolean",
+            "const": false,
+            "description": "G1 不可变 terminal-time snapshot；公开 child policy 仅 join，因此固定为 false。本事件不携带可变 billing_state；G2 detach 必须通过后续版本 schema 表达。"
+          }
+        }
+      },
+      "RunAcceptedEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "QUEUED"
+          },
+          "robot_id": {
+            "type": "string",
+            "description": "仅 Agent Chat 的稳定公开 selector；不得由此反查内部 Release。"
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "仅 Agent Chat 返回且已通过 principal 可见性检查。"
+          }
+        }
+      },
+      "RunStartedEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "RUNNING"
+          }
+        }
+      },
+      "NodeStartedEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "attempt",
+          "timeout_ms"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "TaskDeltaEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task",
+          "delta"
+        ],
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "delta": {
+            "type": "string",
+            "description": "已经内容策略过滤的追加文本。"
+          }
+        }
+      },
+      "TaskCompletedEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          }
+        }
+      },
+      "PublicUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input_units": {
+            "type": "string",
+            "pattern": "^[0-9]+(?:\\.[0-9]+)?$"
+          },
+          "output_units": {
+            "type": "string",
+            "pattern": "^[0-9]+(?:\\.[0-9]+)?$"
+          },
+          "total_units": {
+            "type": "string",
+            "pattern": "^[0-9]+(?:\\.[0-9]+)?$"
+          },
+          "unit": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      },
+      "NodeCompletedEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "attempt"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "output": {
+            "$ref": "#/components/schemas/PublicRedactedPayload"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/PublicUsage"
+          }
+        }
+      },
+      "NodeFailedEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "attempt",
+          "error",
+          "will_retry"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          },
+          "will_retry": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RunUsageEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reserved",
+          "consumed",
+          "currency"
+        ],
+        "properties": {
+          "reserved": {
+            "type": "string",
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"
+          },
+          "consumed": {
+            "type": "string",
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16
+          }
+        }
+      },
+      "RunCancelRequestedEventData": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requested_at"
+        ],
+        "properties": {
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PublicRunNode": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node_id",
+          "key",
+          "type"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "调用方可见的稳定节点投影 ID；不是内部 node/resource/version ID。"
+          },
+          "key": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "RunEventBase": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "event_id",
+          "sequence",
+          "occurred_at",
+          "accepted_request_id",
+          "run_id"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "run-event/1"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "run_events 的不可变记录身份；不是 SSE id/cursor。"
+          },
+          "sequence": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "数据库在锁定 Run 行后分配的严格递增序列；SSE id 与该十进制字符串相同。"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "accepted_request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope_path": {
+            "type": "string",
+            "description": "经公开投影后的稳定执行 scope；不得包含内部 Release/version/resource pin 或数据库 UUID。"
+          },
+          "node": {
+            "$ref": "#/components/schemas/PublicRunNode"
+          }
+        }
+      },
+      "RunAcceptedEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "run.accepted"
+              },
+              "data": {
+                "$ref": "#/components/schemas/RunAcceptedEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "RunStartedEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "run.started"
+              },
+              "data": {
+                "$ref": "#/components/schemas/RunStartedEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "NodeStartedEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data",
+              "node"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "node.started"
+              },
+              "data": {
+                "$ref": "#/components/schemas/NodeStartedEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "TaskDeltaEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "task.delta"
+              },
+              "data": {
+                "$ref": "#/components/schemas/TaskDeltaEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "TaskCompletedEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "task.completed"
+              },
+              "data": {
+                "$ref": "#/components/schemas/TaskCompletedEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "NodeCompletedEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data",
+              "node"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "node.completed"
+              },
+              "data": {
+                "$ref": "#/components/schemas/NodeCompletedEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "NodeFailedEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data",
+              "node"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "node.failed"
+              },
+              "data": {
+                "$ref": "#/components/schemas/NodeFailedEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "RunUsageEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "run.usage"
+              },
+              "data": {
+                "$ref": "#/components/schemas/RunUsageEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "HumanGateWaitingRunEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "run.waiting"
+              },
+              "data": {
+                "$ref": "#/components/schemas/HumanGateWaitingEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "HumanGateResumedRunEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "run.resumed"
+              },
+              "data": {
+                "$ref": "#/components/schemas/HumanGateResumedEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "RunCancelRequestedEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "run.cancel_requested"
+              },
+              "data": {
+                "$ref": "#/components/schemas/RunCancelRequestedEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "RunTerminalEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunEventBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "run.terminal"
+              },
+              "data": {
+                "$ref": "#/components/schemas/RunTerminalEventData"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "RunEvent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/RunAcceptedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/RunStartedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/NodeStartedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/TaskDeltaEvent"
+          },
+          {
+            "$ref": "#/components/schemas/TaskCompletedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/NodeCompletedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/NodeFailedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/RunUsageEvent"
+          },
+          {
+            "$ref": "#/components/schemas/HumanGateWaitingRunEvent"
+          },
+          {
+            "$ref": "#/components/schemas/HumanGateResumedRunEvent"
+          },
+          {
+            "$ref": "#/components/schemas/RunCancelRequestedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/RunTerminalEvent"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "run.accepted": "#/components/schemas/RunAcceptedEvent",
+            "run.started": "#/components/schemas/RunStartedEvent",
+            "node.started": "#/components/schemas/NodeStartedEvent",
+            "task.delta": "#/components/schemas/TaskDeltaEvent",
+            "task.completed": "#/components/schemas/TaskCompletedEvent",
+            "node.completed": "#/components/schemas/NodeCompletedEvent",
+            "node.failed": "#/components/schemas/NodeFailedEvent",
+            "run.usage": "#/components/schemas/RunUsageEvent",
+            "run.waiting": "#/components/schemas/HumanGateWaitingRunEvent",
+            "run.resumed": "#/components/schemas/HumanGateResumedRunEvent",
+            "run.cancel_requested": "#/components/schemas/RunCancelRequestedEvent",
+            "run.terminal": "#/components/schemas/RunTerminalEvent"
+          }
+        }
+      },
+      "RunSnapshotResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 200
+          },
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RunSnapshot"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "retryable",
+          "category"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "code": {
+                  "const": "SIDE_EFFECT_UNKNOWN"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            },
+            "then": {
+              "required": [
+                "requires_operator_action"
+              ],
+              "properties": {
+                "retryable": {
+                  "const": false
+                },
+                "category": {
+                  "const": "EXECUTION"
+                },
+                "flow_category": {
+                  "const": "SIDE_EFFECT_UNKNOWN"
+                },
+                "requires_operator_action": {
+                  "const": true
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "VALIDATION",
+              "AUTH",
+              "AUTHORIZATION",
+              "CREDITS",
+              "CONFLICT",
+              "RATE_LIMIT",
+              "EXECUTION",
+              "INTERNAL",
+              "UPSTREAM"
+            ]
+          },
+          "flow_category": {
+            "type": "string",
+            "enum": [
+              "VALIDATION",
+              "RESOLUTION",
+              "POLICY",
+              "CANCELLED",
+              "TIMEOUT",
+              "UPSTREAM_TRANSIENT",
+              "UPSTREAM_PERMANENT",
+              "SIDE_EFFECT_UNKNOWN",
+              "INTERNAL"
+            ],
+            "description": "Flow IR 原始分类；仅在安全且与 Flow 有关时返回。"
+          },
+          "requires_operator_action": {
+            "type": "boolean",
+            "description": "true 表示内部 NEEDS_ATTENTION 已被投影为公开 FAILED，禁止客户端自动重试。"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "error",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer"
+          },
+          "success": {
+            "type": "boolean",
+            "const": false
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "null"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      },
+      "CreditsErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          },
+          {
+            "type": "object",
+            "description": "BetterYeah 兼容层保留顶层整数 60001；结构化机器错误仍使用字符串 CREDITS_INSUFFICIENT。",
+            "properties": {
+              "code": {
+                "type": "integer",
+                "const": 60001
+              },
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "CREDITS_INSUFFICIENT"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "CREDITS"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "GateExpiredErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "integer",
+                "const": 410
+              },
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "GATE_EXPIRED"
+                      },
+                      "retryable": {
+                        "type": "boolean",
+                        "const": false
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "CONFLICT"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ConversationNotFoundErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "integer",
+                "const": 404
+              },
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "CONVERSATION_NOT_FOUND"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "AUTHORIZATION"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "RequestContextForbiddenErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "integer",
+                "const": 403
+              },
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "enum": [
+                          "WORKSPACE_FORBIDDEN",
+                          "BROWSER_ORIGIN_FORBIDDEN",
+                          "ENDPOINT_SCOPE_FORBIDDEN"
+                        ]
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "AUTHORIZATION"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "FlowExecutionForbiddenErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "integer",
+                "const": 403
+              },
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "FLOW_EXECUTION_FORBIDDEN"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "AUTHORIZATION"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "RunNotFoundErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "integer",
+                "const": 404
+              },
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "RUN_NOT_FOUND"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "AUTHORIZATION"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ConflictErrorResponseBase": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "integer",
+                "const": 409
+              },
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "category": {
+                        "type": "string",
+                        "const": "CONFLICT"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "IdempotencyKeyReusedConflictErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConflictErrorResponseBase"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "IDEMPOTENCY_KEY_REUSED"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "CONFLICT"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ConversationRevisionConflictErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConflictErrorResponseBase"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "CONVERSATION_REVISION_INCOMPATIBLE"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "CONFLICT"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "CursorOutOfRangeConflictErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConflictErrorResponseBase"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "CURSOR_OUT_OF_RANGE"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "CONFLICT"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "FlowTargetAmbiguousConflictErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConflictErrorResponseBase"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "FLOW_TARGET_AMBIGUOUS"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "CONFLICT"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "FlowTargetUnavailableConflictErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConflictErrorResponseBase"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "FLOW_TARGET_UNAVAILABLE"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "CONFLICT"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "GateAlreadyResolvedConflictErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConflictErrorResponseBase"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "GATE_ALREADY_RESOLVED"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "CONFLICT"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "GateStaleConflictErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConflictErrorResponseBase"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ErrorDetail"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "GATE_STALE"
+                      },
+                      "category": {
+                        "type": "string",
+                        "const": "CONFLICT"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ConflictErrorResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/IdempotencyKeyReusedConflictErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/ConversationRevisionConflictErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/CursorOutOfRangeConflictErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/FlowTargetAmbiguousConflictErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/FlowTargetUnavailableConflictErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/GateAlreadyResolvedConflictErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/GateStaleConflictErrorResponse"
+          }
+        ]
+      },
+      "EventCursorExpiredData": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "min_sequence",
+          "last_sequence",
+          "operation_url",
+          "events_url"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "min_sequence": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "当前仍可重放的最小 run 内 sequence；当前全量 event retention 后为 last_sequence + 1。"
+          },
+          "last_sequence": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "当前 Run 已持久化的最大 sequence；来自 durable Run cursor，以十进制字符串输出，event retention 后不回退。"
+          },
+          "operation_url": {
+            "type": "string",
+            "format": "uri-reference",
+            "description": "查询 Run 快照和终态摘要的路径。"
+          },
+          "events_url": {
+            "type": "string",
+            "format": "uri-reference",
+            "description": "选择有效 cursor 后重新订阅的 SSE 路径。"
+          }
+        }
+      },
+      "EventCursorExpiredErrorResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "success",
+          "message",
+          "request_id",
+          "data",
+          "error",
+          "now_time"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "const": 410
+          },
+          "success": {
+            "type": "boolean",
+            "const": false
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EventCursorExpiredData"
+          },
+          "error": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ErrorDetail"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "EVENT_CURSOR_EXPIRED"
+                  },
+                  "retryable": {
+                    "const": false
+                  }
+                }
+              }
+            ]
+          },
+          "now_time": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "responses": {
+      "OperationAccepted": {
+        "description": "durable Run、canonical 202 acceptance receipt、积分预留和 run.accepted 事件已在同一事务中提交。相同 key/intent 的任何重放均返回该 receipt，而非首次 blocking 连接的 200 投影。",
+        "headers": {
+          "Location": {
+            "$ref": "#/components/headers/Location"
+          },
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Idempotent-Replay": {
+            "$ref": "#/components/headers/IdempotentReplay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/OperationAcceptedResponse"
+            }
+          }
+        }
+      },
+      "CancellationAccepted": {
+        "description": "不代表 Run 已取消。携带 Idempotency-Key 时，取消意图、首次安全响应投影与 keyed mutation idempotency record 已同事务持久化；相同 key/hash 重放首次 202 并返回 Idempotent-Replay。省略 key 时仍持久化取消意图并返回 202，但不创建 mutation idempotency record、不承诺网络重放去重，且 Idempotent-Replay 不出现或为 false。两种路径的 principal 均只由认证 context 派生；keyed 唯一 scope 不含 target，run_id 位于 intent。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Idempotent-Replay": {
+            "$ref": "#/components/headers/IdempotentReplay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RunMutationAcceptedResponse"
+            }
+          }
+        }
+      },
+      "GateResumeAccepted": {
+        "description": "Human Gate claim、重新授权、decision、mutation 与不可变首次 receipt 已原子提交；唯一 scope 不含 target，\nrun_id/gate_id 位于 intent。outcome 为封闭三分支：NEXT_GATE_WAITING 只物化并返回下一 pending_action，\n保持 quiescent 且不写 run.resumed/attempt；RUN_RESUMED 仅表示最后一个正向 decision 已写 run.resumed、\n下一 attempt 与恢复 outbox；TERMINAL_INTENT_ACCEPTED 仅表示 reject 的终态意图已提交并唤醒唯一 finalizer，\n不写 run.resumed/attempt。三者都不表示后续执行或终态 finalization 已完成；相同 actor/key/hash 重放首次 outcome。\n",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Idempotent-Replay": {
+            "$ref": "#/components/headers/IdempotentReplay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HumanGateMutationAcceptedResponse"
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "请求、cursor 或输入 schema 无效。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "AuthenticationError": {
+        "description": "credential/browser session/subject assertion 缺失、无效、过期、撤销或 session epoch 已失效。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "CreditsError": {
+        "description": "余额不足；顶层兼容 code 为整数 60001，结构化 error.code 固定为字符串 CREDITS_INSUFFICIENT。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CreditsErrorResponse"
+            }
+          }
+        }
+      },
+      "ForbiddenError": {
+        "description": "请求上下文在目标查找前已失败：Workspace-Id 与 credential 不一致、browser Origin 不匹配，或缺少整个端点 scope。该响应不得用于表示某个 Run/Gate/Conversation ID 存在但不可见；ID 资源不可见统一 typed 404。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RequestContextForbiddenErrorResponse"
+            }
+          }
+        }
+      },
+      "FlowExecutionForbiddenError": {
+        "description": "credential 已认证，但不具备 Flow execution scope/binding；响应不得包含候选 Flow、版本或 binding 细节。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FlowExecutionForbiddenErrorResponse"
+            }
+          }
+        }
+      },
+      "AgentChatNotFoundError": {
+        "description": "首次 Chat 的 Conversation 不存在/不可见时返回 CONVERSATION_NOT_FOUND；幂等命中但原 Run 不存在/当前不可见时固定返回 RUN_NOT_FOUND。两种情况均不得通过消息或时延泄漏目标是否存在。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ConversationNotFoundErrorResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/RunNotFoundErrorResponse"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "RunNotFoundError": {
+        "description": "Run/Gate 不存在或调用方不可见；两者统一使用 error.code=RUN_NOT_FOUND，不得通过 403、消息或时延形成存在性 oracle。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RunNotFoundErrorResponse"
+            }
+          }
+        }
+      },
+      "ConflictError": {
+        "description": "幂等键复用、conversation revision 不兼容（error.code=CONVERSATION_REVISION_INCOMPATIBLE）、future cursor、Flow 目标歧义/不可用、Gate 已决/陈旧或其他状态冲突。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ConflictErrorResponse"
+            }
+          }
+        }
+      },
+      "AgentChatConflictError": {
+        "description": "Chat 幂等键被不同 intent 复用，或幂等 miss 时当前 revision 与会话 contract 不兼容。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/IdempotencyKeyReusedConflictErrorResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/ConversationRevisionConflictErrorResponse"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "FlowRunConflictError": {
+        "description": "Flow Run 幂等键被不同 intent 复用，或 credential 的目标 Flow 歧义/当前不可用。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/IdempotencyKeyReusedConflictErrorResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/FlowTargetAmbiguousConflictErrorResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/FlowTargetUnavailableConflictErrorResponse"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "RunCancelConflictError": {
+        "description": "取消请求的幂等键已被不同 Run 或不同 intent 复用。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKeyReusedConflictErrorResponse"
+            }
+          }
+        }
+      },
+      "GateResumeConflictError": {
+        "description": "resume 幂等键被不同 intent 复用，或幂等 miss 时 Gate 已决/原准入事实已陈旧。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/IdempotencyKeyReusedConflictErrorResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/GateAlreadyResolvedConflictErrorResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/GateStaleConflictErrorResponse"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "EventCursorConflictError": {
+        "description": "cursor 大于当前 Run last_sequence；格式错误或 cursor/Last-Event-ID 不一致使用 400。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CursorOutOfRangeConflictErrorResponse"
+            }
+          }
+        }
+      },
+      "EventCursorExpiredError": {
+        "description": "cursor 早于可重放窗口；data 精确给出 run_id、最小/最大 sequence 与 operation/events 恢复 URL。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/EventCursorExpiredErrorResponse"
+            }
+          }
+        }
+      },
+      "GoneError": {
+        "description": "Human Gate 已过期；error.code 固定为 GATE_EXPIRED。调用方应重新读取 Run，不能重放旧批准或假定操作仍有效。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/GateExpiredErrorResponse"
+            }
+          }
+        }
+      },
+      "RateLimitError": {
+        "description": "超过 credential 或 resource 的限流阈值。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Retry-After": {
+            "schema": {
+              "type": "integer"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ConversationNotFoundError": {
+        "description": "会话不存在或调用方不可见；两者统一使用字符串 error.code=CONVERSATION_NOT_FOUND。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ConversationNotFoundErrorResponse"
+            }
+          }
+        }
+      },
+      "ServiceUnavailableError": {
+        "description": "Run 尚未被接受时，关键依赖或内部准入不可用；不得暗示已经创建 Run。",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "workspaceAccessKey": [],
+      "workspaceId": []
+    }
+  ]
+}

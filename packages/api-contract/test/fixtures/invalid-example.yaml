@@ -1,0 +1,24 @@
+openapi: 3.1.0
+info:
+  title: Invalid example fixture
+  version: 1.0.0
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [count]
+              properties:
+                count:
+                  type: integer
+            example:
+              count: not-an-integer
+      responses:
+        '201':
+          description: Created

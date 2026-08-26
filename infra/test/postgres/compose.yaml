@@ -1,0 +1,35 @@
+name: better-agent-g0-db
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg16@sha256:33198da2828a14c30348d2ccb4750833d5ed9a44c88d840a0e523d7417120337
+    environment:
+      POSTGRES_DB: better_agent_test
+      POSTGRES_PASSWORD: better-agent-test-only
+      POSTGRES_USER: ba_bootstrap_test
+    command:
+      - postgres
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - log_statement=none
+    volumes:
+      - ../../../packages/db/bootstrap/platform-roles.sql:/docker-entrypoint-initdb.d/010-platform-roles.sql:ro
+      - ./bootstrap-test.sql:/docker-entrypoint-initdb.d/020-test-logins.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=512m
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready --dbname better_agent_test --username ba_bootstrap_test",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true

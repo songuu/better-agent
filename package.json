@@ -1,0 +1,33 @@
+{
+  "name": "better-agent",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Contract-first private Agent platform monorepo",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@10.28.2",
+  "engines": {
+    "node": ">=22.0.0 <25",
+    "pnpm": ">=10.28.0 <11"
+  },
+  "scripts": {
+    "architecture:framework": "pnpm check && pnpm db:test:postgres16",
+    "build": "turbo run build",
+    "check": "pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build",
+    "contract:check": "node scripts/check-contracts.mjs",
+    "db:test:postgres16": "pnpm --filter @better-agent/db test:integration",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint . && turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "workspace:smoke": "node packages/test-support/scripts/workspace-smoke.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@types/node": "22.20.1",
+    "turbo": "2.10.12",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

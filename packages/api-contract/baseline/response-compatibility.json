@@ -1,0 +1,71 @@
+{
+  "operations": {
+    "createAgentChatRun": {
+      "method": "POST",
+      "path": "/v1/oapi/agent/chat",
+      "responseContractSha256": "e07e80a7a84f036a293d742564d5221e1ac9e9b1283e4c2d7fbb4e7fcb259f67",
+      "responseStatusCodes": ["200", "202", "400", "401", "402", "403", "404", "409", "429", "503"]
+    },
+    "createAgentConversation": {
+      "method": "POST",
+      "path": "/v1/oapi/agent/conversation",
+      "responseContractSha256": "d47de19774c2ceaec02c6faeee4b364db58419648e237828ec47ae1b45c2319c",
+      "responseStatusCodes": ["201", "400", "401", "403", "429", "503"]
+    },
+    "createBrowserRunEventSession": {
+      "method": "POST",
+      "path": "/v1/oapi/runs/{run_id}/events/session",
+      "responseContractSha256": "b4b4c77aeeeabbb6c327eacc4ef4877c8c522ee14d4e3bc96141d2e8d4a6d69c",
+      "responseStatusCodes": ["204", "400", "401", "403", "404", "429"]
+    },
+    "createFlowRun": {
+      "method": "POST",
+      "path": "/v1/oapi/flow/run",
+      "responseContractSha256": "69e94b28d18ad8aa61ddecdb2c61e046933b5523ad060581981a91f8a46899e7",
+      "responseStatusCodes": ["200", "202", "400", "401", "402", "403", "404", "409", "503"]
+    },
+    "exchangeBrowserSession": {
+      "method": "POST",
+      "path": "/v1/oapi/browser/sessions/exchange",
+      "responseContractSha256": "16455aef87b873cc45831e007d6ff6e823b9905d0b2db205197db6ed0ade2be3",
+      "responseStatusCodes": ["201", "400", "401", "403", "429"]
+    },
+    "getRun": {
+      "method": "GET",
+      "path": "/v1/oapi/runs/{run_id}",
+      "responseContractSha256": "b2901bef15ad7c2f47c87236e7895a582f6dedd4cb52b704cd148db8e6e89c7e",
+      "responseStatusCodes": ["200", "401", "403", "404"]
+    },
+    "listAgentConversationMessages": {
+      "method": "GET",
+      "path": "/v1/oapi/agent/conversation/messages",
+      "responseContractSha256": "ca1090c01547956e4a0124b18ce5dbd3e13603d7f8a8d4ec1857f0ca12475896",
+      "responseStatusCodes": ["200", "400", "401", "403", "404"]
+    },
+    "listAgentConversations": {
+      "method": "GET",
+      "path": "/v1/oapi/agent/conversations",
+      "responseContractSha256": "83428f09ac5257a0a7607707908ca7a7b0bca60bcbca4f56548c4ce22eac9430",
+      "responseStatusCodes": ["200", "400", "401", "403"]
+    },
+    "requestRunCancellation": {
+      "method": "POST",
+      "path": "/v1/oapi/runs/{run_id}/cancel",
+      "responseContractSha256": "507bcd0df9f254e302ebe621586268ac0b883668fc619ab79c7508ed0cb73d83",
+      "responseStatusCodes": ["200", "202", "400", "401", "403", "404", "409"]
+    },
+    "resumeHumanGate": {
+      "method": "POST",
+      "path": "/v1/oapi/runs/{run_id}/gates/{gate_id}/resume",
+      "responseContractSha256": "8cf02bb8705e529274ad380f75cce21d18244662a40f89f2a5e17b76a9680922",
+      "responseStatusCodes": ["202", "400", "401", "402", "403", "404", "409", "410", "422"]
+    },
+    "streamRunEvents": {
+      "method": "GET",
+      "path": "/v1/oapi/runs/{run_id}/events",
+      "responseContractSha256": "5f555868b0e3a24ffdb6c5bba3ad2a8edc7fe7c45d7cadc06da818c2080db8f7",
+      "responseStatusCodes": ["200", "400", "401", "403", "404", "409", "410"]
+    }
+  },
+  "schemaVersion": "openapi-response-compatibility/1"
+}

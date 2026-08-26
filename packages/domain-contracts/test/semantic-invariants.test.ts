@@ -1,0 +1,223 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  CompiledBindingEntryV1Schema,
+  CompiledCapabilityClosureV1Schema,
+  FlowGraphV1Schema,
+  ProductionPromotionGateDecisionV1Schema,
+} from '../src/index.js';
+
+const hash = 'sha256:semantic-invariant';
+const bindingPath = `bp1.${'a'.repeat(43)}`;
+const rootNodeId = `rn1.${'b'.repeat(43)}`;
+const missingNodeId = `rn1.${'c'.repeat(43)}`;
+
+const rootPin = {
+  workspace_id: 'workspace-1',
+  published_resource_kind: 'AGENT_RELEASE',
+  resource_id: 'agent-1',
+  resource_version_id: 'agent-release-1',
+  contract_hash: hash,
+  binding_mode: 'pinned',
+} as const;
+
+const effectivePolicy = {
+  credential_requirements: [],
+  principal_modes: ['none'],
+  egress: [],
+  readable_data_classification_ceiling: 'public',
+  output_data_classification: 'public',
+  side_effect: { maximum_class: 'safe', approval: 'none' },
+  operation_contract_hashes: [],
+  max_calls: 0,
+  max_depth: 0,
+  max_parallelism: 0,
+  budget: {},
+} as const;
+
+function actionNode(nodeId: string, key: string, type: 'output' | 'start' | 'text') {
+  return {
+    node_id: nodeId,
+    key,
+    type,
+    config: {},
+    inputs: {},
+    output_schema: { type: 'object' },
+  } as const;
+}
+
+describe('Flow graph semantic invariants', () => {
+  it('rejects unreachable nodes and ordinary control cycles', () => {
+    const unreachable = FlowGraphV1Schema.safeParse({
+      graph_id: 'graph-unreachable',
+      entry_node_id: 'start',
+      exit_node_ids: ['output'],
+      nodes: [
+        actionNode('start', 'start', 'start'),
+        actionNode('output', 'output', 'output'),
+        actionNode('orphan', 'orphan', 'text'),
+      ],
+      edges: [
+        {
+          edge_id: 'edge-start-output',
+          from: { node_id: 'start', port: 'control' },
+          to: { node_id: 'output', port: 'control' },
+          kind: 'control',
+        },
+      ],
+    });
+    expect(unreachable.success).toBe(false);
+    if (!unreachable.success) expect(unreachable.error.message).toContain('unreachable');
+
+    const cyclic = FlowGraphV1Schema.safeParse({
+      graph_id: 'graph-cycle',
+      entry_node_id: 'start',
+      exit_node_ids: ['output'],
+      nodes: [actionNode('start', 'start', 'start'), actionNode('output', 'output', 'output')],
+      edges: [
+        {
+          edge_id: 'edge-start-output',
+          from: { node_id: 'start', port: 'control' },
+          to: { node_id: 'output', port: 'control' },
+          kind: 'control',
+        },
+        {
+          edge_id: 'edge-output-start',
+          from: { node_id: 'output', port: 'control' },
+          to: { node_id: 'start', port: 'control' },
+          kind: 'control',
+        },
+      ],
+    });
+    expect(cyclic.success).toBe(false);
+    if (!cyclic.success) expect(cyclic.error.message).toContain('acyclic');
+  });
+});
+
+describe('Compiled closure reference integrity', () => {
+  const binding = {
+    binding_path_encoding_version: 'binding-path-lp-utf8/1',
+    binding_path: bindingPath,
+    binding_path_segments: [{ segment_kind: 'root', pin: rootPin }],
+    binding_id: 'knowledge-1',
+    binding_kind: 'knowledge',
+    target: {
+      workspace_id: 'workspace-1',
+      published_resource_kind: 'KNOWLEDGE_INDEX_GENERATION',
+      resource_id: 'knowledge-1',
+      resource_version_id: 'generation-1',
+      contract_hash: hash,
+      binding_mode: 'pinned',
+    },
+    config_schema_version: 'knowledge-binding/1',
+    config_hash: hash,
+    source_contract_hash: hash,
+    effective_policy: effectivePolicy,
+    operation_contracts: [],
+    dependency_node_ids: [missingNodeId],
+  } as const;
+
+  it('rejects unknown binding config versions', () => {
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...binding,
+        config_schema_version: 'future-binding/1',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects binding and gate references outside the closure node set', () => {
+    const result = CompiledCapabilityClosureV1Schema.safeParse({
+      schema_version: 'compiled-capability-closure/1',
+      root: { pin: rootPin, semantic_seed_hash: hash },
+      assembly_pins: [],
+      bindings: [binding],
+      gate_specs: [
+        {
+          schema_version: 'compiled-gate-spec/1',
+          gate_spec_id: 'gate-1',
+          gate_spec_hash: hash,
+          kind: 'input',
+          decision_schema_hash: hash,
+          approver_policy_ref: 'policy-1',
+          approver_policy_hash: hash,
+          on_reject: 'fail_run',
+          on_expire: 'fail_run',
+          protected_operation_contract_hashes: [],
+          source_kind: 'agent_release',
+          source_node_id: missingNodeId,
+        },
+      ],
+      resource_nodes: [
+        {
+          node_id: rootNodeId,
+          intrinsic_policy: {},
+          dependency_manifest_hash: hash,
+          node_role: 'root',
+          pin: rootPin,
+        },
+      ],
+      dependency_edges: [],
+      disabled_binding_paths: [],
+      aggregate_limits: effectivePolicy,
+      closure_hash: hash,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.message).toContain('unknown dependency node');
+      expect(result.error.message).toContain('unknown source node');
+    }
+  });
+});
+
+describe('Production promotion decision shape', () => {
+  const decision = {
+    schema_version: 'production-promotion-gate-decision/1',
+    decision_id: 'decision-1',
+    key: {
+      schema_version: 'production-promotion-gate-key/1',
+      workspace_id: 'workspace-1',
+      deployment_kind: 'agent',
+      deployment_id: 'deployment-1',
+      candidate_deployment_revision_id: 'revision-1',
+      candidate_revision_contract_hash: hash,
+      executable_target: rootPin,
+      dependency_manifest_hash: hash,
+      capability_closure_hash: hash,
+      evaluation_suite_release_id: 'suite-1',
+      evaluation_policy_hash: hash,
+      evaluation_run_ids: ['evaluation-1'],
+      evidence_bundle_hash: hash,
+      observed_evidence_epoch_hash: hash,
+      expected_activation_epoch: 0,
+    },
+    key_hash: hash,
+    status: 'PENDING',
+    decision_version: 1,
+    expires_at: '2026-08-27T00:00:00Z',
+  } as const;
+
+  it('requires ISO timestamps and status-consistent transition fields', () => {
+    expect(
+      ProductionPromotionGateDecisionV1Schema.safeParse({
+        ...decision,
+        expires_at: 'not-a-timestamp',
+      }).success,
+    ).toBe(false);
+    expect(
+      ProductionPromotionGateDecisionV1Schema.safeParse({
+        ...decision,
+        status: 'APPROVED',
+      }).success,
+    ).toBe(false);
+    expect(
+      ProductionPromotionGateDecisionV1Schema.safeParse({
+        ...decision,
+        decided_at: '2026-08-26T12:00:00Z',
+        decided_by: 'reviewer-1',
+        status: 'APPROVED',
+      }).success,
+    ).toBe(true);
+  });
+});
