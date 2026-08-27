@@ -1,9 +1,11 @@
 # `@better-agent/domain-contracts`
 
-G0-02 through G0-05 structural contract boundary for versioned Agent Release,
+G0-02 through G0-06 structural contract boundary for versioned Agent Release,
 Flow IR, Compiled Capability Closure, Agent Strategy, Experience, Agent/Flow
 Deployment, typed entry grants, admission snapshots, browser-session metadata
-and authentication payloads.
+and authentication payloads. G0-06 adds closed typed-principal Conversation,
+Run target/acceptance/snapshot/idempotency, Event/Outbox, HumanGate shape,
+reservation/ledger/current billing and archive/retention evidence contracts.
 
 The package fails closed on unknown top-level fields and schema versions, checks
 kind/pin/config agreement, Flow reachability and ordinary control-edge DAGs,
@@ -33,6 +35,14 @@ Run or effective plan: they contain only the transaction-observed credential or
 browser-session source, typed grant tuple, stable Deployment, active immutable
 revision pins and authorization epochs. G0-06 persists the snapshot with a Run;
 G1-01 later combines it with a compiled closure and policy meet.
+
+G0-06 contracts are structural facts, not executable authority. Agent Chat pins
+Conversation/message/state while direct Flow forbids those fields;
+`admission_snapshot_hash` and `accepted_plan_hash` remain distinct. Zero-credit
+Run acceptance still has a reservation and RESERVE ledger fact. HumanGate
+positive mutation, application Run acceptance, billing mutation, finalization,
+child Run and successful output validation remain unavailable until their
+database authority, fencing and registry dependencies exist.
 
 These boundaries are deliberate. A successful Zod parse proves structural
 contract validity only; it does not prove publication, authorization or runtime

@@ -8,6 +8,7 @@ import {
   InboundCredentialScopeV1Schema,
   parseDomainContract,
   TenantAuthContextV1Schema,
+  UuidV1Schema,
   VerifiedSubjectAssertionV1Schema,
 } from '../src/index.js';
 
@@ -35,6 +36,13 @@ const exchangePolicy = {
 } as const;
 
 describe('G0-04 authentication contracts', () => {
+  it('accepts only canonical lowercase UUID text used by PostgreSQL readback', () => {
+    expect(UuidV1Schema.parse('10000000-0000-4000-8000-00000000000a')).toBe(
+      '10000000-0000-4000-8000-00000000000a',
+    );
+    expect(UuidV1Schema.safeParse('10000000-0000-4000-8000-00000000000A').success).toBe(false);
+  });
+
   it('closes credential kinds and inbound operation scopes', () => {
     expect(CredentialKindV1Schema.parse('service_api')).toBe('service_api');
     expect(CredentialKindV1Schema.parse('permission_callback')).toBe('permission_callback');

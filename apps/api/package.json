@@ -23,6 +23,7 @@
   "dependencies": {
     "@better-agent/auth": "workspace:*",
     "@better-agent/domain-contracts": "workspace:*",
-    "@better-agent/release-core": "workspace:*"
+    "@better-agent/release-core": "workspace:*",
+    "@better-agent/run-core": "workspace:*"
   }
 }

@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "paths": {
+      "@better-agent/domain-contracts": ["../domain-contracts/dist/index.d.ts"],
+      "@better-agent/release-core": ["../release-core/dist/index.d.ts"]
+    },
+    "rootDir": "src",
+    "outDir": "dist",
+    "sourceMap": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsbuild/build.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["test/**/*.ts", "vitest.config.ts"]
+}

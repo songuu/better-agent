@@ -649,6 +649,7 @@ function browserResourceFixtures() {
     allowed_origins: ['https://app.example'],
     browser_client_channels: ['WEB_SDK'],
     change_set_hash: hashes.browserChangeSet,
+    conversation_contract_hash: hashes.conversationContract,
     credential_mapping_hash: hashes.mapping,
     credential_mappings: [],
     dependency_manifest_hash: hashes.browserRevisionManifest,
@@ -793,7 +794,7 @@ CROSS JOIN LATERAL app.resolve_agent_service_admission(
   );
 }
 
-async function publishBrowserDeploymentAndExchangeSession() {
+async function publishBrowserDeployment() {
   const { agentPrepared, experiencePrepared, revisionPrepared } = browserResourceFixtures();
   const grant = {
     agent_deployment_id: ids.browserDeployment,
@@ -847,7 +848,9 @@ SELECT app.transition_agent_deployment_security(
 );
 SELECT app.create_agent_deployment_entry_grant(${jsonb(grant)});`),
   );
+}
 
+async function exchangeBrowserSessionAndAssertFacts() {
   assertEqual(
     await harness.queryScalar(
       'ba_assertion_verifier_test',
@@ -866,7 +869,7 @@ CROSS JOIN LATERAL auth.exchange_browser_subject_assertion_for_session(
   'WEB_SDK',
   'https://app.example',
   'agent_browser_api',
-  clock_timestamp() + interval '90 seconds',
+  clock_timestamp() + interval '4 minutes 40 seconds',
   '${ids.issuerConfig}',
   'https://host.example/identity',
   ${bytea(material.subjectHash)},
@@ -874,12 +877,31 @@ CROSS JOIN LATERAL auth.exchange_browser_subject_assertion_for_session(
   1,
   ${bytea(material.assertionNonceHash)},
   clock_timestamp() - interval '1 second',
-  clock_timestamp() + interval '120 seconds'
+  clock_timestamp() + interval '4 minutes 50 seconds'
 ) AS exchange;`,
     ),
     ids.browserSession,
     'atomic browser assertion exchange creates a session',
   );
+
+  const remainingTtlText = await harness.queryScalar(
+    'ba_bootstrap_test',
+    `SELECT floor(extract(epoch FROM (
+  LEAST(session_row.expires_at, private_row.expires_at) - clock_timestamp()
+)))::bigint
+FROM public.browser_sessions AS session_row
+JOIN auth.browser_session_auth_index AS private_row
+  ON private_row.workspace_id = session_row.workspace_id
+ AND private_row.browser_session_id = session_row.id
+WHERE session_row.id = '${ids.browserSession}';`,
+  );
+  const remainingTtlSeconds = Number(remainingTtlText);
+  if (!Number.isSafeInteger(remainingTtlSeconds) || remainingTtlSeconds < 120) {
+    throw new Error(
+      'browser session fixture preserves explicit authentication freshness headroom: ' +
+        `expected at least 120 seconds, received ${remainingTtlText || '<empty>'}`,
+    );
+  }
 
   assertEqual(
     await harness.queryScalar(
@@ -995,6 +1017,7 @@ RESET ROLE;`,
     ids.browserSession,
     'auth owner can read the exact browser authentication fact set',
   );
+  return remainingTtlSeconds;
 }
 
 async function assertBrowserSessionVerifierAndEpochFence() {
@@ -1259,15 +1282,16 @@ async function main() {
   await assertTypedDraftAndRelease();
   await publishPoliciesAndFlowDeployment();
   await assertCasProductionAndAdmission();
-  await publishBrowserDeploymentAndExchangeSession();
+  await publishBrowserDeployment();
   await publishAgentConversationDeploymentAndAssertAdmission();
+  const browserSessionRemainingTtlSeconds = await exchangeBrowserSessionAndAssertFacts();
   await assertBrowserSessionVerifierAndEpochFence();
   await revokeTestOnlyPublishers();
   await assertDirectDmlAndRollbackGuard(migrations);
   await assertSecretAndBrowserProjectionBoundary();
 
   process.stdout.write(
-    `PostgreSQL 16 G0-05 release/deployment integration passed: ${migrations.length} migrations, FORCE RLS/owners, owner-only publishers, explicit executable-role deny, disposable fixture grants, typed Draft to Release, Flow Deployment CAS, production gate, Agent Conversation scope parity, revoke-race-safe typed service admission, target-bound Run-scope denial, atomic browser exchange, verifier/epoch fences, direct-DML denial, non-empty down guard and secret-log boundary.\n`,
+    `PostgreSQL 16 G0-05 release/deployment integration passed: ${migrations.length} migrations, FORCE RLS/owners, owner-only publishers, explicit executable-role deny, disposable fixture grants, typed Draft to Release, Flow Deployment CAS, production gate, Agent Conversation scope parity, revoke-race-safe typed service admission, target-bound Run-scope denial, atomic browser exchange with ${browserSessionRemainingTtlSeconds}s freshness readback, verifier/epoch fences, direct-DML denial, non-empty down guard and secret-log boundary.\n`,
   );
 }
 

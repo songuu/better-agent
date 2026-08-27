@@ -170,6 +170,10 @@ WHERE relation.relkind = 'r'
     ('search_path=pg_catalog, public, app, pg_temp'),
     ('search_path=pg_catalog, public, auth, app, pg_temp'),
     ('search_path=pg_catalog, public, auth, pg_temp')
+), reviewed_invoker_triggers(schema_name, function_name) AS (
+  VALUES
+    ('app', 'protect_run_change'),
+    ('app', 'protect_run_event_change')
 )
 SELECT count(*)
 FROM pg_catalog.pg_proc AS procedure_row
@@ -181,9 +185,16 @@ WHERE namespace_row.nspname <> 'pg_catalog'
     (
       namespace_row.nspname IN ('app', 'auth')
       AND NOT procedure_row.prosecdef
+      AND NOT EXISTS (
+        SELECT 1
+        FROM reviewed_invoker_triggers AS reviewed
+        WHERE reviewed.schema_name = namespace_row.nspname
+          AND reviewed.function_name = procedure_row.proname
+          AND procedure_row.prorettype = 'trigger'::regtype
+      )
     )
     OR (
-      procedure_row.prosecdef
+      (procedure_row.prosecdef OR namespace_row.nspname IN ('app', 'auth'))
       AND (
         procedure_row.proconfig IS NULL
         OR (

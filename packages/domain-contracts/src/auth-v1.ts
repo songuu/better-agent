@@ -30,7 +30,10 @@ export const InboundCredentialScopeSchema = InboundCredentialScopeV1Schema;
 export type InboundCredentialScopeV1 = z.infer<typeof InboundCredentialScopeV1Schema>;
 export type InboundCredentialScope = InboundCredentialScopeV1;
 
-export const UuidV1Schema = z.string().uuid();
+export const UuidV1Schema = z
+  .string()
+  .uuid()
+  .refine((value) => value === value.toLowerCase(), 'expected canonical lowercase UUID text');
 const IdentityHashV1Schema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{43}$/u, 'expected a canonical 32-byte base64url identity hash');

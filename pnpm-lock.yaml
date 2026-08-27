@@ -35,6 +35,9 @@ importers:
       '@better-agent/release-core':
         specifier: workspace:*
         version: link:../../packages/release-core
+      '@better-agent/run-core':
+        specifier: workspace:*
+        version: link:../../packages/run-core
 
   packages/api-contract:
     devDependencies:
@@ -60,6 +63,15 @@ importers:
         specifier: workspace:*
         version: link:../domain-contracts
 
+  packages/billing-core:
+    dependencies:
+      '@better-agent/domain-contracts':
+        specifier: workspace:*
+        version: link:../domain-contracts
+      '@better-agent/release-core':
+        specifier: workspace:*
+        version: link:../release-core
+
   packages/db: {}
 
   packages/domain-contracts:
@@ -73,6 +85,15 @@ importers:
       '@better-agent/domain-contracts':
         specifier: workspace:*
         version: link:../domain-contracts
+
+  packages/run-core:
+    dependencies:
+      '@better-agent/domain-contracts':
+        specifier: workspace:*
+        version: link:../domain-contracts
+      '@better-agent/release-core':
+        specifier: workspace:*
+        version: link:../release-core
 
   packages/test-support: {}
 

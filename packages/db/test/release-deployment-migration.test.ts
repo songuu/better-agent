@@ -10,7 +10,7 @@ const packageDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url
 describe('003 release and Deployment migration inventory', () => {
   it('adds one reviewed up/down migration with the closed G0-05 fact families', async () => {
     const migrations = await loadMigrations(path.join(packageDirectory, 'migrations'));
-    const migration = migrations.at(-1);
+    const migration = migrations.find(({ id }) => id === '003');
 
     expect(migration).toMatchObject({ id: '003', name: 'release_deployment' });
     expect(migration?.downSql).toBeDefined();
@@ -42,7 +42,7 @@ describe('003 release and Deployment migration inventory', () => {
 
   it('installs only restricted kind-specific mutation and admission entry points', async () => {
     const migrations = await loadMigrations(path.join(packageDirectory, 'migrations'));
-    const sql = migrations.at(-1)?.upSql ?? '';
+    const sql = migrations.find(({ id }) => id === '003')?.upSql ?? '';
 
     for (const functionName of [
       'publish_agent_strategy_release',
@@ -68,7 +68,7 @@ describe('003 release and Deployment migration inventory', () => {
 
   it('keeps content-addressed publishers owner-only until canonical attestation exists', async () => {
     const migrations = await loadMigrations(path.join(packageDirectory, 'migrations'));
-    const sql = migrations.at(-1)?.upSql ?? '';
+    const sql = migrations.find(({ id }) => id === '003')?.upSql ?? '';
     const controlGrant = sql.match(
       /GRANT EXECUTE ON FUNCTION app\.create_publishable_resource_root[\s\S]*?TO ba_control_executor;/u,
     )?.[0];
@@ -89,7 +89,7 @@ describe('003 release and Deployment migration inventory', () => {
 
   it('does not reuse selector-based entry resolution for original-Run scopes', async () => {
     const migrations = await loadMigrations(path.join(packageDirectory, 'migrations'));
-    const sql = migrations.at(-1)?.upSql ?? '';
+    const sql = migrations.find(({ id }) => id === '003')?.upSql ?? '';
     const agentResolver = sql.match(
       /CREATE FUNCTION app\.resolve_agent_service_admission[\s\S]*?\$function\$;/u,
     )?.[0];
@@ -106,7 +106,7 @@ describe('003 release and Deployment migration inventory', () => {
 
   it('uses the reviewed Agent Conversation scope names end to end', async () => {
     const migrations = await loadMigrations(path.join(packageDirectory, 'migrations'));
-    const sql = migrations.at(-1)?.upSql ?? '';
+    const sql = migrations.find(({ id }) => id === '003')?.upSql ?? '';
     const agentResolver = sql.match(
       /CREATE FUNCTION app\.resolve_agent_service_admission[\s\S]*?\$function\$;/u,
     )?.[0];
@@ -119,7 +119,7 @@ describe('003 release and Deployment migration inventory', () => {
 
   it('explicitly revokes publisher helpers from every executable platform role', async () => {
     const migrations = await loadMigrations(path.join(packageDirectory, 'migrations'));
-    const sql = migrations.at(-1)?.upSql ?? '';
+    const sql = migrations.find(({ id }) => id === '003')?.upSql ?? '';
 
     expect(sql).toMatch(
       /REVOKE ALL ON FUNCTION auth\.register_prepared_published_resource[\s\S]*?FROM\s+ba_runtime,\s*ba_control_executor,\s*ba_management_attestation_issuer,\s*ba_subject_assertion_verifier,\s*ba_auth_owner;/u,

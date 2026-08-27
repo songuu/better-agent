@@ -1,8 +1,12 @@
 -- 设计冻结 SQL 草案（未执行）
 -- 目标：PostgreSQL 16
 -- 用途：ADR-004 与 docs/05-数据模型.md §10.3 的运行、恢复与计费事实模型。
--- 本文件不是已应用的 migration；评审通过后应以独立 migration 方式执行，并保留 up/down、
--- 备份恢复、RLS 和并发扣费验证证据。
+-- 本文件不是已应用的 migration，也不是 G0-06 的 canonical DDL。G0-06 的唯一可执行路径为
+-- packages/db/migrations/004_run_billing.up.sql 与 004_run_billing.down.sql；它们必须适配现有
+-- 000～003 migration loader，并保留 up/down、备份恢复、RLS 和并发扣费验证证据。
+-- 本草案中的自管 BEGIN/COMMIT、重复 published_resource_versions registry、G0-07 executor/
+-- attestation roles 与旧 owner/grant 形状不得复制到 production migration。实现只能按
+-- docs/plans/2026-08-26-g0-06-run-fact-layer.md 逐项选择并用 forward migration 复用 003 事实。
 -- 2026-08-25 架构复审已把 WAITING/RESUMING、resume idempotency、current billing state
 -- 与 executor fencing 收回通用基线；本文件仍尚未包含 HumanGate 实体、Instruction Skill activation
 -- 或 Deployment/credential snapshot。它不能单独满足 G1-Agent；这些表、状态、受控函数、
@@ -699,16 +703,25 @@ CREATE TABLE runs (
         OR (
             status IN ('FAILED', 'CANCELLED', 'TIMED_OUT', 'NEEDS_ATTENTION')
             AND terminal_result_redacted IS NULL
-            AND terminal_error_redacted IS NOT NULL
-            AND jsonb_typeof(terminal_error_redacted) = 'object'
-            AND terminal_error_redacted ?& ARRAY['code', 'retryable', 'category']
-            AND terminal_error_redacted->>'code' = termination_reason
-            AND terminal_error_redacted->'retryable' = 'false'::jsonb
-            AND terminal_error_redacted->>'category' = 'EXECUTION'
-            AND terminal_error_redacted - ARRAY[
-                'code', 'retryable', 'category', 'flow_category',
-                'requires_operator_action'
-            ] = '{}'::jsonb
+            AND (
+                (
+                    status = 'NEEDS_ATTENTION'
+                    AND terminal_error_redacted = jsonb_build_object(
+                        'code', termination_reason,
+                        'retryable', false,
+                        'category', 'EXECUTION',
+                        'requires_operator_action', true
+                    )
+                )
+                OR (
+                    status <> 'NEEDS_ATTENTION'
+                    AND terminal_error_redacted = jsonb_build_object(
+                        'code', termination_reason,
+                        'retryable', false,
+                        'category', 'EXECUTION'
+                    )
+                )
+            )
         )
         OR (
             status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'NEEDS_ATTENTION')
@@ -3809,7 +3822,6 @@ BEGIN
         ) || CASE WHEN p_terminal_status = 'NEEDS_ATTENTION'
             THEN jsonb_build_object(
                 'code', 'SIDE_EFFECT_UNKNOWN',
-                'flow_category', 'SIDE_EFFECT_UNKNOWN',
                 'requires_operator_action', true
             )
             ELSE '{}'::jsonb END;

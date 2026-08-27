@@ -36,6 +36,12 @@ import {
   TenantAuthContextV1Schema,
   VerifiedSubjectAssertionV1Schema,
 } from './auth-v1.js';
+import {
+  BillingIntentV1Schema,
+  CreditLedgerEntryV1Schema,
+  CreditReservationV1Schema,
+  RunBillingStateV1Schema,
+} from './billing-v1.js';
 import { BrowserSessionMetadataV1Schema } from './browser-session-v1.js';
 import {
   CompiledCapabilityClosureV1Schema,
@@ -43,6 +49,11 @@ import {
   ProductionPromotionGateDecisionV1Schema,
   ProductionPromotionGateKeyV1Schema,
 } from './compiled-capability-closure-v1.js';
+import {
+  ConversationPrincipalV1Schema,
+  ConversationStateCasV1Schema,
+  ConversationV1Schema,
+} from './conversation-v1.js';
 import { ImmutableDeploymentPolicyPinV1Schema } from './deployment-common-v1.js';
 import { ExperienceReleaseV1Schema } from './experience-release-v1.js';
 import {
@@ -55,6 +66,25 @@ import {
   FlowDeploymentV1Schema,
 } from './flow-deployment-v1.js';
 import { FlowGateSpecV1Schema, FlowIrV1Schema } from './flow-ir-v1.js';
+import { HumanGateResumeIntentV1Schema, HumanGateV1Schema } from './human-gate-v1.js';
+import {
+  ArchiveApprovalReceiptV1Schema,
+  ArchiveManifestV1Schema,
+  ArchiveVerificationReceiptV1Schema,
+  RunArchiveEvidenceV1Schema,
+  RunRetentionHorizonsV1Schema,
+  RunRetentionPurgeReceiptV1Schema,
+} from './retention-v1.js';
+import {
+  OutboxMessageSetV1Schema,
+  OutboxMessageV1Schema,
+  RunEventV1Schema,
+} from './run-event-outbox-v1.js';
+import {
+  RunIdempotencyNamespaceV1Schema,
+  RunIdempotencyRequestV1Schema,
+} from './run-idempotency-v1.js';
+import { RunAcceptanceV1Schema, RunSnapshotV1Schema, RunTargetV1Schema } from './run-v1.js';
 
 export type DomainContractErrorCode =
   | 'DOMAIN_SCHEMA_VERSION_MISSING'
@@ -231,6 +261,44 @@ export const domainContractSchemaEntries = [
     schema: FlowDeploymentEntryAdmissionSnapshotV1Schema,
   },
   { schemaVersion: 'browser-session-metadata/1', schema: BrowserSessionMetadataV1Schema },
+  { schemaVersion: 'conversation-principal/1', schema: ConversationPrincipalV1Schema },
+  { schemaVersion: 'conversation/1', schema: ConversationV1Schema },
+  { schemaVersion: 'conversation-state-cas/1', schema: ConversationStateCasV1Schema },
+  { schemaVersion: 'run-target/1', schema: RunTargetV1Schema },
+  { schemaVersion: 'run-acceptance/1', schema: RunAcceptanceV1Schema },
+  { schemaVersion: 'run-snapshot/1', schema: RunSnapshotV1Schema },
+  {
+    schemaVersion: 'run-idempotency-namespace/1',
+    schema: RunIdempotencyNamespaceV1Schema,
+  },
+  {
+    schemaVersion: 'run-idempotency-request/1',
+    schema: RunIdempotencyRequestV1Schema,
+  },
+  { schemaVersion: 'run-event/1', schema: RunEventV1Schema },
+  { schemaVersion: 'run-outbox-message/1', schema: OutboxMessageV1Schema },
+  { schemaVersion: 'run-outbox-message-set/1', schema: OutboxMessageSetV1Schema },
+  { schemaVersion: 'human-gate-instance/1', schema: HumanGateV1Schema },
+  { schemaVersion: 'human-gate-resume-intent/1', schema: HumanGateResumeIntentV1Schema },
+  { schemaVersion: 'credit-reservation/1', schema: CreditReservationV1Schema },
+  { schemaVersion: 'credit-ledger-entry/1', schema: CreditLedgerEntryV1Schema },
+  { schemaVersion: 'run-billing-state/1', schema: RunBillingStateV1Schema },
+  { schemaVersion: 'billing-intent/1', schema: BillingIntentV1Schema },
+  { schemaVersion: 'run-archive-manifest/1', schema: ArchiveManifestV1Schema },
+  {
+    schemaVersion: 'run-archive-verification-receipt/1',
+    schema: ArchiveVerificationReceiptV1Schema,
+  },
+  {
+    schemaVersion: 'run-archive-approval-receipt/1',
+    schema: ArchiveApprovalReceiptV1Schema,
+  },
+  { schemaVersion: 'run-archive-evidence/1', schema: RunArchiveEvidenceV1Schema },
+  { schemaVersion: 'run-retention-horizons/1', schema: RunRetentionHorizonsV1Schema },
+  {
+    schemaVersion: 'run-retention-purge-receipt/1',
+    schema: RunRetentionPurgeReceiptV1Schema,
+  },
   { schemaVersion: 'agent-human-gate/1', schema: AgentGateSpecV1Schema },
   {
     schemaVersion: 'public-capability-handle/1',

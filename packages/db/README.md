@@ -1,9 +1,9 @@
 # `@better-agent/db`
 
-Executable G0-03 migration tooling plus the reviewed G0-04 tenant/auth/RLS and
-G0-05 Release/Deployment/admission foundation. `docs/database` remains design
-input; only the ordered SQL re-cut and reviewed under `migrations/` is
-executable.
+Executable G0-03 migration tooling plus the reviewed G0-04 tenant/auth/RLS,
+G0-05 Release/Deployment/admission, and G0-06 Run/Billing fact foundations.
+`docs/database` remains design input; only the ordered SQL re-cut and reviewed
+under `migrations/` is executable.
 
 ## Contract
 
@@ -25,13 +25,17 @@ the application migration runner. It installs the two extensions, revokes
 untrusted `CREATE` on schema `public`, and creates only these NOLOGIN roles:
 
 - `ba_migrator`, `ba_auth_owner`, `ba_authorization_owner`;
+- `ba_run_owner`, `ba_billing_owner`, `ba_archive_evidence_owner`,
+  `ba_retention`;
 - `ba_runtime`, `ba_control_executor`;
 - `ba_management_attestation_issuer`, `ba_subject_assertion_verifier`.
 
 The actual deployment login is provisioned separately as a non-superuser and
 granted `ba_migrator`. Migration `000` rejects a superuser/BYPASSRLS runner,
-missing ADMIN OPTION on the two owner roles, login-capable owner/group roles, or
-owner-role membership inherited by an executable role.
+missing ADMIN OPTION on the G0-04/G0-05 owner roles, login-capable owner/group
+roles, or owner-role membership inherited by an executable role. Migration
+`004` applies the same catalog and membership boundary to the four G0-06
+owners; only `ba_migrator` may hold their ADMIN OPTION.
 
 G0-07 phase executors and internal-service attestations are intentionally absent.
 They must arrive in their own migration and cannot be simulated with an external
@@ -158,9 +162,49 @@ to `002` succeeds only while every G0-05 table and invalidation source is empty;
 after any durable fact, recovery is forward-only and business rollback uses
 pointer CAS plus audit.
 
-G0-06 Run/profile persistence, G0-07 phase roles, public HTTP handlers,
-production pools/APM/CORS and deployed infrastructure remain outside this
-package's verified state.
+## G0-06 Run and Billing fact boundary
+
+`004_run_billing.up.sql` projects the immutable Conversation contract hash from
+the G0-05 Agent revision document and adds Workspace-direct typed-principal
+Conversation/message/state facts, complete idempotency sentinels and receipts,
+Run/Attempt/Step/Event/Checkpoint/HumanGate/Outbox facts, credit
+reservation/ledger/reconciliation facts, and the three-part archive evidence
+plus purge receipts. Every new relation has a Workspace candidate key and
+`ENABLE + FORCE RLS`; raw application relation access remains denied.
+
+The four NOLOGIN owners separate Run composition, billing, archive evidence and
+retention. Cross-owner work is exposed only through narrowly scoped definer
+functions with a fixed `pg_catalog, public, auth, app, pg_temp` search path. Two
+exact trigger guards remain SECURITY INVOKER because their policy must inspect
+the actual billing/retention `current_user`; they pin the same search path and
+are frozen by catalog and static tests. Billing serialization follows Workspace
+before Run/reservation/ledger and uses `FOR NO KEY UPDATE` for the Workspace row
+so concurrent namespace foreign-key checks cannot form a lock-upgrade deadlock.
+Durable ledger entries are append-only, and Run identity plus terminal
+tombstones are immutable. The reviewed down migration rejects any later
+migration or durable G0-06 fact with SQLSTATE `55000`; only an empty fact layer
+can return to the exact G0-05 catalog shape.
+
+`ba_runtime` can authenticate pointer-free browser identity and use only the
+persisted-target idempotency lookup, original-Run read/events and controlled
+cancellation primitives. Lookup and mutation functions revalidate current
+literal service scope/grant/security or signed browser session/principal/
+Deployment epochs before returning a receipt or writing Event/Outbox facts.
+Browser identity establishment still requires the exact canonical origin,
+`agent_browser_api` audience and reviewed client channel. It never reads the
+active revision for an existing Run.
+
+Prepared root acceptance, Conversation mutation, billing, finalization,
+archive/purge and HumanGate mutation remain owner-only seams. In particular,
+application `SUCCEEDED` finalization, child/allocation and all positive Gate
+paths fail closed until G0-07 supplies executor attestation, fencing and trusted
+validation. The migration does not add a scheduler, worker, HTTP handler or
+production credential.
+
+G0-07 phase roles, public HTTP handlers, production pools/APM/CORS and deployed
+infrastructure remain outside this package's verified state. Successful local
+PostgreSQL integration proves only disposable migration/catalog behavior, not
+that a production database has applied `004`.
 
 Use only the documented discrete libpq environment variables (`PGHOST`,
 `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGPORT`, the supported `PGSSL*` variables
@@ -175,7 +219,10 @@ node packages/db/dist/cli.js status
 node packages/db/dist/cli.js down --to 0 --allow-down
 ```
 
-The integration harness under `infra/test/postgres` is the evidence path for an
-empty database, idempotent apply, checksum tamper rejection, empty G0-05
-down/reapply, FORCE RLS/ACL attacks, typed admission and browser exchange. It is
-local disposable PostgreSQL evidence only, not production-state evidence.
+The five integration harnesses under `infra/test/postgres` are the evidence path
+for an empty database, idempotent apply, checksum tamper rejection, exact G0-05
+catalog restoration after empty G0-06 down/reapply, non-empty down protection,
+FORCE RLS/ACL attacks, typed admission, Flow/Agent Chat facts, billing, terminal
+and retention concurrency, and browser original-Run authorization. Run the complete
+serial gate with `pnpm --filter @better-agent/db test:integration`. It is local
+disposable PostgreSQL evidence only, not production-state evidence.

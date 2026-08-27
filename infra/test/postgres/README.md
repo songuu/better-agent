@@ -12,9 +12,12 @@ management-issuer and subject-verifier logins.
 pnpm --filter @better-agent/db test:integration
 ```
 
-Each run owns a unique Compose project and executes three suites serially:
+Each run owns a unique Compose project and executes five suites serially:
 
-- `run-integration.mjs` proves the migration engine/version/ledger lifecycle;
+- `run-integration.mjs` proves the migration engine/version/ledger lifecycle,
+  captures the exact G0-05 catalog fingerprint before `004`, proves an empty
+  `004 -> 003 -> 004` rollback/reapply restores it, and keeps checksum/down
+  guards fail closed;
 - `run-auth-rls-integration.mjs` applies the ordered G0-04 migrations as the
   non-superuser migrator and exercises role separation, exact definer
   `search_path` policy, FORCE RLS, signed transaction context, credential
@@ -34,6 +37,21 @@ Each run owns a unique Compose project and executes three suites serially:
   public/private projection, correct/wrong verifier behavior and Deployment
   revoke-epoch fence. Browser token issuance remains an API-layer concern and
   is not claimed by this database harness.
+- `run-run-billing-integration.mjs` applies the G0-06 migration to a fresh
+  PostgreSQL 16 database and proves the four isolated fact owners, all 22
+  Workspace-direct facts, exact owner/function/ACL matrices, FORCE RLS and the
+  reviewed original-Run surface. It exercises Flow acceptance and namespace
+  races, late-failure rollback, zero and positive billing, charge/expiry replay
+  and conflict, reserve/settle/release/expire/reconciliation concurrency,
+  terminal replay/conflict/rollback, `SIDE_EFFECT_UNKNOWN`, immutable ledger,
+  archive evidence, EVENTS/RECOVERY negative and positive matrices, non-empty
+  down protection and real `pg_temp` shadow attacks.
+- `run-run-conversation-browser-integration.mjs` independently exercises the
+  owner-only Agent Chat/Conversation CAS transaction, two-connection
+  single-winner rollback, pointer-free browser identity, same-end-user
+  cross-session namespace, persisted-target read/events/cancel, cancellation
+  replay/conflict, wrong-principal invisibility and observed Deployment
+  revoke/epoch lock fencing.
 
 The auth/RLS suite also authenticates, commits, starts the next transaction and
 checks an empty context, then repeats the check after rollback—all through one
