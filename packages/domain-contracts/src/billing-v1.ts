@@ -10,23 +10,25 @@ import {
 
 const PostgreSqlBigintMaxV1 = 9_223_372_036_854_775_807n;
 const PostgreSqlBigintMinV1 = -9_223_372_036_854_775_808n;
+const CanonicalCreditAmountPattern = /^(?:0|[1-9][0-9]*)$/u;
+const CanonicalSignedCreditDeltaPattern = /^(?:0|-?[1-9][0-9]*)$/u;
 
 export const CreditAmountV1Schema = z
   .string()
-  .regex(/^(?:0|[1-9][0-9]*)$/u, 'expected a canonical non-negative credit decimal string')
+  .regex(CanonicalCreditAmountPattern, 'expected a canonical non-negative credit decimal string')
   .refine(
-    (value) => /^(?:0|[1-9][0-9]*)$/u.test(value) && BigInt(value) <= PostgreSqlBigintMaxV1,
+    (value) => CanonicalCreditAmountPattern.test(value) && BigInt(value) <= PostgreSqlBigintMaxV1,
     'credit amount exceeds the PostgreSQL bigint boundary',
   );
 
 export const SignedCreditDeltaV1Schema = z
   .string()
   .regex(
-    /^(?:0|-?[1-9][0-9]*)$/u,
+    CanonicalSignedCreditDeltaPattern,
     'expected a canonical signed credit decimal string without plus signs or negative zero',
   )
   .refine((value) => {
-    if (!/^(?:0|-?[1-9][0-9]*)$/u.test(value)) return false;
+    if (!CanonicalSignedCreditDeltaPattern.test(value)) return false;
     const parsed = BigInt(value);
     return parsed >= PostgreSqlBigintMinV1 && parsed <= PostgreSqlBigintMaxV1;
   }, 'credit delta exceeds the PostgreSQL bigint boundary');
@@ -60,6 +62,13 @@ export const CreditReservationV1Schema = z
     released_at: z.iso.datetime({ offset: true }).optional(),
   })
   .superRefine((reservation, ctx) => {
+    if (
+      !CanonicalCreditAmountPattern.test(reservation.reserved_credits) ||
+      !CanonicalCreditAmountPattern.test(reservation.settled_credits) ||
+      !CanonicalCreditAmountPattern.test(reservation.released_credits)
+    ) {
+      return;
+    }
     const reserved = BigInt(reservation.reserved_credits);
     const settled = BigInt(reservation.settled_credits);
     const released = BigInt(reservation.released_credits);
@@ -174,6 +183,13 @@ function addLedgerDeltaIssues(
   },
   ctx: z.RefinementCtx,
 ): void {
+  if (
+    !CanonicalSignedCreditDeltaPattern.test(entry.available_delta_credits) ||
+    !CanonicalSignedCreditDeltaPattern.test(entry.reserved_delta_credits) ||
+    !CanonicalSignedCreditDeltaPattern.test(entry.settled_delta_credits)
+  ) {
+    return;
+  }
   const available = BigInt(entry.available_delta_credits);
   const reserved = BigInt(entry.reserved_delta_credits);
   const settled = BigInt(entry.settled_delta_credits);
@@ -342,6 +358,12 @@ const ReconciliationBillingIntentV1Schema = z
     evidence_sha256: Sha256HexV1Schema,
   })
   .superRefine((intent, ctx) => {
+    if (
+      !CanonicalCreditAmountPattern.test(intent.release_credits) ||
+      !CanonicalCreditAmountPattern.test(intent.settle_credits)
+    ) {
+      return;
+    }
     if (BigInt(intent.release_credits) + BigInt(intent.settle_credits) > PostgreSqlBigintMaxV1) {
       addCustomIssue(
         ctx,

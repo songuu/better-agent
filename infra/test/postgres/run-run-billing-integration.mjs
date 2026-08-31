@@ -7,6 +7,7 @@ import {
   loadMigrations,
   renderDownMigrationSql,
   renderUpMigrationSql,
+  selectMigrationMilestone,
 } from '../../../packages/db/dist/index.js';
 
 import { assertEqual, assertRejected, createPostgresHarness } from './harness.mjs';
@@ -1079,8 +1080,17 @@ async function seedRunAttempt(runId, base) {
 }
 
 async function assert004RejectsIndirectMigratorEnrollmentBeforeInstall() {
-  const migrations = await loadMigrations(migrationDirectory);
-  const throughG005 = migrations.filter(({ version }) => version < 4);
+  const loadedMigrations = await loadMigrations(migrationDirectory);
+  const through003 = selectMigrationMilestone(
+    loadedMigrations,
+    '003',
+    'G0-06 indirect migrator prerequisite',
+  );
+  const through004 = selectMigrationMilestone(
+    loadedMigrations,
+    '004',
+    'G0-06 indirect migrator rejection',
+  );
   await harness.psql(
     'ba_bootstrap_test',
     `CREATE ROLE ba_g006_indirect_migrator_group
@@ -1094,12 +1104,12 @@ GRANT ba_g006_indirect_migrator_group TO ba_g006_indirect_migrator_test
 
   let indirectApply;
   try {
-    await harness.psql('ba_g006_indirect_migrator_test', renderUpMigrationSql(throughG005), {
+    await harness.psql('ba_g006_indirect_migrator_test', renderUpMigrationSql(through003), {
       echoErrors: true,
     });
     indirectApply = await harness.psql(
       'ba_g006_indirect_migrator_test',
-      renderUpMigrationSql(migrations),
+      renderUpMigrationSql(through004),
       { allowFailure: true },
     );
     assertVerbosePostgresError(
@@ -1133,7 +1143,12 @@ DROP ROLE ba_g006_indirect_migrator_group;`,
 }
 
 async function installFreshSchema() {
-  const migrations = await loadMigrations(migrationDirectory);
+  const loadedMigrations = await loadMigrations(migrationDirectory);
+  const migrations = selectMigrationMilestone(
+    loadedMigrations,
+    '004',
+    'G0-06 Run/Billing integration',
+  );
   await harness.psql('ba_migrator_test', renderUpMigrationSql(migrations), {
     echoErrors: true,
   });

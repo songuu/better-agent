@@ -15,3 +15,11 @@ authorization.
 HumanGate contracts are shape-only in G0-06. Positive mutation always returns
 `RUN_HUMAN_GATE_APPLY_UNAVAILABLE` until lease/fencing and published GateSpec
 authority exist.
+
+G0-07 adds pure, clock-free decisions for Attempt claim/renew/relinquish,
+two-stage recovery fencing and ticket disposition, lease-bound execution facts,
+and `RUN_DISPATCH` delivery/terminal retirement. Callers must supply values read
+or derived under the database row lock (`now`, `session_user`, tokens, IDs and
+hashes); these helpers validate contracts and produce immutable persistence
+intents, but they do not grant authority or prove that a transaction committed.
+PostgreSQL owner functions remain the authorization and linearization boundary.

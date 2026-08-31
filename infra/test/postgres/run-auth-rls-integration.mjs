@@ -2,7 +2,11 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadMigrations, renderUpMigrationSql } from '../../../packages/db/dist/index.js';
+import {
+  loadMigrations,
+  renderUpMigrationSql,
+  selectMigrationMilestone,
+} from '../../../packages/db/dist/index.js';
 
 import { assertEqual, assertRejected, createPostgresHarness } from './harness.mjs';
 
@@ -125,7 +129,12 @@ async function expectDatabaseRejection(role, sql, pattern, context) {
 }
 
 async function installSchema() {
-  const migrations = await loadMigrations(migrationDirectory);
+  const loadedMigrations = await loadMigrations(migrationDirectory);
+  const migrations = selectMigrationMilestone(
+    loadedMigrations,
+    '005',
+    'G0-07 auth/RLS integration',
+  );
   await harness.psql('ba_migrator_test', renderUpMigrationSql(migrations), {
     echoErrors: true,
   });

@@ -8,7 +8,12 @@ import {
   renderDownMigrationSql,
   renderUpMigrationSql,
 } from '../../../packages/db/dist/index.js';
-
+import {
+  decodeCatalogLines,
+  describeCatalogDeltas,
+  g005CatalogFingerprintSql,
+  g005CatalogLinesSql,
+} from './catalog-fingerprint.mjs';
 import { assertEqual, assertRejected, createPostgresHarness } from './harness.mjs';
 
 const harnessDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -21,197 +26,79 @@ const fixtureDirectory = path.join(harnessDirectory, 'fixtures', 'migrations');
 const harness = createPostgresHarness('g0-db');
 let temporaryMigrationDirectory;
 
-const g005CatalogFingerprintSql = `WITH catalog_lines(line) AS (
-  SELECT pg_catalog.format(
-    'class|%I.%I|%s|%s|%s|%s|%s|%s',
-    namespace_row.nspname,
-    relation.relname,
-    relation.relkind,
-    relation.relowner::regrole::text,
-    COALESCE(relation.relacl::text, ''),
-    relation.relrowsecurity,
-    relation.relforcerowsecurity,
-    relation.relreplident
-  )
-  FROM pg_catalog.pg_class AS relation
-  JOIN pg_catalog.pg_namespace AS namespace_row
-    ON namespace_row.oid = relation.relnamespace
-  WHERE namespace_row.nspname IN ('app', 'auth', 'public')
-  UNION ALL
-  SELECT pg_catalog.format(
-    'attribute|%I.%I|%s|%s|%s|%s|%s|%s',
-    namespace_row.nspname,
-    relation.relname,
-    attribute.attname,
-    attribute.atttypid::regtype::text,
-    attribute.attnotnull,
-    attribute.attgenerated,
-    COALESCE(attribute.attacl::text, ''),
-    COALESCE(pg_catalog.pg_get_expr(attribute_default.adbin, attribute_default.adrelid), '')
-  )
-  FROM pg_catalog.pg_attribute AS attribute
-  JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
-  JOIN pg_catalog.pg_namespace AS namespace_row
-    ON namespace_row.oid = relation.relnamespace
-  LEFT JOIN pg_catalog.pg_attrdef AS attribute_default
-    ON attribute_default.adrelid = attribute.attrelid
-   AND attribute_default.adnum = attribute.attnum
-  WHERE namespace_row.nspname IN ('app', 'auth', 'public')
-    AND attribute.attnum > 0
-    AND NOT attribute.attisdropped
-  UNION ALL
-  SELECT pg_catalog.format(
-    'constraint|%I.%I|%s|%s',
-    namespace_row.nspname,
-    relation.relname,
-    constraint_row.conname,
-    pg_catalog.pg_get_constraintdef(constraint_row.oid, true)
-  )
-  FROM pg_catalog.pg_constraint AS constraint_row
-  JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_row.conrelid
-  JOIN pg_catalog.pg_namespace AS namespace_row
-    ON namespace_row.oid = relation.relnamespace
-  WHERE namespace_row.nspname IN ('app', 'auth', 'public')
-  UNION ALL
-  SELECT pg_catalog.format(
-    'policy|%I.%I|%s|%s|%s|%s|%s|%s',
-    namespace_row.nspname,
-    relation.relname,
-    policy.polname,
-    policy.polpermissive,
-    policy.polcmd,
-    policy.polroles::text,
-    COALESCE(pg_catalog.pg_get_expr(policy.polqual, policy.polrelid), ''),
-    COALESCE(pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid), '')
-  )
-  FROM pg_catalog.pg_policy AS policy
-  JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
-  JOIN pg_catalog.pg_namespace AS namespace_row
-    ON namespace_row.oid = relation.relnamespace
-  WHERE namespace_row.nspname IN ('app', 'auth', 'public')
-  UNION ALL
-  SELECT pg_catalog.format(
-    'function|%I.%I(%s)|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s',
-    namespace_row.nspname,
-    procedure_row.proname,
-    pg_catalog.pg_get_function_identity_arguments(procedure_row.oid),
-    procedure_row.proowner::regrole::text,
-    COALESCE(procedure_row.proacl::text, ''),
-    procedure_row.prosecdef,
-    procedure_row.prokind,
-    procedure_row.provolatile,
-    procedure_row.proparallel,
-    procedure_row.proleakproof,
-    procedure_row.proisstrict,
-    procedure_row.proretset,
-    COALESCE(procedure_row.proconfig::text, ''),
-    pg_catalog.pg_get_function_result(procedure_row.oid),
-    CASE
-      WHEN procedure_row.prokind = 'a' THEN ''
-      ELSE pg_catalog.pg_get_functiondef(procedure_row.oid)
-    END
-  )
-  FROM pg_catalog.pg_proc AS procedure_row
-  JOIN pg_catalog.pg_namespace AS namespace_row
-    ON namespace_row.oid = procedure_row.pronamespace
-  WHERE namespace_row.nspname IN ('app', 'auth', 'public')
-  UNION ALL
-  SELECT pg_catalog.format(
-    'trigger|%I.%I|%s|%s|%s|%s',
-    namespace_row.nspname,
-    relation.relname,
-    trigger_row.tgname,
-    trigger_row.tgenabled,
-    trigger_row.tgisinternal,
-    pg_catalog.pg_get_triggerdef(trigger_row.oid, true)
-  )
-  FROM pg_catalog.pg_trigger AS trigger_row
-  JOIN pg_catalog.pg_class AS relation ON relation.oid = trigger_row.tgrelid
-  JOIN pg_catalog.pg_namespace AS namespace_row
-    ON namespace_row.oid = relation.relnamespace
-  WHERE namespace_row.nspname IN ('app', 'auth', 'public')
-  UNION ALL
-  SELECT pg_catalog.format(
-    'index|%I.%I|%I|%s|%s|%s|%s|%s|%s|%s|%s|%s',
-    namespace_row.nspname,
-    table_relation.relname,
-    index_relation.relname,
-    index_row.indisunique,
-    index_row.indisprimary,
-    index_row.indisexclusion,
-    index_row.indisvalid,
-    index_row.indisready,
-    index_row.indislive,
-    index_row.indisclustered,
-    index_row.indisreplident,
-    pg_catalog.pg_get_indexdef(index_relation.oid)
-  )
-  FROM pg_catalog.pg_index AS index_row
-  JOIN pg_catalog.pg_class AS table_relation ON table_relation.oid = index_row.indrelid
-  JOIN pg_catalog.pg_class AS index_relation ON index_relation.oid = index_row.indexrelid
-  JOIN pg_catalog.pg_namespace AS namespace_row
-    ON namespace_row.oid = table_relation.relnamespace
-  WHERE namespace_row.nspname IN ('app', 'auth', 'public')
-  UNION ALL
-  SELECT pg_catalog.format(
-    'schema|%I|%s|%s',
-    namespace_row.nspname,
-    namespace_row.nspowner::regrole::text,
-    COALESCE(namespace_row.nspacl::text, '')
-  )
-  FROM pg_catalog.pg_namespace AS namespace_row
-  WHERE namespace_row.nspname IN ('app', 'auth', 'public')
-)
-SELECT pg_catalog.encode(
-  public.digest(
-    COALESCE(pg_catalog.string_agg(line, E'\\n' ORDER BY line), ''),
-    'sha256'
-  ),
-  'hex'
-)
-FROM catalog_lines;`;
-
-const g005CatalogLinesSql = `${g005CatalogFingerprintSql.slice(
-  0,
-  g005CatalogFingerprintSql.lastIndexOf('\nSELECT pg_catalog.encode('),
-)}
-SELECT pg_catalog.encode(pg_catalog.convert_to(line, 'UTF8'), 'hex')
-FROM catalog_lines
-ORDER BY line;`;
-
-function decodeCatalogLines(encodedLines) {
-  if (encodedLines === '') return [];
-  return encodedLines.split('\n').map((line) => Buffer.from(line, 'hex').toString('utf8'));
-}
-
-function catalogLineKey(line) {
-  const parts = line.split('|');
-  if (parts[0] === 'function') return parts.slice(0, 3).join('|');
-  if (parts[0] === 'trigger' || parts[0] === 'index') return parts.slice(0, 4).join('|');
-  return line;
-}
-
-function describeCatalogDeltas(expectedLines, actualLines) {
-  const expectedByKey = new Map(expectedLines.map((line) => [catalogLineKey(line), line]));
-  const actualByKey = new Map(actualLines.map((line) => [catalogLineKey(line), line]));
-  const keys = new Set([...expectedByKey.keys(), ...actualByKey.keys()]);
-  return [...keys]
-    .filter((key) => expectedByKey.get(key) !== actualByKey.get(key))
-    .slice(0, 12)
-    .map((key) => {
-      const expected = expectedByKey.get(key);
-      const actual = actualByKey.get(key);
-      if (expected === undefined) return `added ${key}`;
-      if (actual === undefined) return `removed ${key}`;
-      let offset = 0;
-      while (offset < expected.length && expected[offset] === actual[offset]) offset += 1;
-      return `changed ${key} at character ${String(offset)}`;
-    })
-    .join('; ');
-}
-
 function formatVersion(version) {
   return version.toString().padStart(3, '0');
+}
+
+function requireMigration(migrations, id) {
+  const matches = migrations.filter((migration) => migration.id === id);
+  if (matches.length !== 1) {
+    throw new Error(`expected exactly one migration ${id}, found ${String(matches.length)}`);
+  }
+  return matches[0];
+}
+
+function prefixThrough(migrations, id) {
+  const target = requireMigration(migrations, id);
+  return migrations.slice(0, target.version + 1);
+}
+
+function assertMigrationIds(migrations, expectedIds, label) {
+  assertEqual(
+    migrations.map((migration) => migration.id).join(','),
+    expectedIds.join(','),
+    `${label} selected migration ids`,
+  );
+}
+
+function assertG005CatalogFingerprintCoverage() {
+  for (const catalogField of [
+    'relation.relrowsecurity',
+    'relation.relforcerowsecurity',
+    'relation.relreplident',
+    'policy.polpermissive',
+    'index_row.indisclustered',
+    'index_row.indisreplident',
+  ]) {
+    if (!g005CatalogFingerprintSql.includes(catalogField)) {
+      throw new Error(`shared G0-05 catalog fingerprint omitted ${catalogField}`);
+    }
+  }
+}
+
+async function assertAppliedMigrationIds(expectedIds, label) {
+  assertEqual(
+    await harness.queryScalar(
+      'ba_migrator_test',
+      `SELECT COALESCE(
+  pg_catalog.string_agg(pg_catalog.lpad(version::text, 3, '0'), ',' ORDER BY version),
+  ''
+)
+FROM better_agent_migrations.schema_migrations;`,
+    ),
+    expectedIds.join(','),
+    `${label} applied migration ids`,
+  );
+}
+
+async function readCatalogSnapshot() {
+  return {
+    fingerprint: await harness.queryScalar('ba_migrator_test', g005CatalogFingerprintSql),
+    lines: decodeCatalogLines(await harness.queryScalar('ba_migrator_test', g005CatalogLinesSql)),
+  };
+}
+
+async function assertCatalogSnapshot(expected, label) {
+  const actual = await readCatalogSnapshot();
+  if (
+    actual.fingerprint === expected.fingerprint &&
+    JSON.stringify(actual.lines) === JSON.stringify(expected.lines)
+  ) {
+    return;
+  }
+  throw new Error(
+    `${label}: fingerprint ${expected.fingerprint} -> ${actual.fingerprint}; ${describeCatalogDeltas(expected.lines, actual.lines)}`,
+  );
 }
 
 async function assertPlatformOwnerMembershipDriftFailsClosed() {
@@ -334,6 +221,59 @@ ROLLBACK;`,
   );
 }
 
+async function assertCatalogFingerprintDetectsInternalRiTriggerStateMutation(expectedFingerprint) {
+  const mutatedFingerprint = await harness.queryScalar(
+    'ba_bootstrap_test',
+    `BEGIN;
+DO $probe$
+DECLARE
+  target_schema name;
+  target_relation name;
+  target_trigger name;
+BEGIN
+  SELECT
+    namespace_row.nspname,
+    relation.relname,
+    trigger_row.tgname
+  INTO STRICT target_schema, target_relation, target_trigger
+  FROM pg_catalog.pg_trigger AS trigger_row
+  JOIN pg_catalog.pg_class AS relation ON relation.oid = trigger_row.tgrelid
+  JOIN pg_catalog.pg_namespace AS namespace_row
+    ON namespace_row.oid = relation.relnamespace
+  JOIN pg_catalog.pg_constraint AS constraint_row
+    ON constraint_row.oid = trigger_row.tgconstraint
+  WHERE namespace_row.nspname IN ('app', 'auth', 'public')
+    AND trigger_row.tgisinternal
+    AND trigger_row.tgenabled <> 'D'
+    AND constraint_row.contype = 'f'
+  ORDER BY
+    namespace_row.nspname,
+    relation.relname,
+    constraint_row.conname,
+    trigger_row.tgtype
+  LIMIT 1;
+
+  EXECUTE pg_catalog.format(
+    'ALTER TABLE %I.%I DISABLE TRIGGER %I',
+    target_schema,
+    target_relation,
+    target_trigger
+  );
+END;
+$probe$;
+${g005CatalogFingerprintSql}
+ROLLBACK;`,
+  );
+  if (mutatedFingerprint === expectedFingerprint) {
+    throw new Error('G0-05 catalog fingerprint ignored an internal RI trigger state mutation');
+  }
+  assertEqual(
+    await harness.queryScalar('ba_migrator_test', g005CatalogFingerprintSql),
+    expectedFingerprint,
+    'internal RI trigger fingerprint mutation probe rolls back exactly',
+  );
+}
+
 async function assertG005RollbackSemantics() {
   const workspaceId = 'd0050000-0000-4000-8000-000000000001';
   const principalId = 'd0050000-0000-4000-8000-000000000002';
@@ -452,8 +392,15 @@ async function materializeMigrationChainWithProbe() {
 async function main() {
   const { migrations, probeVersion, productionMigrationCount } =
     await materializeMigrationChainWithProbe();
-  const g005Migrations = migrations.slice(0, productionMigrationCount - 1);
-  const productionMigrations = migrations.slice(0, productionMigrationCount);
+  const through003 = prefixThrough(migrations, '003');
+  const through004 = prefixThrough(migrations, '004');
+  const through005 = prefixThrough(migrations, '005');
+  const probeMigration = requireMigration(migrations, formatVersion(probeVersion));
+  assertMigrationIds(through003, ['000', '001', '002', '003'], 'through-003');
+  assertMigrationIds(through004, ['000', '001', '002', '003', '004'], 'through-004');
+  assertMigrationIds(through005, ['000', '001', '002', '003', '004', '005'], 'through-005');
+  assertG005CatalogFingerprintCoverage();
+  assertEqual(probeMigration.version, probeVersion, 'dynamic probe migration version');
   await harness.start();
   await assertPlatformOwnerMembershipDriftFailsClosed();
 
@@ -474,9 +421,10 @@ async function main() {
     'fresh probe schema',
   );
 
-  await harness.psql('ba_migrator_test', renderUpMigrationSql(g005Migrations), {
+  await harness.psql('ba_migrator_test', renderUpMigrationSql(through003), {
     echoErrors: true,
   });
+  await assertAppliedMigrationIds(['000', '001', '002', '003'], 'through-003');
   assertEqual(
     await harness.queryScalar(
       'ba_migrator_test',
@@ -488,16 +436,32 @@ async function main() {
     't',
     'pre-004 G0-05 catalog baseline',
   );
-  const g005CatalogFingerprint = await harness.queryScalar(
-    'ba_migrator_test',
-    g005CatalogFingerprintSql,
+  const through003Catalog = await readCatalogSnapshot();
+  await assertCatalogFingerprintDetectsReplicaIdentityMutation(through003Catalog.fingerprint);
+  await assertCatalogFingerprintDetectsInternalRiTriggerStateMutation(
+    through003Catalog.fingerprint,
   );
-  const g005CatalogLines = decodeCatalogLines(
-    await harness.queryScalar('ba_migrator_test', g005CatalogLinesSql),
+
+  await harness.psql('ba_migrator_test', renderUpMigrationSql(through004), {
+    echoErrors: true,
+  });
+  await assertAppliedMigrationIds(['000', '001', '002', '003', '004'], 'through-004');
+  const through004Catalog = await readCatalogSnapshot();
+
+  await harness.psql('ba_migrator_test', renderUpMigrationSql(through005), {
+    echoErrors: true,
+  });
+  await assertAppliedMigrationIds(
+    ['000', '001', '002', '003', '004', '005'],
+    'through-005 initial apply',
   );
-  await assertCatalogFingerprintDetectsReplicaIdentityMutation(g005CatalogFingerprint);
+  const through005Catalog = await readCatalogSnapshot();
 
   await harness.psql('ba_migrator_test', renderUpMigrationSql(migrations), { echoErrors: true });
+  await assertAppliedMigrationIds(
+    ['000', '001', '002', '003', '004', '005', probeMigration.id],
+    'through dynamic probe',
+  );
   const postgresVersion = await harness.queryScalar('ba_migrator_test', 'SHOW server_version;');
   const pgvectorVersion = await harness.queryScalar(
     'ba_migrator_test',
@@ -600,14 +564,22 @@ VALUES (0, '${platformMigration.name}', '${platformMigration.checksum}', NULL);`
   );
   const downTamperResult = await harness.psql(
     'ba_migrator_test',
-    renderDownMigrationSql(downTampered, productionMigrationCount - 1, { allowDown: true }),
+    renderDownMigrationSql(downTampered, requireMigration(migrations, '005').version, {
+      allowDown: true,
+    }),
     { allowFailure: true },
   );
   assertRejected(downTamperResult, /checksum mismatch/u, 'down checksum tamper');
 
   await harness.psql(
     'ba_migrator_test',
-    renderDownMigrationSql(migrations, productionMigrationCount - 1, { allowDown: true }),
+    renderDownMigrationSql(migrations, requireMigration(migrations, '005').version, {
+      allowDown: true,
+    }),
+  );
+  await assertAppliedMigrationIds(
+    ['000', '001', '002', '003', '004', '005'],
+    'reviewed probe rollback',
   );
   assertEqual(
     await harness.queryScalar(
@@ -622,14 +594,56 @@ VALUES (0, '${platformMigration.name}', '${platformMigration.checksum}', NULL);`
       'ba_migrator_test',
       'SELECT count(*) FROM better_agent_migrations.schema_migrations;',
     ),
-    String(productionMigrationCount),
+    String(through005.length),
     'rollback ledger',
+  );
+  await assertCatalogSnapshot(
+    through005Catalog,
+    'probe rollback did not restore the exact initial through-005 catalog',
   );
 
   await harness.psql(
     'ba_migrator_test',
-    renderDownMigrationSql(migrations, productionMigrationCount - 2, { allowDown: true }),
+    renderDownMigrationSql(migrations, requireMigration(migrations, '004').version, {
+      allowDown: true,
+    }),
+    { echoErrors: true },
   );
+  await assertAppliedMigrationIds(['000', '001', '002', '003', '004'], 'reviewed G0-07 rollback');
+  assertEqual(
+    await harness.queryScalar(
+      'ba_migrator_test',
+      `SELECT (
+  to_regclass('auth.internal_service_attestations') IS NULL
+  AND to_regclass('public.run_billing_authority_receipts') IS NULL
+  AND to_regclass('public.runs') IS NOT NULL
+  AND to_regclass('public.credit_reservations') IS NOT NULL
+);`,
+    ),
+    't',
+    'empty G0-07 reviewed rollback preserves the through-004 catalog',
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_migrator_test',
+      'SELECT count(*) FROM better_agent_migrations.schema_migrations;',
+    ),
+    String(through004.length),
+    'G0-07 rollback ledger',
+  );
+  await assertCatalogSnapshot(
+    through004Catalog,
+    '005 down did not restore the exact initial through-004 catalog',
+  );
+
+  await harness.psql(
+    'ba_migrator_test',
+    renderDownMigrationSql(migrations, requireMigration(migrations, '003').version, {
+      allowDown: true,
+    }),
+    { echoErrors: true },
+  );
+  await assertAppliedMigrationIds(['000', '001', '002', '003'], 'reviewed G0-06 rollback');
   assertEqual(
     await harness.queryScalar(
       'ba_migrator_test',
@@ -642,32 +656,25 @@ VALUES (0, '${platformMigration.name}', '${platformMigration.checksum}', NULL);`
     't',
     'empty G0-06 reviewed rollback preserves the G0-05 catalog',
   );
-  const restoredG005CatalogFingerprint = await harness.queryScalar(
-    'ba_migrator_test',
-    g005CatalogFingerprintSql,
+  await assertCatalogSnapshot(
+    through003Catalog,
+    '004 down did not restore the exact pre-004 G0-05 catalog',
   );
-  if (restoredG005CatalogFingerprint !== g005CatalogFingerprint) {
-    const restoredCatalogLines = decodeCatalogLines(
-      await harness.queryScalar('ba_migrator_test', g005CatalogLinesSql),
-    );
-    throw new Error(
-      `004 down did not restore the exact pre-004 G0-05 catalog: ${describeCatalogDeltas(
-        g005CatalogLines,
-        restoredCatalogLines,
-      )}`,
-    );
-  }
   await assertG005RollbackSemantics();
   assertEqual(
     await harness.queryScalar(
       'ba_migrator_test',
       'SELECT count(*) FROM better_agent_migrations.schema_migrations;',
     ),
-    String(productionMigrationCount - 1),
+    String(through003.length),
     'G0-06 rollback ledger',
   );
 
-  await harness.psql('ba_migrator_test', renderUpMigrationSql(productionMigrations));
+  await harness.psql('ba_migrator_test', renderUpMigrationSql(through005));
+  await assertAppliedMigrationIds(
+    ['000', '001', '002', '003', '004', '005'],
+    'through-005 reapply',
+  );
   assertEqual(
     await harness.queryScalar(
       'ba_migrator_test',
@@ -678,6 +685,10 @@ VALUES (0, '${platformMigration.name}', '${platformMigration.checksum}', NULL);`
     ),
     't',
     'G0-06 reapply restores its catalog',
+  );
+  await assertCatalogSnapshot(
+    through005Catalog,
+    '004+005 reapply did not restore the exact initial through-005 catalog',
   );
 
   await harness.psql(

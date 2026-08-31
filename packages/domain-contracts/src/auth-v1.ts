@@ -32,8 +32,13 @@ export type InboundCredentialScope = InboundCredentialScopeV1;
 
 export const UuidV1Schema = z
   .string()
-  .uuid()
-  .refine((value) => value === value.toLowerCase(), 'expected canonical lowercase UUID text');
+  // PostgreSQL's uuid type canonicalizes case and hyphens, but does not require
+  // an RFC version/variant nibble. Readback contracts must accept every value
+  // that the authoritative database can persist.
+  .regex(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
+    'expected canonical lowercase PostgreSQL UUID text',
+  );
 const IdentityHashV1Schema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{43}$/u, 'expected a canonical 32-byte base64url identity hash');

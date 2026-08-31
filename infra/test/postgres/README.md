@@ -6,18 +6,22 @@ and uses an ephemeral `tmpfs` data directory. The test-only database is not
 published to the host; the harness talks to it through `docker compose exec`.
 The DBA bootstrap installs the platform roles and extensions, while
 `bootstrap-test.sql` enrolls distinct non-superuser migrator, runtime, control,
-management-issuer and subject-verifier logins.
+management-issuer, subject-verifier, internal-issuer, and isolated phase
+executor logins. A second execution login is the wrong-`session_user`
+adversarial fixture.
 
 ```powershell
 pnpm --filter @better-agent/db test:integration
 ```
 
-Each run owns a unique Compose project and executes five suites serially:
+Each run owns a unique Compose project and executes six suites serially:
 
 - `run-integration.mjs` proves the migration engine/version/ledger lifecycle,
-  captures the exact G0-05 catalog fingerprint before `004`, proves an empty
-  `004 -> 003 -> 004` rollback/reapply restores it, and keeps checksum/down
-  guards fail closed;
+  names the through-003/004/005 milestones explicitly, appends a dynamic 006
+  probe, and reads the selected IDs back from the migration ledger. It captures
+  the exact G0-05 catalog fingerprint before `004`, proves empty
+  `003 -> 004 -> 005 -> 006 -> 005 -> 004 -> 003 -> 004 -> 005` lifecycle
+  restoration, and keeps checksum/down guards fail closed;
 - `run-auth-rls-integration.mjs` applies the ordered G0-04 migrations as the
   non-superuser migrator and exercises role separation, exact definer
   `search_path` policy, FORCE RLS, signed transaction context, credential
@@ -52,6 +56,24 @@ Each run owns a unique Compose project and executes five suites serially:
   cross-session namespace, persisted-target read/events/cancel, cancellation
   replay/conflict, wrong-principal invisibility and observed Deployment
   revoke/epoch lock fencing.
+- `run-runtime-security-integration.mjs` applies G0-07 and proves the
+  internal-service attestation matrix, exact phase ACL/RLS separation,
+  same-phase wrong-`session_user` rejection, two-connection Attempt and
+  `RUN_DISPATCH` fencing/recovery/retirement, historical attribution billing,
+  HOLD/finalizer convergence, and fail-closed Attempt completion for missing,
+  open, unknown, or unsafe effect responsibility. It observes two-connection
+  same-fact misses for effect envelopes, receipts, usage sources, and termination
+  intents, including winner commit, exact loser replay, conflict, one-row
+  readback, post-commit response loss, and old-producer replay after fencing and
+  terminalization. Checkpoint and billing-source responses are parsed through
+  the public domain schemas; the billing matrix includes termination-first and
+  full-settlement-before-termination orders. Three isolated databases prove the
+  `005` used-installation down guard independently for a new audit fact, legacy
+  protocol-v5 provenance, and a v2 ledger authority while comparing migration
+  ledger, complete catalog, and runtime-fact digests. Marker-driven interactive
+  clients expose real backend PIDs and `pg_blocking_pids` edges; client kill,
+  DBA backend termination, timeout cleanup, and raw-buffer secret canaries are
+  reported separately from a server/WAL crash claim.
 
 The auth/RLS suite also authenticates, commits, starts the next transaction and
 checks an empty context, then repeats the check after rollback—all through one

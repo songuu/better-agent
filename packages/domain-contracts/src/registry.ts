@@ -42,6 +42,11 @@ import {
   CreditReservationV1Schema,
   RunBillingStateV1Schema,
 } from './billing-v1.js';
+import {
+  BillingIntentV2Schema,
+  CreditLedgerEntryV2Schema,
+  RunCancellationReleaseAuthorityV1Schema,
+} from './billing-v2.js';
 import { BrowserSessionMetadataV1Schema } from './browser-session-v1.js';
 import {
   CompiledCapabilityClosureV1Schema,
@@ -80,6 +85,21 @@ import {
   OutboxMessageV1Schema,
   RunEventV1Schema,
 } from './run-event-outbox-v1.js';
+import {
+  RunAttemptLeaseAuthorityV1Schema,
+  RunAttemptLeaseStateV1Schema,
+  RunDispatchRetirementReceiptV1Schema,
+  RunExecutionCheckpointV1Schema,
+  RunRecoveryHoldIntentV1Schema,
+  RunRecoveryTicketDispositionV1Schema,
+  RunRecoveryTicketV1Schema,
+  RunRetryEffectEnvelopeV1Schema,
+  RunSideEffectReceiptV1Schema,
+  RunTerminationIntentV1Schema,
+  RunTerminationIntentRecordResultV1Schema,
+  RunUsageAttributionV1Schema,
+  RunUsageAttributionRecordResultV1Schema,
+} from './run-execution-v1.js';
 import {
   RunIdempotencyNamespaceV1Schema,
   RunIdempotencyRequestV1Schema,
@@ -278,12 +298,43 @@ export const domainContractSchemaEntries = [
   { schemaVersion: 'run-event/1', schema: RunEventV1Schema },
   { schemaVersion: 'run-outbox-message/1', schema: OutboxMessageV1Schema },
   { schemaVersion: 'run-outbox-message-set/1', schema: OutboxMessageSetV1Schema },
+  { schemaVersion: 'run-attempt-lease-state/1', schema: RunAttemptLeaseStateV1Schema },
+  { schemaVersion: 'run-attempt-lease-authority/1', schema: RunAttemptLeaseAuthorityV1Schema },
+  { schemaVersion: 'run-retry-effect-envelope/1', schema: RunRetryEffectEnvelopeV1Schema },
+  { schemaVersion: 'run-side-effect-receipt/1', schema: RunSideEffectReceiptV1Schema },
+  { schemaVersion: 'run-execution-checkpoint/1', schema: RunExecutionCheckpointV1Schema },
+  { schemaVersion: 'run-usage-attribution/1', schema: RunUsageAttributionV1Schema },
+  { schemaVersion: 'run-termination-intent/1', schema: RunTerminationIntentV1Schema },
+  {
+    schemaVersion: 'run-usage-attribution-record-result/1',
+    schema: RunUsageAttributionRecordResultV1Schema,
+  },
+  {
+    schemaVersion: 'run-termination-intent-record-result/1',
+    schema: RunTerminationIntentRecordResultV1Schema,
+  },
+  { schemaVersion: 'run-recovery-ticket/1', schema: RunRecoveryTicketV1Schema },
+  {
+    schemaVersion: 'run-recovery-ticket-disposition/1',
+    schema: RunRecoveryTicketDispositionV1Schema,
+  },
+  { schemaVersion: 'run-recovery-hold-intent/1', schema: RunRecoveryHoldIntentV1Schema },
+  {
+    schemaVersion: 'run-dispatch-retirement-receipt/1',
+    schema: RunDispatchRetirementReceiptV1Schema,
+  },
   { schemaVersion: 'human-gate-instance/1', schema: HumanGateV1Schema },
   { schemaVersion: 'human-gate-resume-intent/1', schema: HumanGateResumeIntentV1Schema },
   { schemaVersion: 'credit-reservation/1', schema: CreditReservationV1Schema },
   { schemaVersion: 'credit-ledger-entry/1', schema: CreditLedgerEntryV1Schema },
   { schemaVersion: 'run-billing-state/1', schema: RunBillingStateV1Schema },
   { schemaVersion: 'billing-intent/1', schema: BillingIntentV1Schema },
+  {
+    schemaVersion: 'run-cancellation-release-authority/1',
+    schema: RunCancellationReleaseAuthorityV1Schema,
+  },
+  { schemaVersion: 'billing-intent/2', schema: BillingIntentV2Schema },
+  { schemaVersion: 'credit-ledger-entry/2', schema: CreditLedgerEntryV2Schema },
   { schemaVersion: 'run-archive-manifest/1', schema: ArchiveManifestV1Schema },
   {
     schemaVersion: 'run-archive-verification-receipt/1',

@@ -1,7 +1,8 @@
 # `@better-agent/db`
 
 Executable G0-03 migration tooling plus the reviewed G0-04 tenant/auth/RLS,
-G0-05 Release/Deployment/admission, and G0-06 Run/Billing fact foundations.
+G0-05 Release/Deployment/admission, G0-06 Run/Billing facts, and the G0-07
+internal phase/lease/fencing security plane.
 `docs/database` remains design input; only the ordered SQL re-cut and reviewed
 under `migrations/` is executable.
 
@@ -28,18 +29,24 @@ untrusted `CREATE` on schema `public`, and creates only these NOLOGIN roles:
 - `ba_run_owner`, `ba_billing_owner`, `ba_archive_evidence_owner`,
   `ba_retention`;
 - `ba_runtime`, `ba_control_executor`;
-- `ba_management_attestation_issuer`, `ba_subject_assertion_verifier`.
+- `ba_management_attestation_issuer`, `ba_subject_assertion_verifier`;
+- `ba_internal_service_attestation_issuer`;
+- `ba_admission_executor`, `ba_execution_executor`, `ba_metering_executor`,
+  `ba_finalizer_executor`, `ba_reclaimer_executor`,
+  `ba_reconciliation_executor`, `ba_archive_evidence_executor`, and
+  `ba_retention_executor`.
 
 The actual deployment login is provisioned separately as a non-superuser and
 granted `ba_migrator`. Migration `000` rejects a superuser/BYPASSRLS runner,
 missing ADMIN OPTION on the G0-04/G0-05 owner roles, login-capable owner/group
 roles, or owner-role membership inherited by an executable role. Migration
 `004` applies the same catalog and membership boundary to the four G0-06
-owners; only `ba_migrator` may hold their ADMIN OPTION.
-
-G0-07 phase executors and internal-service attestations are intentionally absent.
-They must arrive in their own migration and cannot be simulated with an external
-API credential.
+owners; only `ba_migrator` may hold their ADMIN OPTION. Migration `005` also
+rejects phase-role inheritance through peer/legacy groups and any LOGIN that
+combines more than one phase or overlaps a phase with runtime, control,
+issuer, migrator, or owner authority. Deployment enrolls each internal-service
+LOGIN into exactly one phase role; an external API credential cannot stand in
+for that enrollment or its signed database attestation.
 
 ## G0-04 control/auth boundary
 
@@ -201,10 +208,54 @@ paths fail closed until G0-07 supplies executor attestation, fencing and trusted
 validation. The migration does not add a scheduler, worker, HTTP handler or
 production credential.
 
-G0-07 phase roles, public HTTP handlers, production pools/APM/CORS and deployed
-infrastructure remain outside this package's verified state. Successful local
-PostgreSQL integration proves only disposable migration/catalog behavior, not
-that a production database has applied `004`.
+Public HTTP handlers, production pools/APM/CORS and deployed infrastructure
+remain outside this package's verified state. Successful local PostgreSQL
+integration proves only disposable migration/catalog behavior, not that a
+production database has applied a migration.
+
+## G0-07 runtime security boundary
+
+`005_runtime_security.up.sql` begins with one schema-qualified `NOWAIT` table
+lock over every mutable through-004 relation. After that quiescence point it
+rejects nonterminal/unsettled/undelivered legacy facts and ledger values that
+cannot be represented losslessly by the frozen `/1` contracts. It then adds
+short-lived internal-service attestations, protocol-v5 Attempt and
+`RUN_DISPATCH` generations, immutable retry/effect/checkpoint/usage/termination
+provenance, one-use recovery ticket dispositions, HOLD/dispatch retirement
+evidence, transaction-scoped finalizer claims, and append-only billing
+authority receipts.
+
+The legacy facts are `ENABLE + FORCE RLS`, so 005 first verifies the exact
+through-004 owners and both RLS catalog bits. While the complete inventory lock
+is held, it switches only to `ba_run_owner` or `ba_billing_owner`, temporarily
+removes `FORCE` from the exact relations each owner must scan, leaves RLS
+enabled, and restores `FORCE` before protocol-v5 schema expansion or data
+backfill. A rejected migration rolls the inspection window back with the same
+transaction. The down guard uses the same owner-visible pattern for protocol-v5
+columns on through-004 relations; no migrator scan without tenant context is
+accepted as evidence that those tables are empty.
+
+Each phase LOGIN receives only context establishment plus its exact façade.
+Workspace and `session_user` are derived from the verified transaction proof;
+caller JSON cannot select a tenant. Execution writes require the current full
+lease tuple. Metering/finalizer consume immutable historical producer
+attribution without pretending a later fence is the source. Reclaimer can
+fence and clear an expired generation, then issue a replay ticket or HOLD, but
+cannot execute, acknowledge, bill, or terminalize work. Raw table DML, schema
+creation, temporary tables, legacy owner primitives, and cross-phase execution
+remain denied.
+
+Billing `/1` and its owner-only current-fence compatibility behavior stay
+frozen. Protocol-v5 settlement/release uses the strict `/2` authority union and
+an acyclic source-authority → billing-intent → receipt/ledger hash flow. The
+receipt and ledger are a deferred one-to-one pair; exact replay returns the
+first committed identity, while a different source or intent conflicts.
+
+The reviewed `005` down path is disposable-only. Its first statement locks the
+complete legacy plus G0-07 inventory, and any attestation, protocol-v5 fact,
+authority receipt, audit row, or later migration makes rollback fail closed.
+Production recovery is forward-only; bootstrap roles remain dormant rather
+than being dropped.
 
 Use only the documented discrete libpq environment variables (`PGHOST`,
 `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGPORT`, the supported `PGSSL*` variables
@@ -219,10 +270,12 @@ node packages/db/dist/cli.js status
 node packages/db/dist/cli.js down --to 0 --allow-down
 ```
 
-The five integration harnesses under `infra/test/postgres` are the evidence path
+The six integration harnesses under `infra/test/postgres` are the evidence path
 for an empty database, idempotent apply, checksum tamper rejection, exact G0-05
 catalog restoration after empty G0-06 down/reapply, non-empty down protection,
 FORCE RLS/ACL attacks, typed admission, Flow/Agent Chat facts, billing, terminal
-and retention concurrency, and browser original-Run authorization. Run the complete
-serial gate with `pnpm --filter @better-agent/db test:integration`. It is local
-disposable PostgreSQL evidence only, not production-state evidence.
+and retention concurrency, browser original-Run authorization, phase
+attestation/ACL isolation, lease fencing, recovery, and backend/client failure
+injection. Run the complete serial gate with
+`pnpm --filter @better-agent/db test:integration`. It is local disposable
+PostgreSQL evidence only, not production-state evidence.

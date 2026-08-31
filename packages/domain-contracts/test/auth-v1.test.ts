@@ -40,7 +40,12 @@ describe('G0-04 authentication contracts', () => {
     expect(UuidV1Schema.parse('10000000-0000-4000-8000-00000000000a')).toBe(
       '10000000-0000-4000-8000-00000000000a',
     );
+    expect(UuidV1Schema.parse('10000000-0000-0000-0000-00000000000a')).toBe(
+      '10000000-0000-0000-0000-00000000000a',
+    );
     expect(UuidV1Schema.safeParse('10000000-0000-4000-8000-00000000000A').success).toBe(false);
+    expect(UuidV1Schema.safeParse('10000000-0000-0000-0000-00000000000A').success).toBe(false);
+    expect(UuidV1Schema.safeParse('100000000000-0000-0000-00000000000a').success).toBe(false);
   });
 
   it('closes credential kinds and inbound operation scopes', () => {

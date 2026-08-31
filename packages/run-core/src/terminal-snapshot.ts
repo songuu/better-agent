@@ -11,6 +11,7 @@ import {
 } from '@better-agent/domain-contracts';
 
 import { failRunCore } from './errors.js';
+import { readPostgresInstantMicroseconds } from './postgres-instant.js';
 import { assertRunStateTransition, isTerminalRunStatus } from './run-state.js';
 
 export interface RegistryOutputValidationInputV1 {
@@ -32,65 +33,6 @@ export interface PrepareTerminalSnapshotInputV1 {
 }
 
 type TerminationReasonV1 = Exclude<RunSnapshotV1['termination_reason'], undefined>;
-
-const postgresInstantPattern =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
-const postgresMinimumIsoYear = 1;
-const postgresMaximumIsoYear = 9_999;
-const postgresMaximumNumericOffsetMinutes = 15 * 60 + 59;
-
-function readPostgresInstantMicroseconds(value: string, path: string): bigint {
-  const match = postgresInstantPattern.exec(value);
-  if (match === null) {
-    failRunCore(
-      'RUN_STATE_INVALID',
-      path,
-      'expected an ISO 8601 instant with an explicit UTC offset',
-    );
-  }
-  const year = Number(match[1]);
-  if (!Number.isInteger(year) || year < postgresMinimumIsoYear || year > postgresMaximumIsoYear) {
-    failRunCore('RUN_STATE_INVALID', path, 'timestamp year is outside the supported ISO range');
-  }
-  const offset = match[8];
-  if (offset === undefined) {
-    failRunCore(
-      'RUN_STATE_INVALID',
-      path,
-      'expected an ISO 8601 instant with an explicit UTC offset',
-    );
-  }
-  if (offset !== 'Z') {
-    const offsetHours = Number(offset.slice(1, 3));
-    const offsetMinutes = Number(offset.slice(4, 6));
-    const totalOffsetMinutes = offsetHours * 60 + offsetMinutes;
-    if (
-      !Number.isInteger(offsetHours) ||
-      !Number.isInteger(offsetMinutes) ||
-      offsetMinutes > 59 ||
-      totalOffsetMinutes > postgresMaximumNumericOffsetMinutes
-    ) {
-      failRunCore(
-        'RUN_STATE_INVALID',
-        path,
-        'numeric UTC offset exceeds PostgreSQL maximum of 15:59',
-      );
-    }
-  }
-  const fraction = match[7] ?? '';
-  if (fraction.length > 6) {
-    failRunCore('RUN_STATE_INVALID', path, 'timestamp precision exceeds PostgreSQL microseconds');
-  }
-  const epochMilliseconds = Date.parse(value);
-  if (!Number.isFinite(epochMilliseconds)) {
-    failRunCore('RUN_STATE_INVALID', path, 'expected a valid ISO 8601 instant');
-  }
-
-  // Date.parse preserves only milliseconds. Add the remaining three digits so
-  // equality matches PostgreSQL timestamptz's durable microsecond precision.
-  const microsecondRemainder = fraction.padEnd(6, '0').slice(3, 6);
-  return BigInt(epochMilliseconds) * 1_000n + BigInt(microsecondRemainder);
-}
 
 function terminalStatus(reason: TerminationReasonV1): {
   status: RunStatusV1;

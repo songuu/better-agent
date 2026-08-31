@@ -3,7 +3,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadMigrations, renderUpMigrationSql } from '../../../packages/db/dist/index.js';
+import {
+  loadMigrations,
+  renderUpMigrationSql,
+  selectMigrationMilestone,
+} from '../../../packages/db/dist/index.js';
 
 import { assertEqual, assertRejected, createPostgresHarness } from './harness.mjs';
 
@@ -617,7 +621,12 @@ function namespaceProbeBody(fact) {
 }
 
 async function installFreshSchema() {
-  const migrations = await loadMigrations(migrationDirectory);
+  const loadedMigrations = await loadMigrations(migrationDirectory);
+  const migrations = selectMigrationMilestone(
+    loadedMigrations,
+    '004',
+    'G0-06 Agent Chat/browser integration',
+  );
   await harness.psql('ba_migrator_test', renderUpMigrationSql(migrations), {
     echoErrors: true,
   });

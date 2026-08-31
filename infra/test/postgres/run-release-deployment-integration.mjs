@@ -6,6 +6,7 @@ import {
   loadMigrations,
   renderDownMigrationSql,
   renderUpMigrationSql,
+  selectMigrationMilestone,
 } from '../../../packages/db/dist/index.js';
 
 import { assertEqual, assertRejected, createPostgresHarness } from './harness.mjs';
@@ -170,7 +171,12 @@ async function expectRejected(role, sql, pattern, context) {
 }
 
 async function installSchema() {
-  const migrations = await loadMigrations(migrationDirectory);
+  const loadedMigrations = await loadMigrations(migrationDirectory);
+  const migrations = selectMigrationMilestone(
+    loadedMigrations,
+    '005',
+    'G0-07 release/deployment integration',
+  );
   await harness.psql('ba_migrator_test', renderUpMigrationSql(migrations), {
     echoErrors: true,
   });

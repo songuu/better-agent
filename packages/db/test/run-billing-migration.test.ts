@@ -191,7 +191,7 @@ function requireOwnedFunction(
 }
 
 describe('G0-06 bootstrap owner boundary', () => {
-  it('creates only isolated NOLOGIN owner roles and delegates ADMIN OPTION to the migrator', async () => {
+  it('creates isolated NOLOGIN owner roles and keeps 004 free of G0-07 phase roles', async () => {
     const sql = await readFile(
       path.join(packageDirectory, 'bootstrap', 'platform-roles.sql'),
       'utf8',
@@ -210,7 +210,9 @@ describe('G0-06 bootstrap owner boundary', () => {
     expect(sql).toMatch(
       /GRANT\s+ba_auth_owner,\s+ba_authorization_owner,\s+ba_run_owner,\s+ba_billing_owner,\s+ba_archive_evidence_owner,\s+ba_retention\s+TO ba_migrator WITH ADMIN OPTION;/u,
     );
-    expect(sql).not.toMatch(
+    const migrations = await loadMigrations(path.join(packageDirectory, 'migrations'));
+    const g006Sql = migrations.find(({ id }) => id === '004')?.upSql ?? '';
+    expect(g006Sql).not.toMatch(
       /\bba_(?:admission|metering|finalizer|archive_evidence|retention|run|billing)_executor\b/u,
     );
   });
@@ -286,7 +288,7 @@ ${sql}`;
 
   it('freezes inventory, tenant isolation, ownership, ACL, safe-definer and down-guard boundaries', async () => {
     const migrations = await loadMigrations(path.join(packageDirectory, 'migrations'));
-    const migration = migrations.at(-1);
+    const migration = migrations.find(({ id }) => id === '004');
 
     expect(
       migration,

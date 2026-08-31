@@ -186,6 +186,10 @@ describe('G0-06 Event, Outbox, HumanGate, billing, and retention contracts', () 
       updated_at: '2026-08-27T00:00:00.000Z',
     } as const;
     expect(CreditReservationV1Schema.safeParse(reservation).success).toBe(true);
+    const parseInvalidReservationAmount = () =>
+      CreditReservationV1Schema.safeParse({ ...reservation, reserved_credits: 'abc' });
+    expect(parseInvalidReservationAmount).not.toThrow();
+    expect(parseInvalidReservationAmount().success).toBe(false);
 
     const entry = {
       schema_version: 'credit-ledger-entry/1',
@@ -206,6 +210,10 @@ describe('G0-06 Event, Outbox, HumanGate, billing, and retention contracts', () 
       created_at: '2026-08-27T00:00:00.000Z',
     } as const;
     expect(CreditLedgerEntryV1Schema.safeParse(entry).success).toBe(true);
+    const parseInvalidLedgerDelta = () =>
+      CreditLedgerEntryV1Schema.safeParse({ ...entry, reserved_delta_credits: 'abc' });
+    expect(parseInvalidLedgerDelta).not.toThrow();
+    expect(parseInvalidLedgerDelta().success).toBe(false);
     expect(
       CreditLedgerEntryV1Schema.safeParse({ ...entry, reserved_delta_credits: '1' }).success,
     ).toBe(false);
@@ -288,6 +296,22 @@ describe('G0-06 Event, Outbox, HumanGate, billing, and retention contracts', () 
       expires_at: '2026-08-28T00:00:00.000Z',
     } as const;
     expect(BillingIntentV1Schema.safeParse(reserve).success).toBe(true);
+    const parseInvalidReconciliationAmount = () =>
+      BillingIntentV1Schema.safeParse({
+        schema_version: 'billing-intent/1',
+        intent_kind: 'RECONCILIATION',
+        workspace_id: workspaceId,
+        billing_owner_run_id: runId,
+        reservation_id: reservationId,
+        charge_key: `reconciliation/${runId}`,
+        reconciliation_id: gateId,
+        release_credits: 'abc',
+        settle_credits: '1',
+        evidence_ref: 'object://billing/reconciliation.json',
+        evidence_sha256: hashA,
+      });
+    expect(parseInvalidReconciliationAmount).not.toThrow();
+    expect(parseInvalidReconciliationAmount().success).toBe(false);
     expect(BillingIntentV1Schema.safeParse({ ...reserve, child_run_id: gateId }).success).toBe(
       false,
     );

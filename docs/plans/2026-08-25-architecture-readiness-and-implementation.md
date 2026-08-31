@@ -13,7 +13,7 @@ mode: auto
 
 ## 当前阶段
 
-`g0-05-plan-complete`（G0-05 的契约、pure core、003 migration、组合边界与真实 PostgreSQL 16 验收已形成依赖有序的 L4 计划；下一步按 TDD 进入 Work；G0-08 未通过前不得进入 G1）
+`g0-07-complete-g0-08-next`（截至 2026-08-31，本轮有界 Review/回修循环累计发现的 7 个 P2 已完成定点修复：前 5 项为 attestation nullable CHECK、BigInt typed `safeParse`、PostgreSQL instant precision/offset、dispatch failure closed discriminator/error code，以及 static CHECK balanced-parenthesis 局部提取加七约束 mutation；后 2 项为 ISO `year=0000` 边界统一和补齐 `architecture:framework` 失败/复验/连续成功的证据链。当前 revision 的最窄包门、单独 runtime-security、真实 PostgreSQL 16 六套串行门、`pnpm check` 与连续完整 framework 均已通过，005 校验和已重算；最终三路有界 Review 为 P0=0、P1=0、P2=0，Compound 可审计 no-op 与 Sprint close 已完成。详细 ABI、校验和、计数、证据边界与停止条件见 [G0-07 Sprint](./2026-08-27-g0-07-executor-lease-fencing.md)。下一切片为 G0-08；G0-08 未通过前不得进入 G1，生产与云端状态仍未知）
 
 ## Think：范围与产品边界
 
@@ -227,10 +227,11 @@ G1-01..06 ──> G1-07 evaluation/promotion ──> G1-08 vertical E2E gate
 ### G0-07 — Executor role、lease/fencing 与恢复安全
 
 - **目标：** 分离外部 credential admission、内部 service attestation、executor/finalizer/metering/reconciliation/retention 数据库权限，并把事件、checkpoint、side effect receipt、reserve/settle/release/correction 与 terminal finalization 绑定 accepted Run、Attempt、有效 lease/fence 或专用人工处置证据及 charge attribution；通用 runtime role 不拥有账务 mutation，phase executor 不能拿任意外部 credential 建立内部服务身份。
-- **文件集合：** `packages/db/migrations/005_runtime_roles.sql`、`packages/run-core/src/leases/**`、`packages/run-core/src/events/**`、`packages/db/test/runtime-security/**`。
+- **文件集合：** 详细 ABI、文件边界与测试矩阵只以 [G0-07 Sprint](./2026-08-27-g0-07-executor-lease-fencing.md) 为准；实现落点包括 `005_runtime_security.{up,down}.sql`、phase role bootstrap、domain/billing/run pure core 与第六套 PostgreSQL runtime-security suite。
 - **依赖：** G0-06。
 - **风险：** L4。
 - **红测/证据：** publish/webhook/mcp/permission-callback 或普通 service API credential 冒充 phase service、过期/重放 service attestation、过期 worker、错误 attempt、同 Workspace 其他 Run/reservation、错误 charge attribution、通用 runtime 直接 reserve/settle/release/correct、伪造 terminal/event、租约丢失后 unsafe retry 全部拒绝；唯一 finalizer 原子完成 terminal/event/billing，reclaimer 只恢复 safe/requires-key attempt；未知副作用进入独立 operator reconciliation path。
+- **当前状态（2026-08-31）：** effect responsibility、used-down、精确 catalog lifecycle、真实 concurrency/response-loss、producer exact replay、finite-JSON、nullable tuple fail-closed 与微秒时序已由机器契约验证；本轮有界 Review/回修循环累计关闭 7 个 P2：前 5 项为 attestation `CHECK UNKNOWN`、非法 BigInt 输入抛异常、PostgreSQL instant precision/offset 漂移、dispatch failure 开放输入和 static CHECK 跨约束误匹配假绿，后 2 项为 ISO `year=0000` domain/run-core/PG 边界不一致和 framework 证据链缺失。当前最窄包门、单独 runtime-security、完整六套 disposable PG16、`pnpm check` 与连续完整 framework 已通过；static oracle 使用 balanced-parenthesis 局部提取并以七约束 mutation 锁住 `IS TRUE`，instant schema 统一限制年份为 `0001..9999`。最终三路 Review 为 P0=0、P1=0、P2=0，Compound 可审计 no-op 与 Sprint close 已完成；详细计数、005 哈希与 framework 首次环境挂起失败/局部复验/连续聚合成功的时间线只维护在 G0-07 Sprint。下一切片为 G0-08；G0-08/G1 继续阻断，生产与云端仍未知。
 
 ### G0-08 — 可执行架构门
 
