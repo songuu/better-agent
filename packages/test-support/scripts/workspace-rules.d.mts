@@ -5,4 +5,5 @@ export interface WorkspacePackage {
   };
 }
 
+export function validateCiWorkflow(workflow: string): string[];
 export function validateWorkspaceGraph(workspacePackages: WorkspacePackage[]): string[];

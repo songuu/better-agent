@@ -12,7 +12,18 @@ adversarial fixture.
 
 ```powershell
 pnpm --filter @better-agent/db test:integration
+pnpm architecture:gate
 ```
+
+The first command runs this six-suite database harness directly. The G0-08
+architecture gate additionally verifies the exact migration/suite registry,
+OpenAPI and workspace gates, zero conditional test skips, and clean Git state.
+On a dirty local worktree it copies only Git tracked plus untracked non-ignored
+regular files into a content-addressed disposable directory, creates Git
+metadata only there, installs from the pnpm store with `--offline
+--frozen-lockfile`, and runs the same gate in that clean snapshot. It compares
+the source HEAD, staged diff, and byte-exact status before and after; it never
+uses stash, reset, or checkout against the source worktree.
 
 Each run owns a unique Compose project and executes six suites serially:
 

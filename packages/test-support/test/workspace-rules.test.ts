@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { validateWorkspaceGraph, type WorkspacePackage } from '../scripts/workspace-rules.mjs';
+import {
+  validateCiWorkflow,
+  validateWorkspaceGraph,
+  type WorkspacePackage,
+} from '../scripts/workspace-rules.mjs';
 
 function workspacePackage(
   directory: string,
@@ -104,6 +108,43 @@ describe('validateWorkspaceGraph', () => {
 
     expect(validateWorkspaceGraph(graph)).toContain(
       'workspace production dependency cycle: @better-agent/a -> @better-agent/b -> @better-agent/a',
+    );
+  });
+});
+
+describe('validateCiWorkflow', () => {
+  const validWorkflow = [
+    'ubuntu-latest',
+    'windows-latest',
+    'run: pnpm install --frozen-lockfile',
+    'run: pnpm contract:check',
+    'run: pnpm lint',
+    'run: pnpm typecheck',
+    'run: pnpm test',
+    'run: pnpm build',
+    'run: pnpm architecture:gate',
+  ].join('\n');
+
+  it('accepts the single G0-08 aggregation entry', () => {
+    expect(validateCiWorkflow(validWorkflow)).toEqual([]);
+  });
+
+  it('rejects a missing architecture gate and a direct PostgreSQL bypass', () => {
+    expect(validateCiWorkflow(validWorkflow.replace('pnpm architecture:gate', ''))).toContainEqual(
+      expect.stringContaining('pnpm architecture:gate'),
+    );
+    expect(validateCiWorkflow(`${validWorkflow}\nrun: pnpm db:test:postgres16`)).toContainEqual(
+      expect.stringContaining('must run through pnpm architecture:gate'),
+    );
+  });
+
+  it('does not accept a required command that appears only inside a comment', () => {
+    const disabled = validWorkflow.replace(
+      'run: pnpm architecture:gate',
+      'run: echo disabled # pnpm architecture:gate',
+    );
+    expect(validateCiWorkflow(disabled)).toContainEqual(
+      expect.stringContaining('pnpm architecture:gate'),
     );
   });
 });

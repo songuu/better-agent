@@ -2,7 +2,7 @@ import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { validateWorkspaceGraph } from './workspace-rules.mjs';
+import { validateCiWorkflow, validateWorkspaceGraph } from './workspace-rules.mjs';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 const errors = [];
@@ -88,6 +88,10 @@ const requiredFiles = [
   'tsconfig.json',
   'biome.json',
   '.github/workflows/ci.yml',
+  'scripts/architecture-gate-core.mjs',
+  'scripts/architecture-gate.mjs',
+  'tests/architecture-gate/architecture-gate.test.mjs',
+  'tests/architecture-gate/manifest.json',
   'packages/test-support/package.json',
   'packages/test-support/tsconfig.json',
   'packages/test-support/tsconfig.build.json',
@@ -129,6 +133,7 @@ if (rootManifest !== undefined) {
     report('package.json: engines.node must include the Node 22 baseline');
   }
   for (const script of [
+    'architecture:gate',
     'build',
     'check',
     'contract:check',
@@ -199,21 +204,7 @@ if (testSupportManifest !== undefined) {
 
 const ciWorkflow = await readText('.github/workflows/ci.yml');
 if (ciWorkflow !== undefined) {
-  for (const requiredText of [
-    'ubuntu-latest',
-    'windows-latest',
-    'pnpm install --frozen-lockfile',
-    'pnpm contract:check',
-    'pnpm db:test:postgres16',
-    'pnpm lint',
-    'pnpm typecheck',
-    'pnpm test',
-    'pnpm build',
-  ]) {
-    if (!ciWorkflow.includes(requiredText)) {
-      report(`.github/workflows/ci.yml: missing ${requiredText}`);
-    }
-  }
+  errors.push(...validateCiWorkflow(ciWorkflow));
 }
 
 const workspacePackages = await collectWorkspacePackages();

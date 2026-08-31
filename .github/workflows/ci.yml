@@ -64,10 +64,11 @@ jobs:
       - name: Verify tracked files are unchanged
         run: git diff --exit-code -- .
 
-  postgres16:
-    name: PostgreSQL 16 migration harness
+  architecture-gate:
+    name: G0-08 executable architecture gate
+    needs: quality
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -87,5 +88,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Exercise PostgreSQL 16 migration lifecycle
-        run: pnpm db:test:postgres16
+      - name: Run the clean-checkout architecture gate
+        run: pnpm architecture:gate

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -92,11 +92,15 @@ describe('loadMigrations', () => {
     await expect(loadMigrations(blockDirectory)).resolves.toHaveLength(1);
   });
 
-  it.runIf(process.platform !== 'win32')('rejects symlinked migration files', async () => {
+  it('rejects symlinked migration entries on every supported platform', async () => {
     const directory = await createMigrationDirectory();
-    const target = path.join(directory, 'target.sql');
-    await writeFile(target, 'SELECT 1;\n');
-    await symlink(target, path.join(directory, '000_platform.up.sql'));
+    const target = path.join(directory, 'target-directory');
+    await mkdir(target);
+    await symlink(
+      target,
+      path.join(directory, '000_platform.up.sql'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
 
     await expect(loadMigrations(directory)).rejects.toThrow('must be a regular file');
   });

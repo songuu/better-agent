@@ -13,7 +13,7 @@ mode: auto
 
 ## 当前阶段
 
-`g0-07-complete-g0-08-next`（截至 2026-08-31，本轮有界 Review/回修循环累计发现的 7 个 P2 已完成定点修复：前 5 项为 attestation nullable CHECK、BigInt typed `safeParse`、PostgreSQL instant precision/offset、dispatch failure closed discriminator/error code，以及 static CHECK balanced-parenthesis 局部提取加七约束 mutation；后 2 项为 ISO `year=0000` 边界统一和补齐 `architecture:framework` 失败/复验/连续成功的证据链。当前 revision 的最窄包门、单独 runtime-security、真实 PostgreSQL 16 六套串行门、`pnpm check` 与连续完整 framework 均已通过，005 校验和已重算；最终三路有界 Review 为 P0=0、P1=0、P2=0，Compound 可审计 no-op 与 Sprint close 已完成。详细 ABI、校验和、计数、证据边界与停止条件见 [G0-07 Sprint](./2026-08-27-g0-07-executor-lease-fencing.md)。下一切片为 G0-08；G0-08 未通过前不得进入 G1，生产与云端状态仍未知）
+`g0-08-work-active`（截至 2026-08-31，G0-07 已完成；[G0-08 Sprint](./2026-08-31-g0-08-executable-architecture-gate.md) 已冻结 Think/Plan/Acceptance contract 并进入 Work。当前已实现 manifest/core/runner 的最小切片，gate mutation 10/10、DB unit 85/85 且 zero skip；CI 和运行手册已接入 `pnpm architecture:gate`。完整 dirty-source → disposable clean-checkout 的质量门、六套 PostgreSQL 16、最终 Review 与 host-attested Acceptance Receipt 尚未完成，故 G0-08/G1 继续阻断，生产与云端状态仍未知）
 
 ## Think：范围与产品边界
 

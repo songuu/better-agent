@@ -42,6 +42,43 @@ function findProductionCycles(graph) {
   return errors;
 }
 
+export function validateCiWorkflow(workflow) {
+  if (typeof workflow !== 'string' || workflow.length === 0) {
+    return ['.github/workflows/ci.yml: workflow text is required'];
+  }
+  const errors = [];
+  for (const requiredText of ['ubuntu-latest', 'windows-latest']) {
+    if (!workflow.includes(requiredText)) {
+      errors.push(`.github/workflows/ci.yml: missing ${requiredText}`);
+    }
+  }
+  for (const requiredCommand of [
+    'pnpm install --frozen-lockfile',
+    'pnpm contract:check',
+    'pnpm lint',
+    'pnpm typecheck',
+    'pnpm test',
+    'pnpm build',
+    'pnpm architecture:gate',
+  ]) {
+    if (!hasCiRunCommand(workflow, requiredCommand)) {
+      errors.push(`.github/workflows/ci.yml: missing executable run command ${requiredCommand}`);
+    }
+  }
+  if (hasCiRunCommand(workflow, 'pnpm db:test:postgres16')) {
+    errors.push('.github/workflows/ci.yml: PostgreSQL must run through pnpm architecture:gate');
+  }
+  return errors;
+}
+
+function hasCiRunCommand(workflow, command) {
+  const escaped = command.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(
+    `^\\s*run:\\s*(?:${escaped}|"${escaped}"|'${escaped}')(?:\\s+#.*)?\\s*$`,
+    'mu',
+  ).test(workflow);
+}
+
 export function validateWorkspaceGraph(workspacePackages) {
   const errors = [];
   const packagesByName = new Map();

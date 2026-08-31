@@ -1652,6 +1652,16 @@ describe('005 runtime-security migration static red gate', () => {
 
   it('validates canonical usage scalars before casts and supports metering-first close', async () => {
     const { upSql } = await runtimeSecuritySql();
+    const integrationSource = await readFile(
+      path.join(
+        repositoryDirectory,
+        'infra',
+        'test',
+        'postgres',
+        'run-runtime-security-integration.mjs',
+      ),
+      'utf8',
+    );
     const usageEntry = functionOracle.find(({ name }) => name === 'record_usage_attribution');
     const terminationEntry = functionOracle.find(
       ({ name }) => name === 'record_leased_termination_intent',
@@ -1680,6 +1690,10 @@ describe('005 runtime-security migration static red gate', () => {
     expect(termination).toMatch(
       /LEFT JOIN public\.run_billing_authority_receipts AS receipt[\s\S]*?source\.consumed_at IS NULL[\s\S]*?receipt\.source_authority_hash[\s\S]*?receipt\.source_consumption_generation[\s\S]*?v_intended_release := 0/u,
     );
+    expect(integrationSource).toMatch(
+      /SET status = 'SETTLED',[\s\S]*?settled_at = statement_timestamp\(\),[\s\S]*?updated_at = statement_timestamp\(\)/u,
+    );
+    expect(integrationSource).not.toContain('settled_at = clock_timestamp()');
   });
 
   it('keeps an undisposed CLOSED recovery ticket reachable by the trusted finalizer', async () => {

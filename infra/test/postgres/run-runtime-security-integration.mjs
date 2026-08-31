@@ -4492,8 +4492,8 @@ SET consumed_at = clock_timestamp(), consumption_generation = 2
 WHERE workspace_id = '${ids.otherWorkspace}' AND id = '${usage.source.usage_attribution_id}';
 UPDATE public.credit_reservations
 SET status = 'SETTLED', settled_credits = ${largeCreditAmount},
-    settled_at = clock_timestamp(),
-    updated_at = clock_timestamp()
+    settled_at = statement_timestamp(),
+    updated_at = statement_timestamp()
 WHERE workspace_id = '${ids.otherWorkspace}' AND id = '${ids.meteringFirstReservation}';
 COMMIT;`,
   );

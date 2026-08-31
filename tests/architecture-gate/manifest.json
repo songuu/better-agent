@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "architecture-gate/1",
+  "requiredEvidenceDomains": [
+    "migration-lifecycle",
+    "auth-rls",
+    "release-deployment",
+    "run-billing",
+    "run-conversation-browser",
+    "runtime-security"
+  ],
+  "openapi": {
+    "operationIds": [
+      "createAgentChatRun",
+      "createAgentConversation",
+      "createBrowserRunEventSession",
+      "createFlowRun",
+      "exchangeBrowserSession",
+      "getRun",
+      "listAgentConversationMessages",
+      "listAgentConversations",
+      "requestRunCancellation",
+      "resumeHumanGate",
+      "streamRunEvents"
+    ],
+    "localReferenceCount": 314,
+    "bundleSha256": "a19ddd228941e51a9658c109c87af7405d3a0c22324c00757cf987549117cf04",
+    "typescriptSha256": "a92a2c8b4cd61df15626282b64abd5cb3138622ab32e4dca2f16cd39cc5e6d07",
+    "responseBaselineSha256": "e383d1ce5fe4494056280c1c36fdd19f769ec194dd97ad46678e2ceabd0f5828",
+    "credentialOperationPolicyBaselineSha256": "ad2b764485e1e68c8feee423aadcf08ee40417881f7a04b0554807d0bc39c791"
+  },
+  "migrationFiles": [
+    "000_platform_prerequisites.up.sql",
+    "001_tenant_identity.up.sql",
+    "002_auth_context_rls.up.sql",
+    "003_release_deployment.down.sql",
+    "003_release_deployment.up.sql",
+    "004_run_billing.down.sql",
+    "004_run_billing.up.sql",
+    "005_runtime_security.down.sql",
+    "005_runtime_security.up.sql"
+  ],
+  "postgresSuites": [
+    {
+      "id": "migration-lifecycle",
+      "file": "infra/test/postgres/run-integration.mjs",
+      "mode": "real",
+      "successMarker": "integration passed:"
+    },
+    {
+      "id": "auth-rls",
+      "file": "infra/test/postgres/run-auth-rls-integration.mjs",
+      "mode": "real",
+      "successMarker": "auth/RLS integration passed:"
+    },
+    {
+      "id": "release-deployment",
+      "file": "infra/test/postgres/run-release-deployment-integration.mjs",
+      "mode": "real",
+      "successMarker": "G0-05 release/deployment integration passed:"
+    },
+    {
+      "id": "run-billing",
+      "file": "infra/test/postgres/run-run-billing-integration.mjs",
+      "mode": "real",
+      "successMarker": "G0-06 Run/Billing passed:"
+    },
+    {
+      "id": "run-conversation-browser",
+      "file": "infra/test/postgres/run-run-conversation-browser-integration.mjs",
+      "mode": "real",
+      "successMarker": "G0-06 Agent Chat/browser integration passed:"
+    },
+    {
+      "id": "runtime-security",
+      "file": "infra/test/postgres/run-runtime-security-integration.mjs",
+      "mode": "real",
+      "successMarker": "G0-07 PostgreSQL runtime-security harness passed:"
+    }
+  ],
+  "scripts": {
+    "rootArchitectureGate": "node scripts/architecture-gate.mjs",
+    "rootCheck": "pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build",
+    "rootPostgres16": "pnpm --filter @better-agent/db test:integration",
+    "dbIntegration": "pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs"
+  },
+  "gates": [
+    {
+      "id": "quality",
+      "command": "pnpm",
+      "args": ["check"],
+      "mode": "real",
+      "successMarkers": [
+        "workspace smoke passed for 9 package(s)",
+        "Contract gate passed: 11 operations",
+        "Test Files"
+      ],
+      "forbidSkippedOutput": true
+    },
+    {
+      "id": "postgres16",
+      "command": "pnpm",
+      "args": ["db:test:postgres16"],
+      "mode": "real",
+      "successMarkers": [
+        "integration passed:",
+        "auth/RLS integration passed:",
+        "G0-05 release/deployment integration passed:",
+        "G0-06 Run/Billing passed:",
+        "G0-06 Agent Chat/browser integration passed:",
+        "G0-07 PostgreSQL runtime-security harness passed:"
+      ],
+      "forbidSkippedOutput": true
+    }
+  ]
+}

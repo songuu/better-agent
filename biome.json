@@ -7,7 +7,12 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!!docs/plans/.handoff", "!!packages/api-contract/generated"]
+    "includes": [
+      "**",
+      "!!docs/plans/.handoff",
+      "!!docs/plans/**/*.acceptance.json",
+      "!!packages/api-contract/generated"
+    ]
   },
   "formatter": {
     "enabled": true,

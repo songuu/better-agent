@@ -1,0 +1,29 @@
+{
+  "assessments": [
+    {
+      "criterionId": "ac-g0-08-aggregate",
+      "assessment": "satisfied",
+      "observed": "Second review found the single pnpm architecture:gate entry executes mutation preflight, pnpm check, and pnpm db:test:postgres16 with bounded child output and nonzero failure propagation. The final disposable report recorded quality exit 0, postgres16 exit 0, and result pass."
+    },
+    {
+      "criterionId": "ac-g0-08-registry",
+      "assessment": "satisfied",
+      "observed": "The 11 gate tests reject missing, duplicate, reordered, mock or skip registrations, command drift, OpenAPI drift, missing results, positive skip counts, unsafe paths, source drift, marker weakening, and unstable file identity. Negative review probes independently confirmed generic PostgreSQL markers and comment-only CI commands are rejected."
+    },
+    {
+      "criterionId": "ac-g0-08-clean-checkout",
+      "assessment": "satisfied",
+      "observed": "The dirty-source runner excludes Sprint control records, accepts only single-link regular files through a stable file handle, creates a disposable Git commit, installs offline, and verifies source status, HEAD, index semantics, and snapshot clean state. Final report: 275 files, 4830220 bytes, cleanBefore true, cleanAfter true; source HEAD remained e66f4ca25b43f77872c8f4e5fd9a9678b125ecb2."
+    },
+    {
+      "criterionId": "ac-g0-08-postgres",
+      "assessment": "satisfied",
+      "observed": "The final PostgreSQL 16 run executed all six registered suites exactly once and emitted every suite-specific marker: migration lifecycle, auth and RLS, release and deployment, Run and Billing, Conversation and browser, and runtime security. Package tests were 473 passed with zero skipped; the runtime-security timing fixture regression was reproduced, corrected, and passed in the final full run."
+    },
+    {
+      "criterionId": "ac-g0-08-admission",
+      "assessment": "satisfied",
+      "observed": "The plan and docs keep local disposable evidence separate from production, cloud, driver, pooler, Worker, provider, client, and APM state. They require both machine gates and independent Review, and explicitly keep G0-08 blocked when a host-attested passed Receipt cannot be issued. Second review found no remaining P0, P1, or P2 issue."
+    }
+  ]
+}

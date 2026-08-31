@@ -11,6 +11,7 @@
     "pnpm": ">=10.28.0 <11"
   },
   "scripts": {
+    "architecture:gate": "node scripts/architecture-gate.mjs",
     "architecture:framework": "pnpm check && pnpm db:test:postgres16",
     "build": "turbo run build",
     "check": "pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build",
