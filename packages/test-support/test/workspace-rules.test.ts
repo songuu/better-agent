@@ -128,6 +128,26 @@ describe('validateDeploymentWorkflow', () => {
       expect(validateDeploymentWorkflow(weakened)).not.toEqual([]);
     }
   });
+
+  it('requires executable validation of existing current-link rollback evidence', () => {
+    expect(
+      validateDeploymentWorkflow(
+        workflow.replace('scripts/deployment/resolve-current-release.mjs', 'readlink -f'),
+      ),
+    ).not.toEqual([]);
+  });
+
+  it('requires current-link validation before the database migration side effect', () => {
+    const resolver =
+      '          previous_release="$(node "${REMOTE_RELEASE}/scripts/deployment/resolve-current-release.mjs" "${RELEASE_ROOT}" "${CURRENT_LINK}")"\n';
+    const weakened = workflow
+      .replace(resolver, '')
+      .replace(
+        '          receipt="${SHARED_ROOT}/last-deployment"\n',
+        resolver + '          receipt="${SHARED_ROOT}/last-deployment"\n',
+      );
+    expect(validateDeploymentWorkflow(weakened)).not.toEqual([]);
+  });
 });
 
 function workspacePackage(

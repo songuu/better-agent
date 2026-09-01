@@ -318,7 +318,7 @@ export function validateDeploymentWorkflow(workflow) {
   const workflowDigest = createHash('sha256')
     .update(workflow.replaceAll('\r\n', '\n'))
     .digest('hex');
-  if (workflowDigest !== '2b009a6cb84aad763ed5e46d03da0fc2332c295c0bc4289c1bbdd2cebe144136') {
+  if (workflowDigest !== '8d2b92fc5866e6bf66203c9879e37e671f63ca98066bb338ca679d2a92282030') {
     errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
   }
   const definition = parseCiWorkflow(workflow, errors);
@@ -416,11 +416,25 @@ export function validateDeploymentWorkflow(workflow) {
     'Preflight target filesystems',
     "-regex '.*/better-agent-[0-9a-f]{40}'",
     'pending_receipt="${receipt}.next"',
+    'scripts/deployment/resolve-current-release.mjs',
     'mv -Tf "${pending_receipt}" "${receipt}"',
   ]) {
     if (!workflow.includes(requiredText)) {
       errors.push(`.github/workflows/deploy-foundation.yml: missing ${requiredText}`);
     }
+  }
+  const currentResolver =
+    'previous_release="$(node "${REMOTE_RELEASE}/scripts/deployment/resolve-current-release.mjs"';
+  const databaseMigration =
+    'node "${REMOTE_RELEASE}/scripts/deployment/configure-production-postgres.mjs" up';
+  if (
+    workflow.indexOf(currentResolver) < 0 ||
+    workflow.indexOf(databaseMigration) < 0 ||
+    workflow.indexOf(currentResolver) > workflow.indexOf(databaseMigration)
+  ) {
+    errors.push(
+      '.github/workflows/deploy-foundation.yml: current release must be validated before database migration',
+    );
   }
   if (workflow.includes('workflow_dispatch') || workflow.includes('ssh-keyscan')) {
     errors.push(

@@ -168,12 +168,13 @@ jobs:
           fi
           test -f "${REMOTE_RELEASE}/packages/db/dist/cli.js"
 
+          previous_release="$(node "${REMOTE_RELEASE}/scripts/deployment/resolve-current-release.mjs" "${RELEASE_ROOT}" "${CURRENT_LINK}")"
           BETTER_AGENT_POSTGRES_ROOT="${SHARED_ROOT}/postgres" \
             node "${REMOTE_RELEASE}/scripts/deployment/configure-production-postgres.mjs" up
           BETTER_AGENT_POSTGRES_ROOT="${SHARED_ROOT}/postgres" \
             node "${REMOTE_RELEASE}/scripts/deployment/configure-production-postgres.mjs" status
 
-          previous_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+          test "${previous_release}" = "$(node "${REMOTE_RELEASE}/scripts/deployment/resolve-current-release.mjs" "${RELEASE_ROOT}" "${CURRENT_LINK}")"
           receipt="${SHARED_ROOT}/last-deployment"
           pending_receipt="${receipt}.next"
           if [ "${previous_release}" != "${REMOTE_RELEASE}" ]; then
