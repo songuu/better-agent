@@ -40,6 +40,16 @@ test('Docker absent-container matching is case-insensitive by contract', () => {
   assert.equal('error: no such object'.toLowerCase().includes('no such object'), true);
 });
 
+test('accepts Docker normalized bridge mode for the default network', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(
+    new URL('../../scripts/deployment/configure-production-postgres.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /HostConfig\?\.NetworkMode !== 'bridge'/u);
+  assert.doesNotMatch(source, /HostConfig\?\.NetworkMode !== 'default'/u);
+});
+
 test('role provisioning is explicit and does not create owner logins', () => {
   const credentials = new Map(
     LOGIN_ROLES.map(([key, login]) => [key, { password: `secret-${key}`, user: login }]),

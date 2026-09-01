@@ -286,7 +286,7 @@ function assertExistingContainerShape() {
       path.resolve(path.join(secretsDirectory, 'admin.password')) ||
     secretMount?.RW !== false ||
     inspected?.HostConfig?.Privileged !== false ||
-    inspected?.HostConfig?.NetworkMode !== 'default' ||
+    inspected?.HostConfig?.NetworkMode !== 'bridge' ||
     (inspected?.HostConfig?.CapAdd ?? []).length !== 0 ||
     !(inspected?.HostConfig?.SecurityOpt ?? []).includes('no-new-privileges:true') ||
     inspected?.HostConfig?.LogConfig?.Type !== 'local' ||
