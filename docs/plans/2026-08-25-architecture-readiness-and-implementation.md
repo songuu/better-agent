@@ -13,7 +13,7 @@ mode: auto
 
 ## 当前阶段
 
-`g0-08-work-active`（截至 2026-08-31，G0-07 已完成；[G0-08 Sprint](./2026-08-31-g0-08-executable-architecture-gate.md) 已冻结 Think/Plan/Acceptance contract 并进入 Work。当前已实现 manifest/core/runner 的最小切片，gate mutation 10/10、DB unit 85/85 且 zero skip；CI 和运行手册已接入 `pnpm architecture:gate`。完整 dirty-source → disposable clean-checkout 的质量门、六套 PostgreSQL 16、最终 Review 与 host-attested Acceptance Receipt 尚未完成，故 G0-08/G1 继续阻断，生产与云端状态仍未知）
+`g0-08-review-blocked-on-host-acceptance`（截至 2026-09-01，G0-07 已完成；[G0-08 Sprint](./2026-08-31-g0-08-executable-architecture-gate.md) 已完成 manifest/core/runner、26 项 gate 回归、13 项 test-support 回归、冻结 CI schema、dirty-source disposable clean-checkout 与 PostgreSQL 精确清理，并通过 L4 五视角独立复审。最终本机门证据只写 `.handoff` sidecar；host-attested Acceptance Receipt 仍为 pending，故 G0-08/G1 继续阻断，生产与云端状态仍未知）
 
 ## Think：范围与产品边界
 

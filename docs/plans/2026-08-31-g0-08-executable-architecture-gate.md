@@ -2,7 +2,7 @@
 
 # G0-08 可执行架构门
 
-> 状态：第一轮 Review 的 3 项 P2 已修复，后续门禁又暴露并修复控制面路径与 runtime-security fixture 时间竞态；修复后的完整 L4 架构门已通过，等待第二轮独立 Review。Sprint Acceptance v1 仍为 `pending`，尚未获得 host-attested passed Receipt，因此当前不能关闭 G0-08 或进入 G1。
+> 状态：实现与 L4 五视角独立 Review 已完成，最终终审为 P1/P2=0；最终本机 clean-checkout 重跑结果写入 `.handoff/g0-08-final-local-gate.json`，避免证据回填改变已验 source digest。Sprint Acceptance v1 仍为 `pending`，尚未获得 host-attested passed Receipt，因此当前不能关闭 G0-08 或进入 G1。
 
 ## 原始请求
 
@@ -40,7 +40,7 @@
 
 ## 下一步
 
-进入第二轮独立 Review；按冻结的五项 Acceptance criterion 复核 registry、clean snapshot、PostgreSQL 16 逐套证据、失败传播及 G1 准入边界。若宿主仍不能签发 host-attested passed Receipt，则保持 Review 阻断，不以本地自评替代。
+读取 `.handoff/g0-08-final-local-gate.json` 的最终本机证据；随后等待宿主提供不可由 Provider 自签的 host-attested reviewer capability。Receipt 未通过时保持 Review 阻断，不以本地机器门或模型自评替代。
 
 ## Plan：当前事实与关键取舍
 
@@ -145,6 +145,16 @@
 7. 第一轮 Review 的负向探针确认三项 P2：PostgreSQL suite marker 可与 gate marker 脱钩、CI 注释文本可伪装真实 `run:`、snapshot 读前检查后缺少同一文件句柄身份复核。状态机按协议 `review -> work`；新增红测后分别绑定六个 suite marker、要求精确可执行 `run:` 行、以单链接 regular file handle 做读前/打开后/读后 identity 校验。修复后 gate tests 11/11、test-support 12/12、`pnpm check` 全绿。
 8. Review 修复后的首次完整重跑在 temporary `git add` 以 exit 128 失败；原错误包装只显示退出码，先补充 8 KiB 有界 stderr 尾部后复现，确认根因是 Sprint attempt seal 被错误纳入产品源码快照并触发 Windows 长路径。runner 现显式排除 `docs/plans/.handoff/**` 与 `*.acceptance.json`，保留这些控制面文件原样且新增 Git path-list 回归；gate tests 11/11、format 与 `git diff --check` 通过。
 9. 控制面排除修复后的完整门已通过 quality 与前五套 PostgreSQL 16，但 runtime-security 的“缺失账务回执”手工 fixture 以 SQLSTATE 23514 失败：同一 `UPDATE` 对 `settled_at`/`updated_at` 分别调用 volatile `clock_timestamp()`，本次产生 1 微秒逆序。确认生产 kernel 共用单一 `authorized_at` 后，仅将该 disposable fixture 两列改为同一 `statement_timestamp()` 并加静态回归；runtime-security migration tests 40/40。
+10. 最终加固把 runner 拆为 runtime/snapshot/PostgreSQL 生命周期模块，所有命令增加有界输出、超时和错误聚合；dirty outer 与内部 PG harness 共享精确临时 registry，清理失败保留 registry 并在外层重试，拒绝重复、非规范或生产样式 project id。
+11. CI 审查从文本存在性升级为 YAML `uniqueKeys` + 禁 anchor/alias + parsed object 与冻结 G0-08 schema 深度相等，精确锁定 push/PR 触发器、read-only permissions、Ubuntu/Windows matrix、action 版本/输入、run 顺序与执行上下文；37 项弱化探针全部拒绝。
+12. Windows runner 不再继承 npm executable 环境路径，固定经 `cmd.exe /d /s /c pnpm.cmd` 启动，并在解释前拒绝命令元字符；最终回归为 gate 26/26、test-support 13/13，code-quality 与 security/integrity 终审均 PASS。
+13. 终端的 ANSI/空格差异曾导致真实 `80 passed` 被 exact-byte marker 误拒；逐行归一化的首版又被 Review 发现存在跨行、数字前缀和 PostgreSQL 短 marker 互相代签。最终改为完整逻辑分行 + 横向空白归一化 + 整行相等，六个 PG runner 在全部断言后输出唯一 `architecture-gate-suite/1 <suite-id> pass`；逐套删除、嵌入、相邻数字与八类行终止符回归全部 fail closed。
+
+### 2026-09-01 最终冻结边界
+
+- 产品输入在本段写入后冻结；最终 `pnpm architecture:gate` 的 source/gate manifest、quality/PG 输出摘要、cleanBefore/cleanAfter 与源 readback 只写控制面 sidecar `.handoff/g0-08-final-local-gate.json`。
+- L4 五视角结论：architecture PASS、performance PASS、test-strategy PASS、code-quality PASS、security/integrity PASS；blocker/P1/P2 均为 0。
+- 这些结论仅形成本地 G1 准入候选，不改变 Acceptance authority：没有 host-attested passed Receipt，G0-08 仍是阻断态。
 
 ### 首轮 L4 机器证据（Review 修复前）
 

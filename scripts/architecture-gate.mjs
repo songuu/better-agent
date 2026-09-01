@@ -1,9 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,232 +12,79 @@ import {
   validateArchitectureInventory,
   validateGateResults,
 } from './architecture-gate-core.mjs';
+import {
+  cleanupPostgresProjects,
+  createPostgresProjectRegistry,
+  postgresProjectRegistryForGate,
+} from './architecture-gate-postgres.mjs';
+import {
+  architectureGateError,
+  assertCleanStatus,
+  assertRepositoryIdentityUnchanged,
+  COMMAND_KILL_GRACE_MS,
+  captureRepositoryIdentity,
+  combineGateErrors,
+  createGateEnvironment,
+  createGitEnvironment,
+  errorSummary,
+  GIT_NULL_DEVICE,
+  gitStatus,
+  manifestSummary,
+  parsePnpmStoreRoot,
+  pnpmCommand,
+  resolvePnpmStoreRoot,
+  runPnpm,
+  runRequired,
+  sha256Bytes,
+  spawnCapture,
+  validatePnpmStorePath,
+} from './architecture-gate-runtime.mjs';
+import {
+  architectureMutationTestArguments,
+  assertDisposableDirectory,
+  assertSnapshotBudget,
+  assertSourceStatusUnchanged,
+  assertStableSnapshotFileIdentity,
+  attestationFor,
+  collectSnapshotManifests,
+  copyEntries,
+  createSourceManifest,
+  isControlPlanePath,
+  parseGitPathList,
+  readStableSnapshotEntry,
+  SNAPSHOT_PREFIX,
+  sourceEntries,
+  validateSnapshotRelativePath,
+} from './architecture-gate-snapshot.mjs';
+
+export {
+  architectureMutationTestArguments,
+  assertRepositoryIdentityUnchanged,
+  assertSnapshotBudget,
+  assertSourceStatusUnchanged,
+  assertStableSnapshotFileIdentity,
+  captureRepositoryIdentity,
+  cleanupPostgresProjects,
+  collectSnapshotManifests,
+  combineGateErrors,
+  createGateEnvironment,
+  createSourceManifest,
+  isControlPlanePath,
+  parseGitPathList,
+  parsePnpmStoreRoot,
+  pnpmCommand,
+  readStableSnapshotEntry,
+  resolvePnpmStoreRoot,
+  sha256Bytes,
+  spawnCapture,
+  validatePnpmStorePath,
+  validateSnapshotRelativePath,
+};
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024 * 1024;
-const SNAPSHOT_PREFIX = 'better-agent-g0-08-';
+const EXPECTED_REPORT_GATE_IDS = Object.freeze(['mutation', 'quality', 'postgres16']);
 const TEST_SOURCE_PATTERN = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
 const CONDITIONAL_TEST_PATTERN = /\b(?:describe|it|test)\.(?:only|runIf|skip|skipIf|todo)\b/gu;
-
-function architectureGateError(message, options) {
-  return new Error(`architecture gate: ${message}`, options);
-}
-
-export function validateSnapshotRelativePath(value) {
-  if (
-    typeof value !== 'string' ||
-    value.length === 0 ||
-    value !== value.trim() ||
-    path.isAbsolute(value) ||
-    /^[A-Za-z]:/u.test(value) ||
-    value.includes('\\') ||
-    [...value].some((character) => {
-      const codePoint = character.codePointAt(0);
-      return codePoint !== undefined && (codePoint < 32 || codePoint === 127);
-    })
-  ) {
-    throw architectureGateError(
-      `snapshot path is not a safe repository-relative path: ${String(value)}`,
-    );
-  }
-  const segments = value.split('/');
-  if (
-    segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..') ||
-    segments[0]?.toLowerCase() === '.git'
-  ) {
-    throw architectureGateError(`snapshot path escapes or targets Git metadata: ${value}`);
-  }
-  return value;
-}
-
-export function parseGitPathList(bytes) {
-  if (!Buffer.isBuffer(bytes)) throw architectureGateError('Git path list must be a Buffer');
-  const paths = bytes
-    .toString('utf8')
-    .split('\0')
-    .filter((value) => value.length > 0)
-    .map(validateSnapshotRelativePath)
-    .filter((value) => {
-      const normalized = value.toLowerCase();
-      return (
-        normalized !== 'docs/plans/.handoff' &&
-        !normalized.startsWith('docs/plans/.handoff/') &&
-        !normalized.endsWith('.acceptance.json')
-      );
-    });
-  if (new Set(paths).size !== paths.length) {
-    throw architectureGateError('Git path list contains duplicate entries');
-  }
-  return paths;
-}
-
-export function createSourceManifest(entries) {
-  if (!Array.isArray(entries) || entries.length === 0) {
-    throw architectureGateError('source manifest requires at least one file');
-  }
-  const normalized = entries
-    .map((entry) => {
-      if (entry === null || typeof entry !== 'object' || !Buffer.isBuffer(entry.bytes)) {
-        throw architectureGateError('source manifest entries require path and Buffer bytes');
-      }
-      return { path: validateSnapshotRelativePath(entry.path), bytes: entry.bytes };
-    })
-    .sort((left, right) => left.path.localeCompare(right.path, 'en'));
-  if (
-    new Set(normalized.map(({ path: relativePath }) => relativePath)).size !== normalized.length
-  ) {
-    throw architectureGateError('source manifest contains duplicate paths');
-  }
-  const hash = createHash('sha256');
-  let totalBytes = 0;
-  for (const entry of normalized) {
-    const pathBytes = Buffer.from(entry.path, 'utf8');
-    hash.update(Buffer.from(`${pathBytes.length}:`, 'ascii'));
-    hash.update(pathBytes);
-    hash.update(Buffer.from(`${entry.bytes.length}:`, 'ascii'));
-    hash.update(entry.bytes);
-    totalBytes += entry.bytes.length;
-  }
-  return Object.freeze({
-    digest: `sha256:${hash.digest('hex')}`,
-    fileCount: normalized.length,
-    paths: Object.freeze(normalized.map(({ path: relativePath }) => relativePath)),
-    totalBytes,
-  });
-}
-
-export function assertSourceStatusUnchanged(before, after) {
-  if (!Buffer.isBuffer(before) || !Buffer.isBuffer(after) || !before.equals(after)) {
-    throw architectureGateError('source Git status changed while the disposable gate was running');
-  }
-}
-
-export function assertStableSnapshotFileIdentity(before, after, relativePath) {
-  if (
-    before.isSymbolicLink() ||
-    !before.isFile() ||
-    before.nlink !== 1 ||
-    after.isSymbolicLink() ||
-    !after.isFile() ||
-    after.nlink !== 1
-  ) {
-    throw architectureGateError(
-      `source snapshot requires a single-link regular file: ${relativePath}`,
-    );
-  }
-  for (const field of ['dev', 'ino', 'size', 'mtimeMs', 'ctimeMs']) {
-    if (String(before[field]) !== String(after[field])) {
-      throw architectureGateError(`source file changed while reading: ${relativePath}`);
-    }
-  }
-}
-
-function resolveInside(root, relativePath) {
-  const safePath = validateSnapshotRelativePath(relativePath);
-  const absolute = path.resolve(root, ...safePath.split('/'));
-  const relative = path.relative(root, absolute);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw architectureGateError(`snapshot path escaped repository root: ${safePath}`);
-  }
-  return absolute;
-}
-
-function spawnCapture(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
-      shell: false,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const chunks = [];
-    let outputBytes = 0;
-    const consume = (stream, destination) => {
-      stream.on('data', (chunk) => {
-        const bytes = Buffer.from(chunk);
-        outputBytes += bytes.length;
-        if (outputBytes > MAX_COMMAND_OUTPUT_BYTES) {
-          child.kill();
-          return;
-        }
-        chunks.push(bytes);
-        if (options.streamOutput === true) destination.write(bytes);
-      });
-    };
-    consume(child.stdout, process.stdout);
-    consume(child.stderr, process.stderr);
-    child.once('error', (error) => {
-      reject(architectureGateError(`cannot start ${command}: ${error.message}`, { cause: error }));
-    });
-    child.once('close', (exitCode, signal) => {
-      const output = Buffer.concat(chunks);
-      if (outputBytes > MAX_COMMAND_OUTPUT_BYTES) {
-        reject(architectureGateError(`${command} exceeded the 64 MiB output boundary`));
-        return;
-      }
-      resolve({
-        exitCode: exitCode ?? -1,
-        output,
-        signal: signal ?? null,
-      });
-    });
-  });
-}
-
-async function runRequired(command, args, options = {}) {
-  const result = await spawnCapture(command, args, options);
-  if (result.exitCode !== 0) {
-    const output = result.output.toString('utf8').trim();
-    const outputTail = output.length > 8192 ? output.slice(-8192) : output;
-    throw architectureGateError(
-      `${options.context ?? command} failed with exit code ${String(result.exitCode)}${
-        result.signal === null ? '' : ` and signal ${result.signal}`
-      }${outputTail.length === 0 ? '' : `\n${outputTail}`}`,
-    );
-  }
-  return result;
-}
-
-function pnpmCommand(args, env = process.env) {
-  const npmExecPath = env.npm_execpath;
-  if (
-    typeof npmExecPath === 'string' &&
-    npmExecPath.length > 0 &&
-    existsSync(npmExecPath) &&
-    /pnpm(?:\.c?js)?$/iu.test(npmExecPath)
-  ) {
-    return { command: process.execPath, args: [npmExecPath, ...args] };
-  }
-  return { command: process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', args };
-}
-
-async function runPnpm(args, options = {}) {
-  const invocation = pnpmCommand(args, options.env);
-  return runRequired(invocation.command, invocation.args, options);
-}
-
-async function gitBytes(root, args) {
-  return (await runRequired('git', args, { cwd: root, context: `git ${args.join(' ')}` })).output;
-}
-
-async function gitStatus(root) {
-  return gitBytes(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
-}
-
-async function gitHead(root) {
-  return (await gitBytes(root, ['rev-parse', 'HEAD'])).toString('utf8').trim();
-}
-
-async function gitIndexDiff(root) {
-  return gitBytes(root, ['diff', '--cached', '--binary', '--no-ext-diff']);
-}
-
-function assertCleanStatus(status, context) {
-  if (status.length !== 0) {
-    throw architectureGateError(`${context} is not a clean checkout`);
-  }
-}
 
 async function readJson(file, context) {
   try {
@@ -267,8 +111,26 @@ async function listTestSources(directory) {
   return sources.sort();
 }
 
+async function listRelativeFiles(directory, prefix) {
+  const files = [];
+  const visit = async (current, relativeDirectory) => {
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const relative =
+        relativeDirectory.length === 0 ? entry.name : `${relativeDirectory}/${entry.name}`;
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        await visit(absolute, relative);
+      } else if (entry.isFile()) {
+        files.push(`${prefix}/${relative}`);
+      }
+    }
+  };
+  await visit(directory, '');
+  return files.sort();
+}
+
 async function findConditionalTestLocations(root) {
-  const roots = ['apps', 'packages', 'infra/test/postgres'];
+  const roots = ['apps', 'packages', 'infra/test/postgres', 'tests/architecture-gate'];
   const locations = [];
   for (const relativeRoot of roots) {
     const absoluteRoot = path.join(root, ...relativeRoot.split('/'));
@@ -281,6 +143,25 @@ async function findConditionalTestLocations(root) {
     }
   }
   return locations.sort();
+}
+
+async function collectWorkspaceTests(root) {
+  const workspaceTests = [];
+  for (const relativeRoot of ['apps', 'packages']) {
+    const absoluteRoot = path.join(root, relativeRoot);
+    for (const entry of await readdir(absoluteRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const manifest = await readJson(
+        path.join(absoluteRoot, entry.name, 'package.json'),
+        `${relativeRoot}/${entry.name}/package.json`,
+      );
+      workspaceTests.push({
+        packageName: manifest.name,
+        script: manifest.scripts?.test,
+      });
+    }
+  }
+  return workspaceTests.sort((left, right) => left.packageName.localeCompare(right.packageName));
 }
 
 async function collectRepositoryInventory(root) {
@@ -297,14 +178,25 @@ async function collectRepositoryInventory(root) {
     .filter((entry) => entry.isFile() && entry.name.endsWith('.sql'))
     .map(({ name }) => name)
     .sort();
-  const postgresSuiteFiles = (
-    await readdir(path.join(root, 'infra', 'test', 'postgres'), {
-      withFileTypes: true,
-    })
-  )
-    .filter((entry) => entry.isFile() && /^run(?:-[a-z0-9]+)*-integration\.mjs$/u.test(entry.name))
-    .map(({ name }) => `infra/test/postgres/${name}`)
-    .sort();
+  const postgresFiles = await listRelativeFiles(
+    path.join(root, 'infra', 'test', 'postgres'),
+    'infra/test/postgres',
+  );
+  const postgresSuiteFiles = postgresFiles.filter((file) =>
+    /^infra\/test\/postgres\/run(?:-[a-z0-9]+)*-integration\.mjs$/u.test(file),
+  );
+  const postgresSupportFiles = postgresFiles.filter((file) => !postgresSuiteFiles.includes(file));
+  const hashFiles = async (files) =>
+    Object.fromEntries(
+      await Promise.all(
+        files.map(async (file) => [
+          file,
+          sha256Bytes(await readFile(path.join(root, ...file.split('/')))).slice('sha256:'.length),
+        ]),
+      ),
+    );
+  const postgresSuiteSha256 = await hashFiles(postgresSuiteFiles);
+  const postgresSupportSha256 = await hashFiles(postgresSupportFiles);
   const contract = await checkGeneratedContract({
     outputDir: path.join(root, 'packages', 'api-contract', 'generated'),
     sourcePath: path.join(root, 'docs', 'api', 'openapi.yaml'),
@@ -320,12 +212,17 @@ async function collectRepositoryInventory(root) {
   return {
     rootScripts: {
       architectureGate: rootPackage.scripts?.['architecture:gate'],
+      architectureGateTest: rootPackage.scripts?.['architecture:gate:test'],
       check: rootPackage.scripts?.check,
       postgres16: rootPackage.scripts?.['db:test:postgres16'],
     },
     dbIntegrationScript: dbPackage.scripts?.['test:integration'],
     migrationFiles,
     postgresSuiteFiles,
+    postgresSuiteSha256,
+    postgresSupportFiles,
+    postgresSupportSha256,
+    workspaceTests: await collectWorkspaceTests(root),
     conditionalSkipLocations: await findConditionalTestLocations(root),
     openapi,
   };
@@ -338,146 +235,361 @@ async function readManifest(root) {
   );
 }
 
-async function runInternalGate(root, sourceManifest = 'sha256:clean-checkout') {
+function gateInvocation(gate, environment) {
+  if (gate.command === 'node') {
+    return { command: process.execPath, args: gate.args };
+  }
+  return pnpmCommand(gate.args, environment);
+}
+
+function sameManifest(left, right) {
+  return ['digest', 'fileCount', 'totalBytes'].every((field) => left[field] === right[field]);
+}
+
+function assertExpectedManifest(actual, expected, context) {
+  if (!sameManifest(manifestSummary(actual), expected)) {
+    throw architectureGateError(`${context} source manifest does not match the attested input`);
+  }
+}
+
+function gateReportResult(result, semanticPass) {
+  return {
+    id: result.id,
+    status: result.exitCode === 0 && result.error === null && semanticPass ? 'pass' : 'fail',
+    exitCode: result.exitCode,
+    signal: result.signal,
+    durationMs: result.durationMs,
+    stdoutBytes: result.stdout.length,
+    stdoutSha256: sha256Bytes(result.stdout),
+    stderrBytes: result.stderr.length,
+    stderrSha256: sha256Bytes(result.stderr),
+    error: result.error,
+  };
+}
+
+async function runInternalGate(root, attestation, options = {}) {
   const statusBefore = await gitStatus(root);
   assertCleanStatus(statusBefore, 'architecture gate execution root');
-  const manifest = await readManifest(root);
-  const inventory = await collectRepositoryInventory(root);
-  const inventoryResult = validateArchitectureInventory(manifest, inventory);
-
-  await runRequired(
-    process.execPath,
-    ['--test', '--test-isolation=none', 'tests/architecture-gate/architecture-gate.test.mjs'],
-    { cwd: root, context: 'architecture gate mutation tests', streamOutput: true },
+  const snapshotsBefore = await collectSnapshotManifests(root);
+  assertExpectedManifest(
+    snapshotsBefore.productManifest,
+    attestation.sourceManifest,
+    'architecture gate execution root',
   );
-
+  assertExpectedManifest(
+    snapshotsBefore.controlPlaneManifest,
+    attestation.controlPlaneManifest,
+    'architecture gate execution root control-plane',
+  );
+  const identityBefore = await captureRepositoryIdentity(
+    root,
+    snapshotsBefore.productManifest,
+    snapshotsBefore.controlPlaneManifest,
+  );
   const results = [];
-  for (const gate of manifest.gates) {
-    const startedAt = Date.now();
-    const invocation = pnpmCommand(gate.args);
-    const result = await spawnCapture(invocation.command, invocation.args, {
-      cwd: root,
-      streamOutput: true,
-    });
-    results.push({
-      id: gate.id,
-      exitCode: result.exitCode,
-      output: result.output.toString('utf8'),
-      durationMs: Date.now() - startedAt,
-    });
-    if (result.exitCode !== 0) {
-      throw architectureGateError(
-        `gate ${gate.id} failed with exit code ${String(result.exitCode)}`,
-      );
+  let inventoryResult;
+  let semanticPass = false;
+  let executionError;
+  let integrityError;
+  let cleanAfter = false;
+  try {
+    const manifest = await readManifest(root);
+    const manifestHash = canonicalSha256(manifest);
+    if (manifestHash !== attestation.gateManifest) {
+      throw architectureGateError('gate manifest does not match the attested input');
     }
+    const inventory = await collectRepositoryInventory(root);
+    inventoryResult = validateArchitectureInventory(manifest, inventory);
+    const environment = createGateEnvironment();
+    for (const gate of manifest.gates) {
+      const startedAt = Date.now();
+      const postgresRegistry =
+        gate.id === 'postgres16'
+          ? await postgresProjectRegistryForGate({
+              acceptInherited: options.acceptInheritedPostgresRegistry === true,
+            })
+          : undefined;
+      const gateEnvironment =
+        postgresRegistry === undefined
+          ? environment
+          : { ...environment, BA_POSTGRES_PROJECT_REGISTRY: postgresRegistry };
+      const invocation = gateInvocation(gate, gateEnvironment);
+      let result;
+      let commandError;
+      let cleanupError;
+      try {
+        result = await spawnCapture(invocation.command, invocation.args, {
+          cwd: root,
+          env: gateEnvironment,
+          killGraceMs: gate.id === 'postgres16' ? 30_000 : COMMAND_KILL_GRACE_MS,
+          streamOutput: true,
+          timeoutMs: gate.timeoutMs,
+        });
+      } catch (error) {
+        commandError = error;
+      }
+      if (postgresRegistry !== undefined) {
+        try {
+          await cleanupPostgresProjects(root, postgresRegistry);
+        } catch (error) {
+          cleanupError = error;
+        }
+      }
+      if (result !== undefined && result.exitCode !== 0) {
+        commandError = architectureGateError(
+          `gate ${gate.id} failed with exit code ${String(result.exitCode)}`,
+        );
+      }
+      const gateError = combineGateErrors([commandError, cleanupError]);
+      const stdout = result?.stdout ?? Buffer.alloc(0);
+      const stderr =
+        result?.stderr ??
+        (gateError === undefined ? Buffer.alloc(0) : Buffer.from(errorSummary(gateError), 'utf8'));
+      results.push({
+        id: gate.id,
+        exitCode: result?.exitCode ?? -1,
+        output: result?.output.toString('utf8') ?? errorSummary(gateError),
+        stdout,
+        stderr,
+        signal: result?.signal ?? null,
+        durationMs: Date.now() - startedAt,
+        error: gateError === undefined ? null : errorSummary(gateError),
+      });
+      if (gateError !== undefined) throw gateError;
+    }
+    validateGateResults(manifest, results);
+    semanticPass = true;
+  } catch (error) {
+    executionError = error;
   }
-  const resultSummary = validateGateResults(manifest, results);
-  const statusAfter = await gitStatus(root);
-  assertCleanStatus(statusAfter, 'architecture gate execution root after all gates');
+  try {
+    const statusAfter = await gitStatus(root);
+    assertCleanStatus(statusAfter, 'architecture gate execution root after all gates');
+    const snapshotsAfter = await collectSnapshotManifests(root);
+    assertExpectedManifest(
+      snapshotsAfter.productManifest,
+      attestation.sourceManifest,
+      'architecture gate execution root after all gates',
+    );
+    assertExpectedManifest(
+      snapshotsAfter.controlPlaneManifest,
+      attestation.controlPlaneManifest,
+      'architecture gate execution root control-plane after all gates',
+    );
+    const identityAfter = await captureRepositoryIdentity(
+      root,
+      snapshotsAfter.productManifest,
+      snapshotsAfter.controlPlaneManifest,
+    );
+    assertRepositoryIdentityUnchanged(identityBefore, identityAfter);
+    cleanAfter = true;
+  } catch (error) {
+    integrityError = error;
+  }
+  const combinedError = combineGateErrors([executionError, integrityError]);
   const report = {
-    schemaVersion: 'architecture-gate-report/1',
-    sourceManifest,
-    gateManifest: inventoryResult.manifestHash,
-    gates: results.map(({ id, exitCode, output, durationMs }) => ({
-      id,
-      exitCode,
-      durationMs,
-      outputSha256: canonicalSha256(output),
-    })),
+    schemaVersion: 'architecture-gate-report/2',
+    sourceManifest: attestation.sourceManifest,
+    controlPlaneManifest: attestation.controlPlaneManifest,
+    gateManifest: inventoryResult?.manifestHash ?? null,
+    gates: results.map((result) => gateReportResult(result, semanticPass)),
     cleanBefore: true,
-    cleanAfter: true,
-    result: resultSummary.ok ? 'pass' : 'fail',
+    cleanAfter,
+    result: combinedError === undefined ? 'pass' : 'fail',
+    error: combinedError === undefined ? null : errorSummary(combinedError),
   };
   process.stdout.write(`Architecture gate report: ${JSON.stringify(report)}\n`);
+  if (combinedError !== undefined) throw combinedError;
   return report;
 }
 
-async function sourceEntries(root, paths) {
-  const entries = [];
-  for (const relativePath of paths) {
-    const entry = await readStableSnapshotEntry(root, relativePath);
-    if (entry !== null) entries.push(entry);
-  }
-  return entries;
-}
-
-export async function readStableSnapshotEntry(root, relativePath) {
-  const absolute = resolveInside(root, relativePath);
-  let before;
-  try {
-    before = await lstat(absolute);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return null;
-    throw architectureGateError(`cannot inspect source file ${relativePath}: ${error.message}`, {
-      cause: error,
-    });
-  }
-  assertStableSnapshotFileIdentity(before, before, relativePath);
-  let handle;
-  try {
-    handle = await open(absolute, 'r');
-    const opened = await handle.stat();
-    assertStableSnapshotFileIdentity(before, opened, relativePath);
-    const bytes = await handle.readFile();
-    const after = await handle.stat();
-    assertStableSnapshotFileIdentity(opened, after, relativePath);
-    return { path: relativePath, bytes };
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('architecture gate:')) throw error;
+export function validateInternalGateReport(output, expectedAttestation) {
+  if (!Buffer.isBuffer(output)) throw architectureGateError('internal report output must be bytes');
+  const prefix = 'Architecture gate report: ';
+  const lines = output
+    .toString('utf8')
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(prefix));
+  if (lines.length !== 1) {
     throw architectureGateError(
-      `cannot read stable source file ${relativePath}: ${error.message}`,
+      `expected exactly one internal architecture gate report, received ${String(lines.length)}`,
+    );
+  }
+  let report;
+  try {
+    report = JSON.parse(lines[0].slice(prefix.length));
+  } catch (error) {
+    throw architectureGateError(
+      `internal architecture gate report is invalid JSON: ${error.message}`,
       {
         cause: error,
       },
     );
-  } finally {
-    await handle?.close();
   }
-}
-
-async function copyEntries(destinationRoot, entries) {
-  for (const entry of entries) {
-    const destination = resolveInside(destinationRoot, entry.path);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, entry.bytes, { flag: 'wx' });
+  if (report === null || typeof report !== 'object' || Array.isArray(report)) {
+    throw architectureGateError('internal architecture gate report must be an object');
   }
-}
-
-function assertDisposableDirectory(directory) {
-  const temporaryRoot = path.resolve(tmpdir());
-  const resolved = path.resolve(directory);
-  const relative = path.relative(temporaryRoot, resolved);
+  const reportKeys = [
+    'cleanAfter',
+    'cleanBefore',
+    'controlPlaneManifest',
+    'error',
+    'gateManifest',
+    'gates',
+    'result',
+    'schemaVersion',
+    'sourceManifest',
+  ];
+  if (Object.keys(report).sort().join('\0') !== reportKeys.sort().join('\0')) {
+    throw architectureGateError('internal architecture gate report keys drifted');
+  }
   if (
-    relative.startsWith('..') ||
-    path.isAbsolute(relative) ||
-    path.dirname(relative) !== '.' ||
-    !path.basename(resolved).startsWith(SNAPSHOT_PREFIX)
+    report.schemaVersion !== 'architecture-gate-report/2' ||
+    report.result !== 'pass' ||
+    report.error !== null ||
+    report.cleanBefore !== true ||
+    report.cleanAfter !== true ||
+    report.gateManifest !== expectedAttestation.gateManifest ||
+    !Array.isArray(report.gates)
   ) {
-    throw architectureGateError(`refusing to clean an unverified temporary directory: ${resolved}`);
+    throw architectureGateError('internal architecture gate report did not attest a clean pass');
+  }
+  const gateIds = report.gates.map((gate) => gate?.id);
+  if (gateIds.join('\0') !== EXPECTED_REPORT_GATE_IDS.join('\0')) {
+    throw architectureGateError('internal architecture gate report gate set drifted');
+  }
+  const gateKeys = [
+    'durationMs',
+    'error',
+    'exitCode',
+    'id',
+    'signal',
+    'status',
+    'stderrBytes',
+    'stderrSha256',
+    'stdoutBytes',
+    'stdoutSha256',
+  ];
+  for (const gate of report.gates) {
+    if (
+      gate === null ||
+      typeof gate !== 'object' ||
+      Array.isArray(gate) ||
+      Object.keys(gate).sort().join('\0') !== gateKeys.sort().join('\0') ||
+      gate.status !== 'pass' ||
+      gate.exitCode !== 0 ||
+      gate.signal !== null ||
+      gate.error !== null ||
+      !Number.isSafeInteger(gate.durationMs) ||
+      gate.durationMs < 0 ||
+      !Number.isSafeInteger(gate.stdoutBytes) ||
+      gate.stdoutBytes < 0 ||
+      !Number.isSafeInteger(gate.stderrBytes) ||
+      gate.stderrBytes < 0 ||
+      !/^sha256:[a-f0-9]{64}$/u.test(gate.stdoutSha256) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(gate.stderrSha256)
+    ) {
+      throw architectureGateError(`internal architecture gate report ${String(gate?.id)} failed`);
+    }
+  }
+  if (!sameManifest(report.sourceManifest, expectedAttestation.sourceManifest)) {
+    throw architectureGateError('internal architecture gate report source manifest drifted');
+  }
+  if (!sameManifest(report.controlPlaneManifest, expectedAttestation.controlPlaneManifest)) {
+    throw architectureGateError('internal architecture gate report control-plane manifest drifted');
+  }
+  return report;
+}
+
+function encodeAttestation(attestation) {
+  return Buffer.from(JSON.stringify(attestation), 'utf8').toString('base64url');
+}
+
+function requireManifestSummary(value, context) {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.digest) ||
+    !Number.isSafeInteger(value.fileCount) ||
+    value.fileCount < 0 ||
+    !Number.isSafeInteger(value.totalBytes) ||
+    value.totalBytes < 0
+  ) {
+    throw architectureGateError(`${context} is not a valid manifest summary`);
+  }
+  return Object.freeze({
+    digest: value.digest,
+    fileCount: value.fileCount,
+    totalBytes: value.totalBytes,
+  });
+}
+
+function decodeAttestation(value) {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (
+      parsed === null ||
+      typeof parsed !== 'object' ||
+      Object.keys(parsed).sort().join('\0') !==
+        ['controlPlaneManifest', 'gateManifest', 'sourceManifest'].sort().join('\0')
+    ) {
+      throw new Error('attestation keys drifted');
+    }
+    return Object.freeze({
+      sourceManifest: requireManifestSummary(parsed.sourceManifest, 'source manifest'),
+      controlPlaneManifest: requireManifestSummary(
+        parsed.controlPlaneManifest,
+        'control-plane manifest',
+      ),
+      gateManifest: /^sha256:[a-f0-9]{64}$/u.test(parsed.gateManifest)
+        ? parsed.gateManifest
+        : (() => {
+            throw new Error('gate manifest digest is invalid');
+          })(),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('architecture gate:')) throw error;
+    throw architectureGateError(`internal attestation is invalid: ${error.message}`, {
+      cause: error,
+    });
   }
 }
 
-async function runDisposableGate(sourceRoot, sourceStatusBefore) {
-  const sourceHeadBefore = await gitHead(sourceRoot);
-  const sourceIndexBefore = await gitIndexDiff(sourceRoot);
-  const fileList = parseGitPathList(
-    await gitBytes(sourceRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']),
+export async function runDisposableGate(
+  sourceRoot,
+  sourceSnapshots,
+  sourceIdentityBefore,
+  options = {},
+) {
+  const attestation = attestationFor(sourceSnapshots);
+  const temporaryDirectory = await (options.makeTemporaryDirectory ?? mkdtemp)(
+    path.join(tmpdir(), SNAPSHOT_PREFIX),
   );
-  const entries = await sourceEntries(sourceRoot, fileList);
-  const sourceManifest = createSourceManifest(entries);
-  const temporaryDirectory = await mkdtemp(path.join(tmpdir(), SNAPSHOT_PREFIX));
-  assertDisposableDirectory(temporaryDirectory);
+  assertDisposableDirectory(temporaryDirectory, tmpdir());
 
-  let primaryError;
+  const failures = [];
+  let postgresRegistry;
   try {
-    await copyEntries(temporaryDirectory, entries);
-    await runRequired('git', ['init', '--quiet'], {
+    await copyEntries(temporaryDirectory, sourceSnapshots.productEntries);
+    const copiedEntries = await sourceEntries(
+      temporaryDirectory,
+      sourceSnapshots.productManifest.paths,
+    );
+    assertExpectedManifest(
+      createSourceManifest(copiedEntries),
+      attestation.sourceManifest,
+      'copied disposable architecture snapshot',
+    );
+    const gitEnvironment = createGitEnvironment();
+    await runRequired('git', ['init', '--quiet', '--template='], {
       cwd: temporaryDirectory,
       context: 'temporary git init',
+      env: gitEnvironment,
     });
-    await runRequired('git', ['add', '--all'], {
+    await runRequired('git', ['-c', 'core.fsmonitor=false', 'add', '--all'], {
       cwd: temporaryDirectory,
       context: 'temporary git add',
+      env: gitEnvironment,
     });
     await runRequired(
       'git',
@@ -486,91 +598,173 @@ async function runDisposableGate(sourceRoot, sourceStatusBefore) {
         'user.name=better-agent architecture gate',
         '-c',
         'user.email=architecture-gate@example.invalid',
+        '-c',
+        'commit.gpgSign=false',
+        '-c',
+        `core.hooksPath=${GIT_NULL_DEVICE}`,
         'commit',
         '--quiet',
         '-m',
         'test: materialize disposable architecture gate snapshot',
       ],
-      { cwd: temporaryDirectory, context: 'temporary git commit' },
+      {
+        cwd: temporaryDirectory,
+        context: 'temporary git commit',
+        env: gitEnvironment,
+      },
     );
     assertCleanStatus(await gitStatus(temporaryDirectory), 'materialized architecture snapshot');
-    await runPnpm(['install', '--offline', '--frozen-lockfile'], {
-      cwd: temporaryDirectory,
-      context: 'offline dependency materialization',
-      streamOutput: true,
+    const temporarySnapshotsBefore = await collectSnapshotManifests(temporaryDirectory);
+    assertExpectedManifest(
+      temporarySnapshotsBefore.productManifest,
+      attestation.sourceManifest,
+      'materialized architecture snapshot',
+    );
+    const temporaryIdentityBefore = await captureRepositoryIdentity(
+      temporaryDirectory,
+      temporarySnapshotsBefore.productManifest,
+      temporarySnapshotsBefore.controlPlaneManifest,
+    );
+    const internalAttestation = Object.freeze({
+      ...attestation,
+      controlPlaneManifest: manifestSummary(temporarySnapshotsBefore.controlPlaneManifest),
     });
+    if (options.installDependencies === undefined) {
+      const storeRoot = await resolvePnpmStoreRoot(sourceRoot, createGateEnvironment());
+      await runPnpm(['install', '--offline', '--frozen-lockfile', '--store-dir', storeRoot], {
+        cwd: temporaryDirectory,
+        context: 'offline dependency materialization',
+        env: createGateEnvironment(),
+        streamOutput: true,
+        timeoutMs: 300_000,
+      });
+    } else {
+      await options.installDependencies(temporaryDirectory);
+    }
     assertCleanStatus(
       await gitStatus(temporaryDirectory),
       'materialized architecture snapshot after dependency installation',
     );
-    await runRequired(
-      process.execPath,
-      ['scripts/architecture-gate.mjs', '--internal', sourceManifest.digest],
-      {
-        cwd: temporaryDirectory,
-        context: 'disposable clean-checkout architecture gate',
-        streamOutput: true,
-      },
+    const temporarySnapshotsAfterInstall = await collectSnapshotManifests(temporaryDirectory);
+    const temporaryIdentityAfterInstall = await captureRepositoryIdentity(
+      temporaryDirectory,
+      temporarySnapshotsAfterInstall.productManifest,
+      temporarySnapshotsAfterInstall.controlPlaneManifest,
     );
+    assertRepositoryIdentityUnchanged(temporaryIdentityBefore, temporaryIdentityAfterInstall);
+    postgresRegistry = await createPostgresProjectRegistry();
+    const internalEnvironment = {
+      ...createGateEnvironment(),
+      BA_POSTGRES_PROJECT_REGISTRY: postgresRegistry,
+    };
+    const childResult =
+      options.runInternalChild === undefined
+        ? await runRequired(
+            process.execPath,
+            ['scripts/architecture-gate.mjs', '--internal', encodeAttestation(internalAttestation)],
+            {
+              cwd: temporaryDirectory,
+              context: 'disposable clean-checkout architecture gate',
+              env: internalEnvironment,
+              streamOutput: true,
+              timeoutMs: 1_500_000,
+            },
+          )
+        : await options.runInternalChild(temporaryDirectory, internalAttestation, postgresRegistry);
+    validateInternalGateReport(childResult.output, internalAttestation);
+    const temporarySnapshotsAfterGate = await collectSnapshotManifests(temporaryDirectory);
+    const temporaryIdentityAfterGate = await captureRepositoryIdentity(
+      temporaryDirectory,
+      temporarySnapshotsAfterGate.productManifest,
+      temporarySnapshotsAfterGate.controlPlaneManifest,
+    );
+    assertRepositoryIdentityUnchanged(temporaryIdentityBefore, temporaryIdentityAfterGate);
   } catch (error) {
-    primaryError = error;
+    failures.push(error);
   } finally {
-    try {
-      const sourceStatusAfter = await gitStatus(sourceRoot);
-      const sourceHeadAfter = await gitHead(sourceRoot);
-      const sourceIndexAfter = await gitIndexDiff(sourceRoot);
-      assertSourceStatusUnchanged(sourceStatusBefore, sourceStatusAfter);
-      if (sourceHeadAfter !== sourceHeadBefore || !sourceIndexAfter.equals(sourceIndexBefore)) {
-        primaryError ??= architectureGateError(
-          'source HEAD or index changed while the disposable gate was running',
+    if (postgresRegistry !== undefined) {
+      try {
+        await (options.cleanupPostgresProjects ?? cleanupPostgresProjects)(
+          sourceRoot,
+          postgresRegistry,
         );
+      } catch (error) {
+        failures.push(error);
       }
-    } catch (error) {
-      primaryError ??= error;
     }
     try {
-      assertDisposableDirectory(temporaryDirectory);
-      await rm(temporaryDirectory, { force: true, recursive: true });
+      const sourceSnapshotsAfter = await collectSnapshotManifests(sourceRoot);
+      const sourceIdentityAfter = await captureRepositoryIdentity(
+        sourceRoot,
+        sourceSnapshotsAfter.productManifest,
+        sourceSnapshotsAfter.controlPlaneManifest,
+      );
+      assertRepositoryIdentityUnchanged(sourceIdentityBefore, sourceIdentityAfter);
     } catch (error) {
-      primaryError ??= error;
+      failures.push(error);
+    }
+    try {
+      assertDisposableDirectory(temporaryDirectory, tmpdir());
+      await (options.removeTemporaryDirectory ?? rm)(temporaryDirectory, {
+        force: true,
+        maxRetries: 5,
+        recursive: true,
+        retryDelay: 200,
+      });
+    } catch (error) {
+      failures.push(
+        architectureGateError(
+          `failed to remove disposable snapshot ${temporaryDirectory}: ${error.message}`,
+          { cause: error },
+        ),
+      );
     }
   }
-  if (primaryError !== undefined) throw primaryError;
-  process.stdout.write(
-    `Disposable clean checkout passed: ${sourceManifest.fileCount} files, ` +
-      `${String(sourceManifest.totalBytes)} bytes, source ${sourceManifest.digest}.\n`,
-  );
+  const combinedError = combineGateErrors(failures);
+  if (combinedError !== undefined) throw combinedError;
+  if (options.silent !== true) {
+    process.stdout.write(
+      `Disposable clean checkout passed: ${attestation.sourceManifest.fileCount} files, ` +
+        `${String(attestation.sourceManifest.totalBytes)} bytes, source ${attestation.sourceManifest.digest}; ` +
+        `excluded control-plane ${attestation.controlPlaneManifest.fileCount} files, ` +
+        `${String(attestation.controlPlaneManifest.totalBytes)} bytes, ${attestation.controlPlaneManifest.digest}.\n`,
+    );
+  }
 }
 
 async function main(argv = process.argv.slice(2)) {
   const internal = argv[0] === '--internal';
-  const sourceManifest = argv[1] ?? 'sha256:clean-checkout';
-  if (
-    (!internal && argv.length !== 0) ||
-    (internal && argv.length > 2) ||
-    !/^sha256:(?:[a-f0-9]{64}|clean-checkout)$/u.test(sourceManifest)
-  ) {
+  if ((!internal && argv.length !== 0) || (internal && argv.length !== 2)) {
     throw architectureGateError(
-      'usage: node scripts/architecture-gate.mjs [--internal [sha256:<digest>]]',
+      'usage: node scripts/architecture-gate.mjs [--internal <base64url-attestation>]',
     );
   }
-  const sourceStatus = await gitStatus(REPOSITORY_ROOT);
   if (internal) {
+    const sourceStatus = await gitStatus(REPOSITORY_ROOT);
     assertCleanStatus(sourceStatus, 'internal architecture gate root');
-    await runInternalGate(REPOSITORY_ROOT, sourceManifest);
+    await runInternalGate(REPOSITORY_ROOT, decodeAttestation(argv[1]), {
+      acceptInheritedPostgresRegistry: true,
+    });
     return;
   }
+  const sourceSnapshots = await collectSnapshotManifests(REPOSITORY_ROOT);
+  const sourceIdentity = await captureRepositoryIdentity(
+    REPOSITORY_ROOT,
+    sourceSnapshots.productManifest,
+    sourceSnapshots.controlPlaneManifest,
+  );
+  const sourceStatus = await gitStatus(REPOSITORY_ROOT);
   if (sourceStatus.length === 0) {
-    await runInternalGate(REPOSITORY_ROOT);
+    await runInternalGate(REPOSITORY_ROOT, attestationFor(sourceSnapshots));
     return;
   }
-  await runDisposableGate(REPOSITORY_ROOT, sourceStatus);
+  await runDisposableGate(REPOSITORY_ROOT, sourceSnapshots, sourceIdentity);
 }
 
 const invokedPath = process.argv[1] === undefined ? '' : path.resolve(process.argv[1]);
 if (invokedPath === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`${errorSummary(error)}\n`);
     process.exitCode = 1;
   });
 }

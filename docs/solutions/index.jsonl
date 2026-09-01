@@ -1,0 +1,1 @@
+{"date":"2026-09-01","path":"docs/solutions/2026-09-01-g008-fail-closed-architecture-gate.md","summary":"以冻结 manifest、disposable clean checkout、精确 PG registry 和完整 parsed CI schema 构建 fail-closed G1 前门。","tags":["architecture-gate","ci","postgres","security"],"title":"G0-08 fail-closed 可执行架构门"}

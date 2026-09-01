@@ -908,6 +908,7 @@ async function main() {
   process.stdout.write(
     `PostgreSQL 16 auth/RLS integration passed: ${migrationCount} migrations, role separation, exact definer paths, authoritative credential snapshots, same-session transaction cleanup, FORCE RLS, credential lifecycle, verifier isolation, and assertion consumption sealed behind atomic session exchange.\n`,
   );
+  process.stdout.write('architecture-gate-suite/1 auth-rls pass\n');
 }
 
 let mainFailure;

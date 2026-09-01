@@ -1589,6 +1589,7 @@ async function main() {
   process.stdout.write(
     `PostgreSQL 16 G0-06 Agent Chat/browser integration passed: ${migrations.length} migrations, migrator SET LOCAL ROLE owner fixtures without temporary grants, atomic Conversation CAS plus zero-credit Run acceptance, two-connection single-winner rollback, same-end-user cross-session idempotency lookup, active-pointer-independent historical read/events/cancel, exact cancellation receipt replay and different-target conflict, wrong-principal invisibility, and observed session/principal/Deployment lock-and-epoch fences with zero failed-write leakage. Disposable database only; no production or cloud state was exercised.\n`,
   );
+  process.stdout.write('architecture-gate-suite/1 run-conversation-browser pass\n');
 }
 
 let mainFailure;

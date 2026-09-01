@@ -43,47 +43,149 @@
     {
       "id": "migration-lifecycle",
       "file": "infra/test/postgres/run-integration.mjs",
+      "sha256": "94195c4cb926fd45e26ce2d4faab17ccad09d4030727604dfa02cad77954154c",
       "mode": "real",
-      "successMarker": "integration passed:"
+      "successMarker": "architecture-gate-suite/1 migration-lifecycle pass"
     },
     {
       "id": "auth-rls",
       "file": "infra/test/postgres/run-auth-rls-integration.mjs",
+      "sha256": "d1753f60e08ce9cfa4d3cbab52deecd688996473a16caa09f03b67d614582384",
       "mode": "real",
-      "successMarker": "auth/RLS integration passed:"
+      "successMarker": "architecture-gate-suite/1 auth-rls pass"
     },
     {
       "id": "release-deployment",
       "file": "infra/test/postgres/run-release-deployment-integration.mjs",
+      "sha256": "9058656293483d9cc5f572550944bd476299675c6f17926dac4ca74d87b680e0",
       "mode": "real",
-      "successMarker": "G0-05 release/deployment integration passed:"
+      "successMarker": "architecture-gate-suite/1 release-deployment pass"
     },
     {
       "id": "run-billing",
       "file": "infra/test/postgres/run-run-billing-integration.mjs",
+      "sha256": "8af4e842a7371e9920c8e85444b36e395834db101eb70e11895bf5a1a3326e0d",
       "mode": "real",
-      "successMarker": "G0-06 Run/Billing passed:"
+      "successMarker": "architecture-gate-suite/1 run-billing pass"
     },
     {
       "id": "run-conversation-browser",
       "file": "infra/test/postgres/run-run-conversation-browser-integration.mjs",
+      "sha256": "b03cfaa1f9ba0024bb73714ca3d13f6e1edc36ccbad10db853f093dd25d1c476",
       "mode": "real",
-      "successMarker": "G0-06 Agent Chat/browser integration passed:"
+      "successMarker": "architecture-gate-suite/1 run-conversation-browser pass"
     },
     {
       "id": "runtime-security",
       "file": "infra/test/postgres/run-runtime-security-integration.mjs",
+      "sha256": "a7853d2633d27aeed25ef9e4c58d43300bbdefd88e0d2eb81c1e3aac3655e5f1",
       "mode": "real",
-      "successMarker": "G0-07 PostgreSQL runtime-security harness passed:"
+      "successMarker": "architecture-gate-suite/1 runtime-security pass"
+    }
+  ],
+  "postgresSupportFiles": [
+    {
+      "file": "infra/test/postgres/README.md",
+      "sha256": "47bc1673ab3d36fe942d8b26b87152b0973152fe5ba084efedb07e79e427a592"
+    },
+    {
+      "file": "infra/test/postgres/bootstrap-test.sql",
+      "sha256": "4b114251ef2a825e14660949dd82d8a50047525634c5ec4fd1752bb51f17ac17"
+    },
+    {
+      "file": "infra/test/postgres/catalog-fingerprint.mjs",
+      "sha256": "a498a696915e402a6eef88a0aa4209fb7c1be6259b33b09851634eed81af2fdb"
+    },
+    {
+      "file": "infra/test/postgres/compose.yaml",
+      "sha256": "941d2545f41c8296ae4545f91c996986e0df703facd6e1a05ee3826fd3cd45cd"
+    },
+    {
+      "file": "infra/test/postgres/fixtures/migrations/001_probe.down.sql",
+      "sha256": "b2eb24461466ec0857534ce021b8a3fe221649cea28af2128c89e34994378eac"
+    },
+    {
+      "file": "infra/test/postgres/fixtures/migrations/001_probe.up.sql",
+      "sha256": "80642827bb35415f5809d5df75912f4e0420194eb12711853d14bf06ce8d82f0"
+    },
+    {
+      "file": "infra/test/postgres/harness.mjs",
+      "sha256": "0e990a55ce4f752959ec28a31ba3ea8b3cf6570506f1d9bd2a80e5cd37aec832"
+    }
+  ],
+  "workspaceTests": [
+    {
+      "packageName": "@better-agent/api",
+      "script": "vitest run --config vitest.config.ts --configLoader native",
+      "testCount": 80,
+      "successMarker": "@better-agent/api:test:       Tests  80 passed (80)"
+    },
+    {
+      "packageName": "@better-agent/api-contract",
+      "script": "node test/contract-toolchain.test.mjs",
+      "testCount": 16,
+      "successMarker": "@better-agent/api-contract:test: # pass 16"
+    },
+    {
+      "packageName": "@better-agent/auth",
+      "script": "vitest run --config vitest.config.ts --configLoader native",
+      "testCount": 48,
+      "successMarker": "@better-agent/auth:test:       Tests  48 passed (48)"
+    },
+    {
+      "packageName": "@better-agent/billing-core",
+      "script": "vitest run --config vitest.config.ts --configLoader native",
+      "testCount": 43,
+      "successMarker": "@better-agent/billing-core:test:       Tests  43 passed (43)"
+    },
+    {
+      "packageName": "@better-agent/db",
+      "script": "vitest run --config vitest.config.ts --configLoader native",
+      "testCount": 85,
+      "successMarker": "@better-agent/db:test:       Tests  85 passed (85)"
+    },
+    {
+      "packageName": "@better-agent/domain-contracts",
+      "script": "vitest run --config vitest.config.ts --configLoader native",
+      "testCount": 53,
+      "successMarker": "@better-agent/domain-contracts:test:       Tests  53 passed (53)"
+    },
+    {
+      "packageName": "@better-agent/release-core",
+      "script": "vitest run --config vitest.config.ts --configLoader native",
+      "testCount": 33,
+      "successMarker": "@better-agent/release-core:test:       Tests  33 passed (33)"
+    },
+    {
+      "packageName": "@better-agent/run-core",
+      "script": "vitest run --config vitest.config.ts --configLoader native --passWithNoTests",
+      "testCount": 103,
+      "successMarker": "@better-agent/run-core:test:       Tests  103 passed (103)"
+    },
+    {
+      "packageName": "@better-agent/test-support",
+      "script": "vitest run --config vitest.config.ts --configLoader native",
+      "testCount": 13,
+      "successMarker": "@better-agent/test-support:test:       Tests  13 passed (13)"
     }
   ],
   "scripts": {
     "rootArchitectureGate": "node scripts/architecture-gate.mjs",
+    "rootArchitectureGateTest": "node --test tests/architecture-gate/architecture-gate.test.mjs",
     "rootCheck": "pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build",
     "rootPostgres16": "pnpm --filter @better-agent/db test:integration",
     "dbIntegration": "pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs"
   },
   "gates": [
+    {
+      "id": "mutation",
+      "command": "node",
+      "args": ["--test", "tests/architecture-gate/architecture-gate.test.mjs"],
+      "mode": "real",
+      "successMarkers": ["# tests 26", "# pass 26", "# fail 0", "# skipped 0", "# todo 0"],
+      "forbidSkippedOutput": true,
+      "timeoutMs": 120000
+    },
     {
       "id": "quality",
       "command": "pnpm",
@@ -91,10 +193,19 @@
       "mode": "real",
       "successMarkers": [
         "workspace smoke passed for 9 package(s)",
-        "Contract gate passed: 11 operations",
-        "Test Files"
+        "Contract gate passed: 11 operations, 314 local references, bundle a19ddd228941e51a9658c109c87af7405d3a0c22324c00757cf987549117cf04, TypeScript a92a2c8b4cd61df15626282b64abd5cb3138622ab32e4dca2f16cd39cc5e6d07, response baseline e383d1ce5fe4494056280c1c36fdd19f769ec194dd97ad46678e2ceabd0f5828",
+        "@better-agent/api:test:       Tests  80 passed (80)",
+        "@better-agent/api-contract:test: # pass 16",
+        "@better-agent/auth:test:       Tests  48 passed (48)",
+        "@better-agent/billing-core:test:       Tests  43 passed (43)",
+        "@better-agent/db:test:       Tests  85 passed (85)",
+        "@better-agent/domain-contracts:test:       Tests  53 passed (53)",
+        "@better-agent/release-core:test:       Tests  33 passed (33)",
+        "@better-agent/run-core:test:       Tests  103 passed (103)",
+        "@better-agent/test-support:test:       Tests  13 passed (13)"
       ],
-      "forbidSkippedOutput": true
+      "forbidSkippedOutput": true,
+      "timeoutMs": 300000
     },
     {
       "id": "postgres16",
@@ -102,14 +213,15 @@
       "args": ["db:test:postgres16"],
       "mode": "real",
       "successMarkers": [
-        "integration passed:",
-        "auth/RLS integration passed:",
-        "G0-05 release/deployment integration passed:",
-        "G0-06 Run/Billing passed:",
-        "G0-06 Agent Chat/browser integration passed:",
-        "G0-07 PostgreSQL runtime-security harness passed:"
+        "architecture-gate-suite/1 migration-lifecycle pass",
+        "architecture-gate-suite/1 auth-rls pass",
+        "architecture-gate-suite/1 release-deployment pass",
+        "architecture-gate-suite/1 run-billing pass",
+        "architecture-gate-suite/1 run-conversation-browser pass",
+        "architecture-gate-suite/1 runtime-security pass"
       ],
-      "forbidSkippedOutput": true
+      "forbidSkippedOutput": true,
+      "timeoutMs": 900000
     }
   ]
 }

@@ -7847,6 +7847,7 @@ async function main() {
   process.stdout.write(
     'G0-07 PostgreSQL runtime-security harness passed: interactive transport, attestation, ACL/RLS, lease/finalizer linearization, recovery, dispatch, historical billing, rollback and response-loss paths.\n',
   );
+  process.stdout.write('architecture-gate-suite/1 runtime-security pass\n');
 }
 
 let mainFailure;

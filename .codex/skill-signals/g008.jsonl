@@ -1,0 +1,2 @@
+{"date":"2026-09-01","outcome":"completed","skills":["work","test-strategy","review","compound"],"task":"G0-08 executable architecture gate","corrections":0,"notes":"L4 closed-world CI, disposable snapshot, PostgreSQL registry cleanup"}
+{"date":"2026-09-01","outcome":"completed","skills":["work","test-strategy","review","compound"],"task":"G0-08 semantic marker false-negative regression","corrections":0,"notes":"ANSI-safe logical-line parsing with fail-closed package and count boundaries"}

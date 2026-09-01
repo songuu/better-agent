@@ -1299,6 +1299,7 @@ async function main() {
   process.stdout.write(
     `PostgreSQL 16 G0-05 release/deployment integration passed: ${migrations.length} migrations, FORCE RLS/owners, owner-only publishers, explicit executable-role deny, disposable fixture grants, typed Draft to Release, Flow Deployment CAS, production gate, Agent Conversation scope parity, revoke-race-safe typed service admission, target-bound Run-scope denial, atomic browser exchange with ${browserSessionRemainingTtlSeconds}s freshness readback, verifier/epoch fences, direct-DML denial, non-empty down guard and secret-log boundary.\n`,
   );
+  process.stdout.write('architecture-gate-suite/1 release-deployment pass\n');
 }
 
 let mainFailure;

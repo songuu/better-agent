@@ -1,3 +1,7 @@
+import { isDeepStrictEqual } from 'node:util';
+
+import { parseDocument, visit } from 'yaml';
+
 const dependencySections = [
   'dependencies',
   'devDependencies',
@@ -10,6 +14,74 @@ const productionDependencySections = new Set([
   'optionalDependencies',
   'peerDependencies',
 ]);
+
+const githubWorkflowExpression = '$' + '{{ github.workflow }}';
+const githubRefExpression = '$' + '{{ github.ref }}';
+const matrixOsExpression = '$' + '{{ matrix.os }}';
+
+const expectedCiWorkflow = {
+  name: 'CI',
+  on: { push: null, pull_request: null },
+  permissions: { contents: 'read' },
+  concurrency: {
+    group: `ci-${githubWorkflowExpression}-${githubRefExpression}`,
+    'cancel-in-progress': true,
+  },
+  jobs: {
+    quality: {
+      name: `Quality (${matrixOsExpression})`,
+      'runs-on': matrixOsExpression,
+      strategy: {
+        'fail-fast': false,
+        matrix: { os: ['ubuntu-latest', 'windows-latest'] },
+      },
+      steps: [
+        {
+          name: 'Checkout',
+          uses: 'actions/checkout@v6',
+          with: { 'persist-credentials': false },
+        },
+        { name: 'Set up pnpm', uses: 'pnpm/action-setup@v6', with: { run_install: false } },
+        {
+          name: 'Set up Node.js',
+          uses: 'actions/setup-node@v7',
+          with: { 'node-version': 22, cache: 'pnpm' },
+        },
+        { name: 'Install dependencies', run: 'pnpm install --frozen-lockfile' },
+        { name: 'Check formatting', run: 'pnpm format:check' },
+        { name: 'Lint', run: 'pnpm lint' },
+        { name: 'Check workspace boundaries', run: 'pnpm workspace:smoke' },
+        { name: 'Check OpenAPI and domain contracts', run: 'pnpm contract:check' },
+        { name: 'Typecheck', run: 'pnpm typecheck' },
+        { name: 'Test', run: 'pnpm test' },
+        { name: 'Build', run: 'pnpm build' },
+        { name: 'Test the architecture gate control plane', run: 'pnpm architecture:gate:test' },
+        { name: 'Verify tracked files are unchanged', run: 'git diff --exit-code -- .' },
+      ],
+    },
+    'architecture-gate': {
+      name: 'G0-08 executable architecture gate',
+      needs: 'quality',
+      'runs-on': 'ubuntu-latest',
+      'timeout-minutes': 30,
+      steps: [
+        {
+          name: 'Checkout',
+          uses: 'actions/checkout@v6',
+          with: { 'persist-credentials': false },
+        },
+        { name: 'Set up pnpm', uses: 'pnpm/action-setup@v6', with: { run_install: false } },
+        {
+          name: 'Set up Node.js',
+          uses: 'actions/setup-node@v7',
+          with: { 'node-version': 22, cache: 'pnpm' },
+        },
+        { name: 'Install dependencies', run: 'pnpm install --frozen-lockfile' },
+        { name: 'Run the clean-checkout architecture gate', run: 'pnpm architecture:gate' },
+      ],
+    },
+  },
+};
 
 function normalizeDirectory(directory) {
   return directory.replaceAll('\\', '/');
@@ -47,6 +119,17 @@ export function validateCiWorkflow(workflow) {
     return ['.github/workflows/ci.yml: workflow text is required'];
   }
   const errors = [];
+  const workflowDefinition = parseCiWorkflow(workflow, errors);
+  if (workflowDefinition === null) return errors;
+  if (!isDeepStrictEqual(workflowDefinition, expectedCiWorkflow)) {
+    errors.push('.github/workflows/ci.yml: workflow must match the closed G0-08 CI schema');
+  }
+  if (!hasExactReadOnlyPermissions(workflowDefinition)) {
+    errors.push('.github/workflows/ci.yml: workflow permissions must be exactly contents: read');
+  }
+  if (recordDefinesAny(workflowDefinition, ['defaults', 'env'])) {
+    errors.push('.github/workflows/ci.yml: workflow must not override the gate execution context');
+  }
   for (const requiredText of ['ubuntu-latest', 'windows-latest']) {
     if (!workflow.includes(requiredText)) {
       errors.push(`.github/workflows/ci.yml: missing ${requiredText}`);
@@ -59,6 +142,7 @@ export function validateCiWorkflow(workflow) {
     'pnpm typecheck',
     'pnpm test',
     'pnpm build',
+    'pnpm architecture:gate:test',
     'pnpm architecture:gate',
   ]) {
     if (!hasCiRunCommand(workflow, requiredCommand)) {
@@ -68,7 +152,136 @@ export function validateCiWorkflow(workflow) {
   if (hasCiRunCommand(workflow, 'pnpm db:test:postgres16')) {
     errors.push('.github/workflows/ci.yml: PostgreSQL must run through pnpm architecture:gate');
   }
+  const qualityJob = extractJobBlock(workflow, 'quality');
+  if (qualityJob === null) {
+    errors.push('.github/workflows/ci.yml: quality job is required');
+  } else {
+    const qualityJobDefinition = getJobDefinition(workflowDefinition, 'quality');
+    if (!/^ {4}runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}\s*$/imu.test(qualityJob)) {
+      errors.push('.github/workflows/ci.yml: quality job must run on matrix.os');
+    }
+    if (
+      !/^ {6}matrix:\s*\r?\n {8}os:\s*\r?\n {10}-\s+ubuntu-latest\s*\r?\n {10}-\s+windows-latest\s*$/imu.test(
+        qualityJob,
+      ) ||
+      !hasExactQualityStrategy(qualityJobDefinition)
+    ) {
+      errors.push(
+        '.github/workflows/ci.yml: quality matrix must contain Ubuntu then Windows runners',
+      );
+    }
+    for (const requiredCommand of [
+      'pnpm install --frozen-lockfile',
+      'pnpm contract:check',
+      'pnpm lint',
+      'pnpm typecheck',
+      'pnpm test',
+      'pnpm build',
+      'pnpm architecture:gate:test',
+    ]) {
+      if (
+        !hasCiRunCommand(qualityJob, requiredCommand) ||
+        !hasExactlyOneClosedRunStep(qualityJobDefinition, requiredCommand)
+      ) {
+        errors.push(`.github/workflows/ci.yml: quality job must execute ${requiredCommand}`);
+      }
+    }
+    if (jobOrStepDefines(qualityJobDefinition, 'continue-on-error')) {
+      errors.push('.github/workflows/ci.yml: quality job must fail closed');
+    }
+    if (jobOrStepDefines(qualityJobDefinition, 'if')) {
+      errors.push('.github/workflows/ci.yml: quality job must not define conditions');
+    }
+    if (
+      jobOrStepDefinesAny(qualityJobDefinition, [
+        'container',
+        'defaults',
+        'env',
+        'permissions',
+        'shell',
+        'working-directory',
+      ])
+    ) {
+      errors.push('.github/workflows/ci.yml: quality job must not override the execution context');
+    }
+    if (!hasExactlyOneIsolatedCheckout(qualityJob, qualityJobDefinition)) {
+      errors.push(
+        '.github/workflows/ci.yml: quality checkout must have exactly one checkout step with persist-credentials: false',
+      );
+    }
+    if (!hasExactlyOnePinnedNodeSetup(qualityJob, qualityJobDefinition)) {
+      errors.push(
+        '.github/workflows/ci.yml: quality must have exactly one setup-node@v7 using Node 22',
+      );
+    }
+  }
+  const architectureJob = extractJobBlock(workflow, 'architecture-gate');
+  if (architectureJob === null) {
+    errors.push('.github/workflows/ci.yml: architecture-gate job is required');
+    return errors;
+  }
+  const architectureJobDefinition = getJobDefinition(workflowDefinition, 'architecture-gate');
+  if (jobOrStepDefines(architectureJobDefinition, 'if')) {
+    errors.push('.github/workflows/ci.yml: architecture-gate job must not define conditions');
+  }
+  if (jobOrStepDefines(architectureJobDefinition, 'continue-on-error')) {
+    errors.push('.github/workflows/ci.yml: architecture-gate job must fail closed');
+  }
+  if (
+    jobOrStepDefinesAny(architectureJobDefinition, [
+      'defaults',
+      'env',
+      'container',
+      'permissions',
+      'shell',
+      'working-directory',
+    ])
+  ) {
+    errors.push(
+      '.github/workflows/ci.yml: architecture-gate must not override the execution context',
+    );
+  }
+  if (!hasExactlyOneIsolatedCheckout(architectureJob, architectureJobDefinition)) {
+    errors.push(
+      '.github/workflows/ci.yml: architecture-gate checkout must have exactly one checkout step with persist-credentials: false',
+    );
+  }
+  if (!hasExactlyOnePinnedNodeSetup(architectureJob, architectureJobDefinition)) {
+    errors.push(
+      '.github/workflows/ci.yml: architecture-gate must have exactly one setup-node@v7 using Node 22',
+    );
+  }
+  for (const [pattern, message] of [
+    [/^ {4}needs:\s*quality\s*$/imu, 'architecture-gate job must need quality'],
+    [/^ {4}runs-on:\s*ubuntu-latest\s*$/imu, 'architecture-gate job must run on Ubuntu'],
+    [/^ {4}timeout-minutes:\s*30\s*$/imu, 'architecture-gate job must use 30 minute timeout'],
+  ]) {
+    if (!pattern.test(architectureJob)) errors.push(`.github/workflows/ci.yml: ${message}`);
+  }
+  for (const requiredCommand of ['pnpm install --frozen-lockfile', 'pnpm architecture:gate']) {
+    if (
+      !hasCiRunCommand(architectureJob, requiredCommand) ||
+      !hasExactlyOneClosedRunStep(architectureJobDefinition, requiredCommand)
+    ) {
+      errors.push(
+        `.github/workflows/ci.yml: architecture-gate job must execute ${requiredCommand}`,
+      );
+    }
+  }
   return errors;
+}
+
+function extractJobBlock(workflow, jobName) {
+  const escapedName = jobName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const startPattern = new RegExp(`^  ${escapedName}:\\s*$`, 'mu');
+  const match = startPattern.exec(workflow);
+  if (match === null) return null;
+  const remainder = workflow.slice(match.index + match[0].length);
+  const nextJob = /^ {2}[A-Za-z0-9_-]+:\s*$/mu.exec(remainder);
+  return workflow.slice(
+    match.index,
+    nextJob === null ? workflow.length : match.index + match[0].length + nextJob.index,
+  );
 }
 
 function hasCiRunCommand(workflow, command) {
@@ -77,6 +290,142 @@ function hasCiRunCommand(workflow, command) {
     `^\\s*run:\\s*(?:${escaped}|"${escaped}"|'${escaped}')(?:\\s+#.*)?\\s*$`,
     'mu',
   ).test(workflow);
+}
+
+function parseCiWorkflow(workflow, errors) {
+  const document = parseDocument(workflow, { uniqueKeys: true });
+  if (document.errors.length > 0) {
+    errors.push('.github/workflows/ci.yml: workflow must be valid YAML with unique keys');
+    return null;
+  }
+
+  let hasAnchorOrAlias = false;
+  visit(document, {
+    Alias() {
+      hasAnchorOrAlias = true;
+    },
+    Node(_key, node) {
+      if (typeof node.anchor === 'string' && node.anchor.length > 0) hasAnchorOrAlias = true;
+    },
+  });
+  if (hasAnchorOrAlias) {
+    errors.push('.github/workflows/ci.yml: workflow must not use YAML anchors or aliases');
+    return null;
+  }
+
+  const definition = document.toJS({ maxAliasCount: 0 });
+  if (!isRecord(definition)) {
+    errors.push('.github/workflows/ci.yml: workflow root must be a mapping');
+    return null;
+  }
+  return definition;
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getJobDefinition(workflowDefinition, jobName) {
+  const jobs = workflowDefinition.jobs;
+  if (!isRecord(jobs)) return null;
+  const job = jobs[jobName];
+  return isRecord(job) ? job : null;
+}
+
+function jobOrStepDefines(jobDefinition, key) {
+  if (!isRecord(jobDefinition)) return false;
+  if (Object.hasOwn(jobDefinition, key)) return true;
+  return (
+    Array.isArray(jobDefinition.steps) &&
+    jobDefinition.steps.some((step) => isRecord(step) && Object.hasOwn(step, key))
+  );
+}
+
+function recordDefinesAny(record, keys) {
+  return isRecord(record) && keys.some((key) => Object.hasOwn(record, key));
+}
+
+function hasExactReadOnlyPermissions(workflowDefinition) {
+  const permissions = workflowDefinition.permissions;
+  return (
+    isRecord(permissions) &&
+    Object.keys(permissions).length === 1 &&
+    permissions.contents === 'read'
+  );
+}
+
+function hasExactQualityStrategy(jobDefinition) {
+  if (!isRecord(jobDefinition) || !isRecord(jobDefinition.strategy)) return false;
+  const strategy = jobDefinition.strategy;
+  if (
+    Object.keys(strategy).length !== 2 ||
+    strategy['fail-fast'] !== false ||
+    !isRecord(strategy.matrix)
+  ) {
+    return false;
+  }
+  const matrix = strategy.matrix;
+  return (
+    Object.keys(matrix).length === 1 &&
+    Array.isArray(matrix.os) &&
+    matrix.os.length === 2 &&
+    matrix.os[0] === 'ubuntu-latest' &&
+    matrix.os[1] === 'windows-latest'
+  );
+}
+
+function jobOrStepDefinesAny(jobDefinition, keys) {
+  if (!isRecord(jobDefinition)) return false;
+  if (recordDefinesAny(jobDefinition, keys)) return true;
+  return (
+    Array.isArray(jobDefinition.steps) &&
+    jobDefinition.steps.some((step) => recordDefinesAny(step, keys))
+  );
+}
+
+function hasExactlyOneClosedRunStep(jobDefinition, command) {
+  if (!isRecord(jobDefinition) || !Array.isArray(jobDefinition.steps)) return false;
+  const matchingSteps = jobDefinition.steps.filter(
+    (step) => isRecord(step) && step.run === command,
+  );
+  if (matchingSteps.length !== 1) return false;
+  const stepKeys = Object.keys(matchingSteps[0]);
+  return (
+    stepKeys.length === 2 &&
+    stepKeys.includes('name') &&
+    typeof matchingSteps[0].name === 'string' &&
+    matchingSteps[0].name.length > 0 &&
+    stepKeys.includes('run')
+  );
+}
+
+function countActionReferences(jobDefinition, action) {
+  if (!isRecord(jobDefinition) || !Array.isArray(jobDefinition.steps)) return 0;
+  const actionPrefix = `${action.toLowerCase()}@`;
+  return jobDefinition.steps.filter(
+    (step) =>
+      isRecord(step) &&
+      typeof step.uses === 'string' &&
+      step.uses.trim().toLowerCase().startsWith(actionPrefix),
+  ).length;
+}
+
+function hasExactlyOneIsolatedCheckout(job, jobDefinition) {
+  return (
+    countActionReferences(jobDefinition, 'actions/checkout') === 1 &&
+    /^(?: {6}- name:[^\r\n]+\r?\n {8}uses: actions\/checkout@v6| {6}- uses: actions\/checkout@v6)\s*\r?\n {8}with:\s*\r?\n {10}persist-credentials:\s*false\s*$/imu.test(
+      job,
+    )
+  );
+}
+
+function hasExactlyOnePinnedNodeSetup(job, jobDefinition) {
+  return (
+    countActionReferences(jobDefinition, 'actions/setup-node') === 1 &&
+    /^(?: {6}- name:[^\r\n]+\r?\n {8}uses: actions\/setup-node@v7| {6}- uses: actions\/setup-node@v7)\s*\r?\n {8}with:\s*\r?\n {10}node-version:\s*(?:22|['"]22['"])\s*$/imu.test(
+      job,
+    )
+  );
 }
 
 export function validateWorkspaceGraph(workspacePackages) {

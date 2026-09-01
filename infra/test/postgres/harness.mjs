@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { appendFileSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,11 +14,125 @@ const redactedPatterns = [
 ];
 const defaultPollIntervalMs = 25;
 const defaultWaitTimeoutMs = 5_000;
+const maxHarnessOutputBytes = 16 * 1024 * 1024;
+const postgresRegistryPrefix = 'better-agent-g0-08-pg-';
 
 function redact(value) {
   let redacted = value;
   for (const pattern of redactedPatterns) redacted = redacted.replace(pattern, '[REDACTED]');
   return redacted;
+}
+
+export function createBoundedOutputCapture(maxBytes = maxHarnessOutputBytes) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error('PostgreSQL harness output boundary must be a positive safe integer');
+  }
+  const chunks = { stderr: [], stdout: [] };
+  let exceeded = false;
+  let totalBytes = 0;
+  return Object.freeze({
+    append(channel, chunk) {
+      if (!(channel in chunks)) throw new Error(`unknown PostgreSQL output channel: ${channel}`);
+      if (exceeded) return false;
+      const bytes = Buffer.from(chunk);
+      totalBytes += bytes.length;
+      if (totalBytes > maxBytes) {
+        exceeded = true;
+        return false;
+      }
+      chunks[channel].push(bytes);
+      return true;
+    },
+    buffer(channel) {
+      if (!(channel in chunks)) throw new Error(`unknown PostgreSQL output channel: ${channel}`);
+      return Buffer.concat(chunks[channel]);
+    },
+    get exceeded() {
+      return exceeded;
+    },
+    get totalBytes() {
+      return totalBytes;
+    },
+  });
+}
+
+function postgresRegistryPath(environment = process.env) {
+  const registryValue = environment.BA_POSTGRES_PROJECT_REGISTRY;
+  if (registryValue === undefined) return undefined;
+  const registryPath = path.resolve(registryValue);
+  const temporaryRoot = path.resolve(tmpdir());
+  const relative = path.relative(temporaryRoot, registryPath);
+  if (
+    relative.length === 0 ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative) ||
+    !path.basename(registryPath).startsWith(postgresRegistryPrefix) ||
+    path.extname(registryPath) !== '.txt'
+  ) {
+    throw new Error('PostgreSQL project registry must be a dedicated temporary file');
+  }
+  return registryPath;
+}
+
+function registerPostgresProject(projectName, environment = process.env) {
+  const registryPath = postgresRegistryPath(environment);
+  if (registryPath === undefined) return undefined;
+  appendFileSync(registryPath, `${projectName}\n`, { encoding: 'utf8', flag: 'a' });
+  return registryPath;
+}
+
+function unregisterPostgresProject(registryPath, projectName) {
+  if (registryPath === undefined) return;
+  const projects = readFileSync(registryPath, 'utf8')
+    .split(/\r?\n/u)
+    .filter((value) => value.length > 0 && value !== projectName);
+  const replacementPath = `${registryPath}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`;
+  try {
+    writeFileSync(replacementPath, projects.length === 0 ? '' : `${projects.join('\n')}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    renameSync(replacementPath, registryPath);
+  } finally {
+    rmSync(replacementPath, { force: true });
+  }
+}
+
+export function installPostgresSignalCleanup(stop, options = {}) {
+  const processTarget = options.processTarget ?? process;
+  const deadlineMs = options.deadlineMs ?? 30_000;
+  let cleanupStarted = false;
+  const cleanupOnSignal = (signal) => {
+    if (cleanupStarted) return;
+    cleanupStarted = true;
+    const exitCode = signal === 'SIGINT' ? 130 : 143;
+    const deadline = setTimeout(() => processTarget.exit(exitCode), deadlineMs);
+    deadline.unref?.();
+    void Promise.resolve()
+      .then(stop)
+      .then(
+        () => {
+          clearTimeout(deadline);
+          processTarget.exit(exitCode);
+        },
+        (error) => {
+          clearTimeout(deadline);
+          processTarget.stderr.write(
+            `PostgreSQL harness signal cleanup failed: ${redact(String(error))}\n`,
+          );
+          processTarget.exit(exitCode);
+        },
+      );
+  };
+  const onSigint = () => cleanupOnSignal('SIGINT');
+  const onSigterm = () => cleanupOnSignal('SIGTERM');
+  processTarget.once('SIGINT', onSigint);
+  processTarget.once('SIGTERM', onSigterm);
+  return () => {
+    processTarget.removeListener('SIGINT', onSigint);
+    processTarget.removeListener('SIGTERM', onSigterm);
+  };
 }
 
 function countOccurrences(buffer, needle) {
@@ -62,7 +178,9 @@ function waitForDelay(delayMs) {
 export function createPostgresHarness(suiteName) {
   const runId = `${process.pid}-${randomBytes(4).toString('hex')}`;
   const projectName = `better-agent-${suiteName}-${runId}`.toLowerCase();
+  const projectRegistry = registerPostgresProject(projectName);
   const composeArguments = ['compose', '--file', composeFile, '--project-name', projectName];
+  let stopPromise;
 
   function run(command, arguments_, options = {}) {
     const { allowFailure = false, input, scanFor = [] } = options;
@@ -73,14 +191,20 @@ export function createPostgresHarness(suiteName) {
         shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-      const stdout = [];
-      const stderr = [];
-      child.stdout.on('data', (chunk) => stdout.push(chunk));
-      child.stderr.on('data', (chunk) => stderr.push(chunk));
+      const output = createBoundedOutputCapture();
+      const capture = (channel, chunk) => {
+        if (!output.append(channel, chunk)) child.kill('SIGKILL');
+      };
+      child.stdout.on('data', (chunk) => capture('stdout', chunk));
+      child.stderr.on('data', (chunk) => capture('stderr', chunk));
       child.on('error', (error) => reject(error));
       child.on('close', (exitCode) => {
-        const rawStdout = Buffer.concat(stdout);
-        const rawStderr = Buffer.concat(stderr);
+        if (output.exceeded) {
+          reject(new Error('PostgreSQL harness child exceeded the 16 MiB output boundary'));
+          return;
+        }
+        const rawStdout = output.buffer('stdout');
+        const rawStderr = output.buffer('stderr');
         const result = {
           exitCode,
           rawScan: scanRawBuffers(rawStdout, rawStderr, scanFor),
@@ -104,6 +228,15 @@ export function createPostgresHarness(suiteName) {
   function compose(...arguments_) {
     return run('docker', [...composeArguments, ...arguments_]);
   }
+
+  function stop() {
+    stopPromise ??= compose('down', '--remove-orphans', '--volumes').then((result) => {
+      unregisterPostgresProject(projectRegistry, projectName);
+      return result;
+    });
+    return stopPromise;
+  }
+  installPostgresSignalCleanup(stop);
 
   function psqlArguments(role, options = {}) {
     const { applicationName, echoErrors = false, tuplesOnly = false } = options;
@@ -152,8 +285,7 @@ export function createPostgresHarness(suiteName) {
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const stdout = [];
-    const stderr = [];
+    const output = createBoundedOutputCapture();
     let stdoutText = '';
     let readOffset = 0;
     let closed = false;
@@ -165,13 +297,24 @@ export function createPostgresHarness(suiteName) {
     const settleWaiters = () => {
       for (const waiter of waiters) waiter();
     };
+    const exceedOutputBoundary = () => {
+      spawnError ??= new Error('interactive psql exceeded the 16 MiB output boundary');
+      if (!exited) child.kill('SIGKILL');
+      settleWaiters();
+    };
     child.stdout.on('data', (chunk) => {
-      stdout.push(chunk);
+      if (!output.append('stdout', chunk)) {
+        exceedOutputBoundary();
+        return;
+      }
       stdoutText += chunk.toString('utf8');
       settleWaiters();
     });
     child.stderr.on('data', (chunk) => {
-      stderr.push(chunk);
+      if (!output.append('stderr', chunk)) {
+        exceedOutputBoundary();
+        return;
+      }
       settleWaiters();
     });
     child.on('error', (error) => {
@@ -198,7 +341,7 @@ export function createPostgresHarness(suiteName) {
         if (closed || (exited && !allowExited)) {
           if (predicate()) break;
           throw new Error(
-            `${context}: interactive psql exited (${String(exitCode)}): ${redact(Buffer.concat(stderr).toString('utf8'))}`,
+            `${context}: interactive psql exited (${String(exitCode)}): ${redact(output.buffer('stderr').toString('utf8'))}`,
           );
         }
         const remaining = deadline - Date.now();
@@ -239,6 +382,10 @@ export function createPostgresHarness(suiteName) {
       const output = stdoutText.slice(startOffset, markerOffset);
       readOffset = markerOffset + marker.length;
       while (stdoutText[readOffset] === '\r' || stdoutText[readOffset] === '\n') readOffset += 1;
+      if (readOffset >= 64 * 1024) {
+        stdoutText = stdoutText.slice(readOffset);
+        readOffset = 0;
+      }
       return redact(output.trim());
     }
 
@@ -287,8 +434,8 @@ export function createPostgresHarness(suiteName) {
       return Object.freeze({
         applicationName,
         exitCode,
-        rawScan: scanRawBuffers(Buffer.concat(stdout), Buffer.concat(stderr), scanFor),
-        stderr: redact(Buffer.concat(stderr).toString('utf8')),
+        rawScan: scanRawBuffers(output.buffer('stdout'), output.buffer('stderr'), scanFor),
+        stderr: redact(output.buffer('stderr').toString('utf8')),
       });
     }
 
@@ -381,7 +528,7 @@ export function createPostgresHarness(suiteName) {
         '--wait-timeout',
         '60',
       ),
-    stop: () => compose('down', '--remove-orphans', '--volumes'),
+    stop,
     terminateBackend,
     waitForBackendExit,
     waitForBlockingEdge,

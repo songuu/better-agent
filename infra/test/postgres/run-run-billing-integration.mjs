@@ -4543,6 +4543,7 @@ async function main() {
   process.stdout.write(
     `PostgreSQL 16 G0-06 Run/Billing passed: ${migrations.length} migrations, six isolated owners, ${g006Relations.length} exact owner/FORCE-RLS tables, five-function runtime surface, zero-credit/replay/conflict facts, Workspace/reservation concurrency, terminal replay/conflict/rollback, monotonic reservation time, immutable ledger, unavailable-path rollback, pg_temp defense, exact archive evidence and two-phase nonfinancial retention.\n`,
   );
+  process.stdout.write('architecture-gate-suite/1 run-billing pass\n');
 }
 
 let mainFailure;

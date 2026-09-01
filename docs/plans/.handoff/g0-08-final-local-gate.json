@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "g0-08-local-gate-evidence-v1",
+  "recordedAt": "2026-09-01T14:01:31.1846850+08:00",
+  "command": "pnpm architecture:gate",
+  "result": "pass",
+  "authority": "local-machine-evidence-only",
+  "admission": "g1-candidate-only",
+  "acceptanceStatus": "pending",
+  "hostAttestedReceipt": false,
+  "debugJournalRef": "docs/plans/.handoff/g0-08-debug-journal.md",
+  "report": {
+    "schemaVersion": "architecture-gate-report/2",
+    "sourceManifest": {
+      "digest": "sha256:04db7e74dd0e487eda9e577da7a5aa9521f95e4b06f141b89bb80fe071370839",
+      "fileCount": 284,
+      "totalBytes": 4949739
+    },
+    "internalControlPlaneManifest": {
+      "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "fileCount": 0,
+      "totalBytes": 0
+    },
+    "preEvidenceExcludedControlPlaneManifest": {
+      "digest": "sha256:da619d34c9729af4ed53b4fdaacafd261d4bd33e911a348cf3d82c47221978a8",
+      "fileCount": 9,
+      "totalBytes": 737092
+    },
+    "gateManifest": "sha256:93d40c74968845804625e98a103a475ff9cd25f4cb59ce5e02a0e576c4f309ed",
+    "gates": [
+      {
+        "id": "mutation",
+        "status": "pass",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 3256,
+        "stdoutBytes": 5322,
+        "stdoutSha256": "sha256:3c5772f98519b04d0d005dd14858697b44de8189744797bdbca5f2d05cace525",
+        "stderrBytes": 0,
+        "stderrSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "error": null
+      },
+      {
+        "id": "quality",
+        "status": "pass",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 28969,
+        "stdoutBytes": 35800,
+        "stdoutSha256": "sha256:83076e09b62ba42e791742e1cc96295902476dad2283948d0172e7982d77dcf3",
+        "stderrBytes": 72,
+        "stderrSha256": "sha256:81daf9c1f11787ae940fc88305790e17cfb62ae634f16c6136cd6bf7af045ddcc",
+        "error": null
+      },
+      {
+        "id": "postgres16",
+        "status": "pass",
+        "exitCode": 0,
+        "signal": null,
+        "durationMs": 526583,
+        "stdoutBytes": 3332,
+        "stdoutSha256": "sha256:009ee1388ec28b8672ef00b14574e77f1ae01aa593daf12d311055c978ce0bc3",
+        "stderrBytes": 0,
+        "stderrSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "error": null
+      }
+    ],
+    "cleanBefore": true,
+    "cleanAfter": true,
+    "sourceIdentityUnchanged": true,
+    "error": null
+  },
+  "verifiedEvidence": {
+    "architectureTests": "26/26 pass; fail=0; skipped=0; todo=0",
+    "workspacePackages": 9,
+    "workspaceTests": "473 pass",
+    "openApi": "11 operations; 314 local references",
+    "postgresql": "PostgreSQL 16.12; pgvector 0.8.1; pgcrypto 1.3",
+    "postgresSuites": [
+      "migration-lifecycle",
+      "auth-rls",
+      "release-deployment",
+      "run-billing",
+      "run-conversation-browser",
+      "runtime-security"
+    ],
+    "review": {
+      "codeQuality": "pass",
+      "securityIntegrity": "pass",
+      "architecture": "pass",
+      "performance": "pass",
+      "testStrategy": "pass",
+      "remainingBlockerP1P2": 0
+    }
+  },
+  "unknownBoundaries": [
+    "production",
+    "cloud",
+    "driver",
+    "pooler",
+    "worker",
+    "provider",
+    "client",
+    "apm"
+  ],
+  "next": "Wait for a non-provider-callable host-attested passed Acceptance v1 Receipt; do not enter G1 before it exists."
+}

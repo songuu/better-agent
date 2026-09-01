@@ -752,6 +752,7 @@ VALUES (0, '${platformMigration.name}', '${platformMigration.checksum}', NULL);`
   process.stdout.write(
     `PostgreSQL ${postgresVersion}/pgvector ${pgvectorVersion}/pgcrypto ${pgcryptoVersion} integration passed: ${productionMigrationCount} production migrations plus dynamic probe, idempotence, ledger/checksum guards, reviewed rollback and reapply.\n`,
   );
+  process.stdout.write('architecture-gate-suite/1 migration-lifecycle pass\n');
 }
 
 let mainFailure;

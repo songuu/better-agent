@@ -12,6 +12,7 @@
   },
   "scripts": {
     "architecture:gate": "node scripts/architecture-gate.mjs",
+    "architecture:gate:test": "node --test tests/architecture-gate/architecture-gate.test.mjs",
     "architecture:framework": "pnpm check && pnpm db:test:postgres16",
     "build": "turbo run build",
     "check": "pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build",

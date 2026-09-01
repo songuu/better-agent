@@ -114,23 +114,98 @@ describe('validateWorkspaceGraph', () => {
 
 describe('validateCiWorkflow', () => {
   const validWorkflow = [
-    'ubuntu-latest',
-    'windows-latest',
-    'run: pnpm install --frozen-lockfile',
-    'run: pnpm contract:check',
-    'run: pnpm lint',
-    'run: pnpm typecheck',
-    'run: pnpm test',
-    'run: pnpm build',
-    'run: pnpm architecture:gate',
+    'name: CI',
+    '',
+    'on:',
+    '  push:',
+    '  pull_request:',
+    '',
+    'permissions:',
+    '  contents: read',
+    '',
+    'concurrency:',
+    '  group: ci-$' + '{{ github.workflow }}-$' + '{{ github.ref }}',
+    '  cancel-in-progress: true',
+    '',
+    'jobs:',
+    '  quality:',
+    '    name: Quality ($' + '{{ matrix.os }})',
+    '    runs-on: $' + '{{ matrix.os }}',
+    '    strategy:',
+    '      fail-fast: false',
+    '      matrix:',
+    '        os:',
+    '          - ubuntu-latest',
+    '          - windows-latest',
+    '    steps:',
+    '      - name: Checkout',
+    '        uses: actions/checkout@v6',
+    '        with:',
+    '          persist-credentials: false',
+    '      - name: Set up pnpm',
+    '        uses: pnpm/action-setup@v6',
+    '        with:',
+    '          run_install: false',
+    '      - name: Set up Node.js',
+    '        uses: actions/setup-node@v7',
+    '        with:',
+    '          node-version: 22',
+    '          cache: pnpm',
+    '      - name: Install dependencies',
+    '        run: pnpm install --frozen-lockfile',
+    '      - name: Check formatting',
+    '        run: pnpm format:check',
+    '      - name: Lint',
+    '        run: pnpm lint',
+    '      - name: Check workspace boundaries',
+    '        run: pnpm workspace:smoke',
+    '      - name: Check OpenAPI and domain contracts',
+    '        run: pnpm contract:check',
+    '      - name: Typecheck',
+    '        run: pnpm typecheck',
+    '      - name: Test',
+    '        run: pnpm test',
+    '      - name: Build',
+    '        run: pnpm build',
+    '      - name: Test the architecture gate control plane',
+    '        run: pnpm architecture:gate:test',
+    '      - name: Verify tracked files are unchanged',
+    '        run: git diff --exit-code -- .',
+    '  architecture-gate:',
+    '    name: G0-08 executable architecture gate',
+    '    needs: quality',
+    '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 30',
+    '    steps:',
+    '      - name: Checkout',
+    '        uses: actions/checkout@v6',
+    '        with:',
+    '          persist-credentials: false',
+    '      - name: Set up pnpm',
+    '        uses: pnpm/action-setup@v6',
+    '        with:',
+    '          run_install: false',
+    '      - name: Set up Node.js',
+    '        uses: actions/setup-node@v7',
+    '        with:',
+    '          node-version: 22',
+    '          cache: pnpm',
+    '      - name: Install dependencies',
+    '        run: pnpm install --frozen-lockfile',
+    '      - name: Run the clean-checkout architecture gate',
+    '        run: pnpm architecture:gate',
   ].join('\n');
+
+  function replaceArchitectureGateRun(workflow: string, replacement: string): string {
+    return workflow.replace(/^ {8}run: pnpm architecture:gate$/mu, replacement);
+  }
 
   it('accepts the single G0-08 aggregation entry', () => {
     expect(validateCiWorkflow(validWorkflow)).toEqual([]);
   });
 
   it('rejects a missing architecture gate and a direct PostgreSQL bypass', () => {
-    expect(validateCiWorkflow(validWorkflow.replace('pnpm architecture:gate', ''))).toContainEqual(
+    expect(validateCiWorkflow(replaceArchitectureGateRun(validWorkflow, ''))).toContainEqual(
       expect.stringContaining('pnpm architecture:gate'),
     );
     expect(validateCiWorkflow(`${validWorkflow}\nrun: pnpm db:test:postgres16`)).toContainEqual(
@@ -139,12 +214,276 @@ describe('validateCiWorkflow', () => {
   });
 
   it('does not accept a required command that appears only inside a comment', () => {
-    const disabled = validWorkflow.replace(
-      'run: pnpm architecture:gate',
-      'run: echo disabled # pnpm architecture:gate',
+    const disabled = replaceArchitectureGateRun(
+      validWorkflow,
+      '        run: echo disabled # pnpm architecture:gate',
     );
     expect(validateCiWorkflow(disabled)).toContainEqual(
       expect.stringContaining('pnpm architecture:gate'),
+    );
+  });
+
+  it('rejects disabled, misplaced, weakened, or incorrectly configured gate execution', () => {
+    for (const weakenedWorkflow of [
+      validWorkflow.replace('pnpm/action-setup@v6', 'pnpm/action-setup@v5'),
+      validWorkflow.replace(
+        '      - name: Install dependencies',
+        '      - uses: example/untrusted@v1\n      - name: Install dependencies',
+      ),
+      validWorkflow.replace(
+        '          persist-credentials: false',
+        '          persist-credentials: false\n          ref: main',
+      ),
+      validWorkflow.replace(
+        '      - name: Install dependencies',
+        '      - name: Unexpected mutation\n        run: node scripts/mutate.mjs\n      - name: Install dependencies',
+      ),
+      validWorkflow.replace('  pull_request:', '  workflow_dispatch:'),
+    ]) {
+      expect(validateCiWorkflow(weakenedWorkflow)).toContainEqual(
+        expect.stringContaining('must match the closed G0-08 CI schema'),
+      );
+    }
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace('  architecture-gate:', '  architecture-gate:\n    if: false'),
+      ),
+    ).toContainEqual(expect.stringContaining('must not define conditions'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace('  architecture-gate:', "  architecture-gate:\n    'if': false"),
+      ),
+    ).toContainEqual(expect.stringContaining('must not define conditions'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow,
+          '        !!str if: false\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('must not define conditions'));
+    expect(
+      validateCiWorkflow(validWorkflow.replace('node-version: 22', 'node-version: 24')),
+    ).toContainEqual(expect.stringContaining('Node 22'));
+    expect(
+      validateCiWorkflow(validWorkflow.replace('persist-credentials: false', '')),
+    ).toContainEqual(expect.stringContaining('quality checkout'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(/( {2}architecture-gate:[\s\S]*?)persist-credentials: false/u, '$1'),
+      ),
+    ).toContainEqual(expect.stringContaining('architecture-gate checkout'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow,
+          '      - uses: actions/checkout@v6\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('exactly one checkout'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow,
+          '      - uses: "actions/checkout@v5"\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('exactly one checkout'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow,
+          '      - "uses": actions/checkout@v5\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('exactly one checkout'));
+    for (const flowCheckout of [
+      '- { uses: actions/checkout@v5 }',
+      '- uses : actions/checkout@v5',
+    ]) {
+      expect(
+        validateCiWorkflow(
+          validWorkflow.replace(
+            '      - name: Run the clean-checkout architecture gate',
+            `      ${flowCheckout}\n      - name: Run the clean-checkout architecture gate`,
+          ),
+        ),
+      ).toContainEqual(expect.stringContaining('exactly one checkout'));
+    }
+    expect(
+      validateCiWorkflow(validWorkflow.replace('actions/setup-node@v7', 'actions/setup-node@v6')),
+    ).toContainEqual(expect.stringContaining('exactly one setup-node@v7'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow,
+          '      - uses: actions/setup-node@v6\n        with:\n          node-version: 24\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('exactly one setup-node@v7'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow,
+          "      - 'uses': actions/setup-node@v6\n        with:\n          node-version: 24\n        run: pnpm architecture:gate",
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('exactly one setup-node@v7'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow,
+          '      - "uses" : actions/setup-node@v6\n        with:\n          node-version: 24\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('exactly one setup-node@v7'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(
+          '        uses: actions/checkout@v6',
+          '        uses: actions/checkout@v6\n        uses: actions/checkout@v5',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('valid YAML with unique keys'));
+    expect(
+      validateCiWorkflow(validWorkflow.replace('  quality:', '  quality: &quality')),
+    ).toContainEqual(expect.stringContaining('must not use YAML anchors'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow,
+          '        continue-on-error: true\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('fail closed'));
+    for (const contextOverride of [
+      "        shell: bash --noprofile --norc -c 'exit 0' -- {0}",
+      '        env:\n          NODE_OPTIONS: --import=./skip-gate.mjs',
+      '        working-directory: ..',
+    ]) {
+      expect(
+        validateCiWorkflow(
+          replaceArchitectureGateRun(
+            validWorkflow,
+            `${contextOverride}\n        run: pnpm architecture:gate`,
+          ),
+        ),
+      ).toContainEqual(expect.stringContaining('must not override the execution context'));
+    }
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(
+          '    timeout-minutes: 30',
+          "    timeout-minutes: 30\n    defaults:\n      run:\n        shell: bash --noprofile --norc -c 'exit 0' -- {0}",
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('must not override the execution context'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(
+          'jobs:',
+          "defaults:\n  run:\n    shell: bash --noprofile --norc -c 'exit 0' -- {0}\njobs:",
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('must not override the gate execution context'));
+    const movedControlPlaneTest = replaceArchitectureGateRun(
+      validWorkflow.replace('run: pnpm architecture:gate:test', 'run: echo moved'),
+      '        run: pnpm architecture:gate\n      - run: pnpm architecture:gate:test',
+    );
+    expect(validateCiWorkflow(movedControlPlaneTest)).toContainEqual(
+      expect.stringContaining('quality job must execute pnpm architecture:gate:test'),
+    );
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(
+          '        run: pnpm architecture:gate:test',
+          '        continue-on-error: true\n        run: pnpm architecture:gate:test',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('quality job must fail closed'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(
+          '        run: pnpm architecture:gate:test',
+          '        !!str continue-on-error: true\n        run: pnpm architecture:gate:test',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('quality job must fail closed'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace('          - windows-latest', '          # - windows-latest'),
+      ),
+    ).toContainEqual(expect.stringContaining('Ubuntu then Windows'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(
+          '          - windows-latest',
+          '          - windows-latest\n        exclude: [{ os: windows-latest }]',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('Ubuntu then Windows'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(
+          '    timeout-minutes: 30',
+          '    timeout-minutes: 30\n    container: malicious.example/gate:latest',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('must not override the execution context'));
+    expect(
+      validateCiWorkflow(validWorkflow.replace('  contents: read', '  contents: write')),
+    ).toContainEqual(expect.stringContaining('permissions must be exactly contents: read'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace('    runs-on: $' + '{{ matrix.os }}', '    runs-on: self-hosted'),
+      ),
+    ).toContainEqual(expect.stringContaining('matrix.os'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(
+          '  architecture-gate:',
+          '  architecture-gate:\n    if: $' + '{{ 1 == 2 }}',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('must not define conditions'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow,
+          '        if: false\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('must not define conditions'));
+    expect(
+      validateCiWorkflow(
+        validWorkflow.replace(
+          '        run: pnpm architecture:gate:test',
+          '        if: false\n        run: pnpm architecture:gate:test',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('quality job must not define conditions'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow.replace('    timeout-minutes: 30\n', ''),
+          '        timeout-minutes: 30\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('30 minute timeout'));
+    expect(
+      validateCiWorkflow(
+        replaceArchitectureGateRun(
+          validWorkflow.replace('    needs: quality\n', ''),
+          '        env:\n          needs: quality\n        run: pnpm architecture:gate',
+        ),
+      ),
+    ).toContainEqual(expect.stringContaining('must need quality'));
+    const movedWindowsQualityTest = replaceArchitectureGateRun(
+      validWorkflow.replace('      - name: Test\n        run: pnpm test\n', ''),
+      '        run: pnpm architecture:gate\n      - name: Moved test\n        run: pnpm test',
+    );
+    expect(validateCiWorkflow(movedWindowsQualityTest)).toContainEqual(
+      expect.stringContaining('quality job must execute pnpm test'),
     );
   });
 });

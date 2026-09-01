@@ -1,6 +1,6 @@
 # better-agent
 
-当前仓库已完成文档级 Gate A 以及 G0-01～G0-07 的本地可执行底座。G0-04 建立 tenant/auth/principal/assertion/RLS，G0-05 建立 strict Release/Deployment/browser-session 与 typed entry grant，G0-06 建立 Run/Conversation/Idempotency/Outbox/HumanGate/计费/归档保留事实层，G0-07 建立 phase executor、internal-service attestation、lease/fencing、recovery/finalizer 与历史 attribution 安全边界。当前正在执行 G0-08：用声明式 registry、mutation gate 和 disposable clean checkout 将 OpenAPI、workspace、000～005 migration、RLS/security、Run/billing/recovery 与六套真实 PostgreSQL 16 harness 聚合为唯一 G1 前门。公开业务 handler、Knowledge/Database/Plugin/MCP/Skill/SubAgent runtime 与 G1 执行器仍未实现；G0-08 全量门及 Review 通过前不能进入 G1。
+当前仓库已完成文档级 Gate A 以及 G0-01～G0-07 的本地可执行底座。G0-08 的声明式 registry、mutation gate、disposable clean checkout、PostgreSQL 精确清理与冻结 CI schema 已实现，并通过 L4 code-quality、security/integrity、architecture、performance 与 test-strategy 独立复审；最终本机 clean-checkout 重跑证据只写入 `.handoff` 控制面 sidecar，避免回填文字改变已验输入摘要。公开业务 handler、Knowledge/Database/Plugin/MCP/Skill/SubAgent runtime 与 G1 执行器仍未实现；host-attested Acceptance Receipt 未通过前仍不能关闭 G0-08 或进入 G1。
 
 ```powershell
 pnpm install --frozen-lockfile
