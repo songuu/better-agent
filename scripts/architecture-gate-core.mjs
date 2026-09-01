@@ -145,9 +145,10 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   }),
   Object.freeze({
     packageName: '@better-agent/test-support',
-    script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 13,
-    successMarker: '@better-agent/test-support:test:       Tests  13 passed (13)',
+    script:
+      'vitest run --config vitest.config.ts --configLoader native && node --test ../../tests/deployment/*.test.mjs',
+    testCount: 19,
+    successMarker: '@better-agent/test-support:test:       Tests  19 passed (19)',
   }),
 ]);
 
@@ -406,6 +407,13 @@ function validateWorkspaceTests(value) {
       entry.successMarker,
       `workspaceTests[${index}].successMarker`,
     );
+    const markerCountMatch = /(?:Tests\s+(\d+)\s+passed\s+\(\1\)|# pass\s+(\d+))$/u.exec(
+      successMarker,
+    );
+    const markerCount = Number(markerCountMatch?.[1] ?? markerCountMatch?.[2]);
+    if (!Number.isSafeInteger(markerCount) || markerCount !== entry.testCount) {
+      fail(`workspaceTests[${index}] successMarker must encode testCount`);
+    }
     return { packageName, script, testCount: entry.testCount, successMarker };
   });
   assertExactArray(

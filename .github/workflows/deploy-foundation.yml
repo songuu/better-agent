@@ -1,0 +1,214 @@
+name: Deploy Better Agent foundation
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: better-agent-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      vars.BETTER_AGENT_DEPLOY_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      accepted-sha: ${{ steps.accepted.outputs.sha }}
+    steps:
+      - name: Resolve the accepted commit
+        id: accepted
+        env:
+          ACCEPTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          test "${ACCEPTED_SHA}" = "$(git ls-remote https://github.com/${GITHUB_REPOSITORY}.git refs/heads/main | cut -f1)"
+          echo "sha=${ACCEPTED_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out the accepted commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ steps.accepted.outputs.sha }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Re-attest the deployable checkout
+        run: pnpm architecture:gate
+
+      - name: Build deployable database tooling
+        run: pnpm --filter @better-agent/db build
+
+      - name: Package immutable release
+        env:
+          ACCEPTED_SHA: ${{ steps.accepted.outputs.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/release"
+          archive="${RUNNER_TEMP}/release/better-agent-${ACCEPTED_SHA}.tgz"
+          tar --exclude=.git --exclude=node_modules --exclude=.turbo -czf "${archive}" .
+          sha256sum "${archive}" > "${archive}.sha256"
+
+      - name: Upload attested release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: better-agent-${{ steps.accepted.outputs.sha }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: build
+    if: >-
+      vars.BETTER_AGENT_DEPLOY_ENABLED == 'true' &&
+      needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      contents: read
+    env:
+      ACCEPTED_SHA: ${{ needs.build.outputs.accepted-sha }}
+      DEPLOY_HOST: ${{ vars.BETTER_AGENT_DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.BETTER_AGENT_DEPLOY_USER }}
+      RELEASE_ROOT: /opt/better-agent/releases
+      SHARED_ROOT: /opt/better-agent/shared
+      CURRENT_LINK: /opt/better-agent/current
+    steps:
+      - name: Reject a stale accepted commit
+        run: >-
+          test "${ACCEPTED_SHA}" =
+          "$(git ls-remote https://github.com/${GITHUB_REPOSITORY}.git refs/heads/main | cut -f1)"
+
+      - name: Download attested release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: better-agent-${{ needs.build.outputs.accepted-sha }}
+          path: ${{ runner.temp }}/release
+
+      - name: Verify release digest
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/release"
+          sha256sum --check "better-agent-${ACCEPTED_SHA}.tgz.sha256"
+
+      - name: Configure SSH
+        env:
+          SSH_KNOWN_HOSTS: ${{ secrets.BETTER_AGENT_SSH_KNOWN_HOSTS }}
+          SSH_PRIVATE_KEY: ${{ secrets.BETTER_AGENT_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          test -n "${SSH_KNOWN_HOSTS}"
+          test -n "${DEPLOY_HOST}"
+          test -n "${DEPLOY_USER}"
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/better_agent_deploy_key
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/better_agent_deploy_key ~/.ssh/known_hosts
+
+      - name: Preflight target filesystems
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/release/better-agent-${ACCEPTED_SHA}.tgz"
+          archive_kib="$((($(stat -c %s "${archive}") + 1023) / 1024))"
+          ssh -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "test \$(df -Pk /tmp | awk 'NR == 2 { print \$4 }') -ge $((archive_kib * 2)) && test \$(df -Pk /opt | awk 'NR == 2 { print \$4 }') -ge 1048576"
+
+      - name: Upload immutable release
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/release/better-agent-${ACCEPTED_SHA}.tgz"
+          scp -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes \
+            "${archive}" "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/better-agent-${ACCEPTED_SHA}.tgz"
+
+      - name: Provision isolated PostgreSQL and switch current
+        run: |
+          set -euo pipefail
+          test "${ACCEPTED_SHA}" = "$(git ls-remote https://github.com/${GITHUB_REPOSITORY}.git refs/heads/main | cut -f1)"
+          ssh -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "RELEASE_ROOT='${RELEASE_ROOT}' SHARED_ROOT='${SHARED_ROOT}' CURRENT_LINK='${CURRENT_LINK}' REMOTE_ARCHIVE='/tmp/better-agent-${ACCEPTED_SHA}.tgz' REMOTE_RELEASE='${RELEASE_ROOT}/better-agent-${ACCEPTED_SHA}' bash -s" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          staging_release="${REMOTE_RELEASE}.staging.$$"
+          trap 'rm -f "${REMOTE_ARCHIVE}" "${CURRENT_LINK}.next"; rm -rf "${staging_release}"' EXIT
+
+          available_kib="$(df -Pk /opt | awk 'NR == 2 { print $4 }')"
+          test "${available_kib:-0}" -ge 1048576
+          mkdir -p "${RELEASE_ROOT}" "${SHARED_ROOT}/postgres"
+          chmod 700 "${SHARED_ROOT}" "${SHARED_ROOT}/postgres"
+          if [ ! -d "${REMOTE_RELEASE}" ]; then
+            mkdir -p "${staging_release}"
+            tar -xzf "${REMOTE_ARCHIVE}" -C "${staging_release}"
+            test -f "${staging_release}/packages/db/dist/cli.js"
+            mv "${staging_release}" "${REMOTE_RELEASE}"
+          fi
+          test -f "${REMOTE_RELEASE}/packages/db/dist/cli.js"
+
+          BETTER_AGENT_POSTGRES_ROOT="${SHARED_ROOT}/postgres" \
+            node "${REMOTE_RELEASE}/scripts/deployment/configure-production-postgres.mjs" up
+          BETTER_AGENT_POSTGRES_ROOT="${SHARED_ROOT}/postgres" \
+            node "${REMOTE_RELEASE}/scripts/deployment/configure-production-postgres.mjs" status
+
+          previous_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+          receipt="${SHARED_ROOT}/last-deployment"
+          pending_receipt="${receipt}.next"
+          if [ "${previous_release}" != "${REMOTE_RELEASE}" ]; then
+            printf 'previous=%s\ncurrent=%s\n' "${previous_release}" "${REMOTE_RELEASE}" > "${pending_receipt}"
+          fi
+          ln -sfn "${REMOTE_RELEASE}" "${CURRENT_LINK}.next"
+          mv -Tf "${CURRENT_LINK}.next" "${CURRENT_LINK}"
+          current_release="$(readlink -f "${CURRENT_LINK}")"
+          test "${current_release}" = "${REMOTE_RELEASE}"
+          if [ -f "${pending_receipt}" ]; then
+            test "$(tail -n 1 "${pending_receipt}")" = "current=${current_release}"
+            mv -Tf "${pending_receipt}" "${receipt}"
+          fi
+
+          mapfile -t releases < <(find "${RELEASE_ROOT}" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex '.*/better-agent-[0-9a-f]{40}' -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
+          retained=1
+          for release in "${releases[@]}"; do
+            release="${release%/}"
+            if [ "${release}" = "${current_release}" ]; then
+              continue
+            fi
+            if [ "${retained}" -lt 5 ]; then
+              retained=$((retained + 1))
+            else
+              rm -rf -- "${release}"
+            fi
+          done
+          echo "CURRENT_RELEASE=${current_release}"
+          REMOTE_SCRIPT
+
+      - name: Remove deployment key
+        if: always()
+        run: |
+          if [ -f ~/.ssh/better_agent_deploy_key ] && [ -n "${DEPLOY_HOST}" ] && [ -n "${DEPLOY_USER}" ]; then
+            ssh -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "rm -f -- '/tmp/better-agent-${ACCEPTED_SHA}.tgz'" || true
+          fi
+          rm -f ~/.ssh/better_agent_deploy_key

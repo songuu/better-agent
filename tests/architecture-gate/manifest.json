@@ -164,9 +164,9 @@
     },
     {
       "packageName": "@better-agent/test-support",
-      "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 13,
-      "successMarker": "@better-agent/test-support:test:       Tests  13 passed (13)"
+      "script": "vitest run --config vitest.config.ts --configLoader native && node --test ../../tests/deployment/*.test.mjs",
+      "testCount": 19,
+      "successMarker": "@better-agent/test-support:test:       Tests  19 passed (19)"
     }
   ],
   "scripts": {
@@ -202,7 +202,7 @@
         "@better-agent/domain-contracts:test:       Tests  53 passed (53)",
         "@better-agent/release-core:test:       Tests  33 passed (33)",
         "@better-agent/run-core:test:       Tests  103 passed (103)",
-        "@better-agent/test-support:test:       Tests  13 passed (13)"
+        "@better-agent/test-support:test:       Tests  19 passed (19)"
       ],
       "forbidSkippedOutput": true,
       "timeoutMs": 300000

@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc --build tsconfig.build.json --pretty false --stopBuildOnErrors",
     "lint": "biome lint src test scripts vitest.config.ts",
-    "test": "vitest run --config vitest.config.ts --configLoader native",
+    "test": "vitest run --config vitest.config.ts --configLoader native && node --test ../../tests/deployment/*.test.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
   }
 }

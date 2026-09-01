@@ -1,10 +1,134 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   validateCiWorkflow,
+  validateDeploymentWorkflow,
+  validateGitAttributes,
   validateWorkspaceGraph,
   type WorkspacePackage,
 } from '../scripts/workspace-rules.mjs';
+
+describe('validateGitAttributes', () => {
+  const requiredLfPatterns = [
+    '*.cjs',
+    '*.cts',
+    '*.js',
+    '*.jsx',
+    '*.json',
+    '*.mjs',
+    '*.mts',
+    '*.md',
+    '*.sql',
+    '*.ts',
+    '*.tsx',
+    '*.yaml',
+    '*.yml',
+  ];
+  const validAttributes = [
+    '* text=auto',
+    '',
+    ...requiredLfPatterns.map((pattern) => `${pattern} text eol=lf`),
+    '',
+    '*.bat text eol=crlf',
+    '*.cmd text eol=crlf',
+    '*.ps1 text eol=crlf',
+    '',
+  ].join('\n');
+
+  it('accepts explicit LF checkout rules for every formatted source extension', () => {
+    expect(validateGitAttributes(validAttributes)).toEqual([]);
+  });
+
+  it('rejects a missing MTS rule that would turn declarations into CRLF on Windows', () => {
+    for (const attributes of [
+      validAttributes.replace('*.mts text eol=lf\n', ''),
+      `${validAttributes}*.mts text eol=crlf\n`,
+      `${validAttributes}*.mts -text\n`,
+      `${validAttributes}* text=auto eol=crlf\n`,
+    ]) {
+      expect(validateGitAttributes(attributes)).toContain(
+        '.gitattributes: attributes must match the closed cross-platform checkout schema',
+      );
+    }
+  });
+});
+
+describe('validateDeploymentWorkflow', () => {
+  const workflow = readFileSync(
+    new URL('../../../.github/workflows/deploy-foundation.yml', import.meta.url),
+    'utf8',
+  );
+
+  it('accepts the secret-separated, CI-attested production workflow', () => {
+    expect(validateDeploymentWorkflow(workflow)).toEqual([]);
+  });
+
+  it('rejects manual dispatch, build secrets, SSH TOFU, and mutable deploy actions', () => {
+    for (const weakened of [
+      workflow.replace('on:\n', 'on:\n  workflow_dispatch:\n'),
+      workflow.replace(
+        '    runs-on: ubuntu-latest',
+        '    env:\n      LEAK: $' + '{{ secrets.LEAK }}\n    runs-on: ubuntu-latest',
+      ),
+      workflow.replace(
+        '          test -n "' + '$' + '{SSH_KNOWN_HOSTS}"',
+        '          ssh-keyscan "' + '$' + '{DEPLOY_HOST}"',
+      ),
+      workflow.replace(
+        'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+        'actions/download-artifact@v4',
+      ),
+    ]) {
+      expect(validateDeploymentWorkflow(weakened)).not.toEqual([]);
+    }
+  });
+
+  it('rejects deployment without the explicit production enable variable', () => {
+    expect(
+      validateDeploymentWorkflow(
+        workflow.replace("vars.BETTER_AGENT_DEPLOY_ENABLED == 'true' &&\n      ", ''),
+      ),
+    ).toContain(
+      '.github/workflows/deploy-foundation.yml: production deployment must require the explicit enable variable',
+    );
+  });
+
+  it('rejects enable-condition bypasses and mutable build actions', () => {
+    for (const weakened of [
+      workflow.replace("vars.BETTER_AGENT_DEPLOY_ENABLED == 'true' &&", 'true ||'),
+      workflow.replace(
+        "github.event.workflow_run.head_branch == 'main'",
+        "true || github.event.workflow_run.head_branch == 'main'",
+      ),
+      workflow.replace("needs.build.result == 'success'", 'always()'),
+      workflow.replace(
+        'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803',
+        'actions/checkout@v6',
+      ),
+      workflow.replace(
+        '    env:\n      ACCEPTED_SHA:',
+        '    env:\n      LEAK: $' + '{{ secrets.LEAK }}\n      ACCEPTED_SHA:',
+      ),
+      workflow.replace(
+        '      - name: Provision isolated PostgreSQL and switch current',
+        '      - name: Provision isolated PostgreSQL and switch current\n        continue-on-error: true',
+      ),
+      workflow.replace('-o BatchMode=yes', '-o BatchMode=yes -o StrictHostKeyChecking=no'),
+      workflow.replace(
+        'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803',
+        'evil/checkout@d23441a48e516b6c34aea4fa41551a30e30af803',
+      ),
+      workflow.replace(
+        '          test "${ACCEPTED_SHA}" = "$(git ls-remote https://github.com/${GITHUB_REPOSITORY}.git refs/heads/main | cut -f1)"\n',
+        '',
+      ),
+    ]) {
+      expect(validateDeploymentWorkflow(weakened)).not.toEqual([]);
+    }
+  });
+});
 
 function workspacePackage(
   directory: string,

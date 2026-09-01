@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import { parseDocument, visit } from 'yaml';
@@ -18,6 +19,33 @@ const productionDependencySections = new Set([
 const githubWorkflowExpression = '$' + '{{ github.workflow }}';
 const githubRefExpression = '$' + '{{ github.ref }}';
 const matrixOsExpression = '$' + '{{ matrix.os }}';
+
+const requiredLfGitAttributes = [
+  '*.cjs',
+  '*.cts',
+  '*.js',
+  '*.jsx',
+  '*.json',
+  '*.mjs',
+  '*.mts',
+  '*.md',
+  '*.sql',
+  '*.ts',
+  '*.tsx',
+  '*.yaml',
+  '*.yml',
+];
+
+const expectedGitAttributes = [
+  '* text=auto',
+  '',
+  ...requiredLfGitAttributes.map((pattern) => `${pattern} text eol=lf`),
+  '',
+  '*.bat text eol=crlf',
+  '*.cmd text eol=crlf',
+  '*.ps1 text eol=crlf',
+  '',
+].join('\n');
 
 const expectedCiWorkflow = {
   name: 'CI',
@@ -267,6 +295,152 @@ export function validateCiWorkflow(workflow) {
         `.github/workflows/ci.yml: architecture-gate job must execute ${requiredCommand}`,
       );
     }
+  }
+  return errors;
+}
+
+export function validateGitAttributes(attributes) {
+  if (typeof attributes !== 'string' || attributes.length === 0) {
+    return ['.gitattributes: attributes text is required'];
+  }
+
+  const normalized = `${attributes.replaceAll('\r\n', '\n').trimEnd()}\n`;
+  return normalized === expectedGitAttributes
+    ? []
+    : ['.gitattributes: attributes must match the closed cross-platform checkout schema'];
+}
+
+export function validateDeploymentWorkflow(workflow) {
+  if (typeof workflow !== 'string' || workflow.length === 0) {
+    return ['.github/workflows/deploy-foundation.yml: workflow text is required'];
+  }
+  const errors = [];
+  const workflowDigest = createHash('sha256')
+    .update(workflow.replaceAll('\r\n', '\n'))
+    .digest('hex');
+  if (workflowDigest !== '2b009a6cb84aad763ed5e46d03da0fc2332c295c0bc4289c1bbdd2cebe144136') {
+    errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
+  }
+  const definition = parseCiWorkflow(workflow, errors);
+  if (definition === null) return errors;
+  const trigger = definition.on;
+  if (
+    !isRecord(trigger) ||
+    Object.keys(trigger).length !== 1 ||
+    !isRecord(trigger.workflow_run) ||
+    !isDeepStrictEqual(trigger.workflow_run.workflows, ['CI']) ||
+    !isDeepStrictEqual(trigger.workflow_run.types, ['completed'])
+  ) {
+    errors.push(
+      '.github/workflows/deploy-foundation.yml: deploy must trigger only from completed CI',
+    );
+  }
+  if (!hasExactReadOnlyPermissions(definition)) {
+    errors.push('.github/workflows/deploy-foundation.yml: workflow permissions must be read-only');
+  }
+  const build = getJobDefinition(definition, 'build');
+  const deploy = getJobDefinition(definition, 'deploy');
+  if (build === null || deploy === null || Object.keys(definition.jobs ?? {}).length !== 2) {
+    errors.push('.github/workflows/deploy-foundation.yml: build and deploy jobs are required');
+    return errors;
+  }
+  const expectedBuildCondition =
+    "vars.BETTER_AGENT_DEPLOY_ENABLED == 'true' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'";
+  const expectedDeployCondition =
+    "vars.BETTER_AGENT_DEPLOY_ENABLED == 'true' && needs.build.result == 'success'";
+  if (build.if !== expectedBuildCondition || deploy.if !== expectedDeployCondition) {
+    errors.push(
+      '.github/workflows/deploy-foundation.yml: production deployment must require the explicit enable variable',
+    );
+  }
+  if (JSON.stringify(build).includes('secrets.')) {
+    errors.push('.github/workflows/deploy-foundation.yml: build job must not receive secrets');
+  }
+  if (JSON.stringify(deploy.env ?? {}).includes('secrets.')) {
+    errors.push('.github/workflows/deploy-foundation.yml: deploy job env must not receive secrets');
+  }
+  if (deploy.needs !== 'build' || deploy.environment !== 'production') {
+    errors.push(
+      '.github/workflows/deploy-foundation.yml: deploy must use protected production after build',
+    );
+  }
+  const deploySteps = Array.isArray(deploy.steps) ? deploy.steps : [];
+  const configureSsh = deploySteps.find((step) => isRecord(step) && step.name === 'Configure SSH');
+  const secretSteps = deploySteps.filter(
+    (step) => isRecord(step) && JSON.stringify(step).includes('secrets.'),
+  );
+  if (
+    !isRecord(configureSsh) ||
+    secretSteps.length !== 1 ||
+    secretSteps[0] !== configureSsh ||
+    !isRecord(configureSsh.env) ||
+    Object.keys(configureSsh.env).sort().join(',') !== 'SSH_KNOWN_HOSTS,SSH_PRIVATE_KEY'
+  ) {
+    errors.push(
+      '.github/workflows/deploy-foundation.yml: SSH secrets must be scoped to Configure SSH',
+    );
+  }
+  const buildSteps = Array.isArray(build.steps) ? build.steps : [];
+  const allSteps = [...buildSteps, ...deploySteps];
+  for (const step of allSteps) {
+    if (isRecord(step) && typeof step.uses === 'string' && !/@[a-f0-9]{40}$/u.test(step.uses)) {
+      errors.push(
+        '.github/workflows/deploy-foundation.yml: all actions must pin a full commit SHA',
+      );
+    }
+  }
+  const expectedActions = new Map([
+    ['Check out the accepted commit', 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803'],
+    ['Set up pnpm', 'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86'],
+    ['Set up Node.js', 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020'],
+    ['Upload attested release', 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'],
+    [
+      'Download attested release',
+      'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+    ],
+  ]);
+  const actionSteps = allSteps.filter((step) => isRecord(step) && typeof step.uses === 'string');
+  if (
+    actionSteps.length !== expectedActions.size ||
+    actionSteps.some((step) => expectedActions.get(String(step.name)) !== step.uses)
+  ) {
+    errors.push(
+      '.github/workflows/deploy-foundation.yml: action inventory must match the frozen allowlist',
+    );
+  }
+  for (const requiredText of [
+    'pnpm architecture:gate',
+    'BETTER_AGENT_POSTGRES_ROOT',
+    'scripts/deployment/configure-production-postgres.mjs',
+    'Remove deployment key',
+    'Preflight target filesystems',
+    "-regex '.*/better-agent-[0-9a-f]{40}'",
+    'pending_receipt="${receipt}.next"',
+    'mv -Tf "${pending_receipt}" "${receipt}"',
+  ]) {
+    if (!workflow.includes(requiredText)) {
+      errors.push(`.github/workflows/deploy-foundation.yml: missing ${requiredText}`);
+    }
+  }
+  if (workflow.includes('workflow_dispatch') || workflow.includes('ssh-keyscan')) {
+    errors.push(
+      '.github/workflows/deploy-foundation.yml: manual dispatch and SSH TOFU are forbidden',
+    );
+  }
+  const mainLookup = 'git ls-remote https://github.com/${GITHUB_REPOSITORY}.git refs/heads/main';
+  if (workflow.split(mainLookup).length - 1 !== 3) {
+    errors.push(
+      '.github/workflows/deploy-foundation.yml: all three main SHA attestations are required',
+    );
+  }
+  if (
+    workflow.includes('continue-on-error') ||
+    workflow.includes('StrictHostKeyChecking=no') ||
+    workflow.includes('UserKnownHostsFile=/dev/null')
+  ) {
+    errors.push(
+      '.github/workflows/deploy-foundation.yml: failure or SSH host-key bypass is forbidden',
+    );
   }
   return errors;
 }

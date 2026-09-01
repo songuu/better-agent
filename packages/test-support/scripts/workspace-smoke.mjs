@@ -2,7 +2,12 @@ import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { validateCiWorkflow, validateWorkspaceGraph } from './workspace-rules.mjs';
+import {
+  validateCiWorkflow,
+  validateDeploymentWorkflow,
+  validateGitAttributes,
+  validateWorkspaceGraph,
+} from './workspace-rules.mjs';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 const errors = [];
@@ -205,6 +210,16 @@ if (testSupportManifest !== undefined) {
 const ciWorkflow = await readText('.github/workflows/ci.yml');
 if (ciWorkflow !== undefined) {
   errors.push(...validateCiWorkflow(ciWorkflow));
+}
+
+const deploymentWorkflow = await readText('.github/workflows/deploy-foundation.yml');
+if (deploymentWorkflow !== undefined) {
+  errors.push(...validateDeploymentWorkflow(deploymentWorkflow));
+}
+
+const gitAttributes = await readText('.gitattributes');
+if (gitAttributes !== undefined) {
+  errors.push(...validateGitAttributes(gitAttributes));
 }
 
 const workspacePackages = await collectWorkspacePackages();
