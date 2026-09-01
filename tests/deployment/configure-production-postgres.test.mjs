@@ -12,6 +12,7 @@ import {
   PORT,
   renderDatabaseGrantsSql,
   renderMigrationLedgerOwnershipSql,
+  renderMigrationLedgerPreflightSql,
   renderLoginProvisioningSql,
   sqlLiteral,
 } from '../../scripts/deployment/configure-production-postgres.mjs';
@@ -91,10 +92,35 @@ test('transfers the migration ledger away from the login role', () => {
     [
       'ALTER SCHEMA better_agent_migrations OWNER TO ba_migrator;',
       'ALTER TABLE better_agent_migrations.schema_migrations OWNER TO ba_migrator;',
+      'GRANT ALL ON SCHEMA better_agent_migrations TO ba_migrator;',
+      'GRANT ALL ON TABLE better_agent_migrations.schema_migrations TO ba_migrator;',
       'REVOKE ALL ON SCHEMA better_agent_migrations FROM better_agent_migrator;',
       'REVOKE ALL ON TABLE better_agent_migrations.schema_migrations FROM better_agent_migrator;',
       '',
     ].join('\n'),
+  );
+});
+
+test('runs migrations as the NOLOGIN migrator capability owner', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(
+    new URL('../../scripts/deployment/configure-production-postgres.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /psqlAs\('better_agent_migrator', `SET ROLE ba_migrator;\\n\$\{await renderMigrations\(\)\}`\)/u,
+  );
+});
+
+test('repairs an existing empty ledger ACL before migration re-entry', () => {
+  const sql = renderMigrationLedgerPreflightSql();
+  assert.match(sql, /to_regnamespace\('better_agent_migrations'\) IS NOT NULL/u);
+  assert.match(sql, /GRANT ALL ON SCHEMA better_agent_migrations TO ba_migrator/u);
+  assert.match(sql, /to_regclass\('better_agent_migrations\.schema_migrations'\) IS NOT NULL/u);
+  assert.match(
+    sql,
+    /GRANT ALL ON TABLE better_agent_migrations\.schema_migrations TO ba_migrator/u,
   );
 });
 

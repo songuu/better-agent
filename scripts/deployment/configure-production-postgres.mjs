@@ -241,10 +241,28 @@ export function renderMigrationLedgerOwnershipSql() {
   return [
     'ALTER SCHEMA better_agent_migrations OWNER TO ba_migrator;',
     'ALTER TABLE better_agent_migrations.schema_migrations OWNER TO ba_migrator;',
+    'GRANT ALL ON SCHEMA better_agent_migrations TO ba_migrator;',
+    'GRANT ALL ON TABLE better_agent_migrations.schema_migrations TO ba_migrator;',
     'REVOKE ALL ON SCHEMA better_agent_migrations FROM better_agent_migrator;',
     'REVOKE ALL ON TABLE better_agent_migrations.schema_migrations FROM better_agent_migrator;',
     '',
   ].join('\n');
+}
+
+export function renderMigrationLedgerPreflightSql() {
+  return `DO $ledger_preflight$
+BEGIN
+  IF pg_catalog.to_regnamespace('better_agent_migrations') IS NOT NULL THEN
+    EXECUTE 'ALTER SCHEMA better_agent_migrations OWNER TO ba_migrator';
+    EXECUTE 'GRANT ALL ON SCHEMA better_agent_migrations TO ba_migrator';
+  END IF;
+  IF pg_catalog.to_regclass('better_agent_migrations.schema_migrations') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE better_agent_migrations.schema_migrations OWNER TO ba_migrator';
+    EXECUTE 'GRANT ALL ON TABLE better_agent_migrations.schema_migrations TO ba_migrator';
+  END IF;
+END
+$ledger_preflight$;
+`;
 }
 
 function containerExists() {
@@ -497,7 +515,8 @@ async function up() {
   psqlAs(ADMIN_USER, fs.readFileSync(platformRolesPath, 'utf8'));
   psqlAs(ADMIN_USER, renderLoginProvisioningSql(credentials));
   psqlAs(ADMIN_USER, renderDatabaseGrantsSql());
-  psqlAs('better_agent_migrator', await renderMigrations());
+  psqlAs(ADMIN_USER, renderMigrationLedgerPreflightSql());
+  psqlAs('better_agent_migrator', `SET ROLE ba_migrator;\n${await renderMigrations()}`);
   psqlAs(ADMIN_USER, renderMigrationLedgerOwnershipSql());
   const result = verifyProvisioning();
   const authenticatedLoginCount = verifyTcpAuthentication(credentials);
