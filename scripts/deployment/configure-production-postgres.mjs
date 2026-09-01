@@ -237,6 +237,16 @@ export function renderDatabaseGrantsSql() {
   return statements.join('\n');
 }
 
+export function renderMigrationLedgerOwnershipSql() {
+  return [
+    'ALTER SCHEMA better_agent_migrations OWNER TO ba_migrator;',
+    'ALTER TABLE better_agent_migrations.schema_migrations OWNER TO ba_migrator;',
+    'REVOKE ALL ON SCHEMA better_agent_migrations FROM better_agent_migrator;',
+    'REVOKE ALL ON TABLE better_agent_migrations.schema_migrations FROM better_agent_migrator;',
+    '',
+  ].join('\n');
+}
+
 function containerExists() {
   const result = spawnSync('docker', ['inspect', CONTAINER_NAME], {
     encoding: 'utf8',
@@ -488,6 +498,7 @@ async function up() {
   psqlAs(ADMIN_USER, renderLoginProvisioningSql(credentials));
   psqlAs(ADMIN_USER, renderDatabaseGrantsSql());
   psqlAs('better_agent_migrator', await renderMigrations());
+  psqlAs(ADMIN_USER, renderMigrationLedgerOwnershipSql());
   const result = verifyProvisioning();
   const authenticatedLoginCount = verifyTcpAuthentication(credentials);
   process.stdout.write(

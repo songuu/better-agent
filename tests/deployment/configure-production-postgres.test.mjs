@@ -11,6 +11,7 @@ import {
   LOGIN_ROLES,
   PORT,
   renderDatabaseGrantsSql,
+  renderMigrationLedgerOwnershipSql,
   renderLoginProvisioningSql,
   sqlLiteral,
 } from '../../scripts/deployment/configure-production-postgres.mjs';
@@ -71,6 +72,20 @@ test('database grants remove PUBLIC and give migrator only the required database
     assert.match(sql, new RegExp(`\\b${capability}\\b`, 'u'));
   }
   assert.doesNotMatch(sql, /SUPERUSER|BYPASSRLS/u);
+});
+
+test('transfers the migration ledger away from the login role', () => {
+  const sql = renderMigrationLedgerOwnershipSql();
+  assert.equal(
+    sql,
+    [
+      'ALTER SCHEMA better_agent_migrations OWNER TO ba_migrator;',
+      'ALTER TABLE better_agent_migrations.schema_migrations OWNER TO ba_migrator;',
+      'REVOKE ALL ON SCHEMA better_agent_migrations FROM better_agent_migrator;',
+      'REVOKE ALL ON TABLE better_agent_migrations.schema_migrations FROM better_agent_migrator;',
+      '',
+    ].join('\n'),
+  );
 });
 
 test('uses the project migration ledger schema rather than public', async () => {
