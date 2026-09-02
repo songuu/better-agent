@@ -4,6 +4,7 @@ import {
   DatabaseAllowedTableV1Schema,
   LeafResourceSourceCandidateV1Schema,
   type A2aAgentSourceV1,
+  type CapabilityBindingV1,
   type CapabilityRequirementsV1,
   type DatabaseOperationSourceV1,
   type KnowledgeIndexGenerationSourceV1,
@@ -370,14 +371,11 @@ export function verifyLeafResourceSource(
   return actual;
 }
 
-/** Check one target binding, not path-policy compilation, registry admission or execution. */
-export function verifyLeafResourceBinding(
-  bindingInput: unknown,
-  input: unknown,
-): PreparedLeafResourceSourceV1 {
-  const [bindingSnapshot, candidate] = bounded([bindingInput, input]) as unknown[];
+function verifyPreparedLeafResourceBinding(
+  bindingSnapshot: unknown,
+  actual: PreparedLeafResourceSourceV1,
+): CapabilityBindingV1 {
   const binding = parseLosslessly(bindingSnapshot, CapabilityBindingV1Schema);
-  const actual = prepareLeafResourceSource(candidate);
   if (!equal(binding.pin, actual.full_pin)) mismatch();
   verifyBindingOperationContract(binding, actual.document.operation);
   if (
@@ -470,6 +468,39 @@ export function verifyLeafResourceBinding(
       )
         mismatch();
       break;
+  }
+  return binding;
+}
+
+/** Check one target binding, not path-policy compilation, registry admission or execution. */
+export function verifyLeafResourceBinding(
+  bindingInput: unknown,
+  input: unknown,
+): PreparedLeafResourceSourceV1 {
+  const [bindingSnapshot, candidate] = bounded([bindingInput, input]) as unknown[];
+  const actual = prepareLeafResourceSource(candidate);
+  verifyPreparedLeafResourceBinding(bindingSnapshot, actual);
+  return actual;
+}
+
+/** Verify a unique bounded Binding set against one prepared leaf source. */
+export function verifyLeafResourceBindings(
+  bindingInputs: unknown,
+  input: unknown,
+): PreparedLeafResourceSourceV1 {
+  const [bindingSnapshots, candidate] = bounded([bindingInputs, input]) as unknown[];
+  if (
+    !Array.isArray(bindingSnapshots) ||
+    bindingSnapshots.length === 0 ||
+    bindingSnapshots.length > 128
+  )
+    mismatch();
+  const actual = prepareLeafResourceSource(candidate);
+  const bindingIds = new Set<string>();
+  for (const bindingSnapshot of bindingSnapshots) {
+    const binding = verifyPreparedLeafResourceBinding(bindingSnapshot, actual);
+    if (bindingIds.has(binding.binding_id)) mismatch();
+    bindingIds.add(binding.binding_id);
   }
   return actual;
 }

@@ -20,3 +20,4 @@
 - 上游 source 上限与下游 identity registry 上限必须用同一个 exact-max fixture 贯通验证；分别测试两个模块的边界，无法发现合法输入在组合后因额外 root/ancestor 条目而失败。
 - 选择性依赖展开要同时断言“命中的依赖被展开”和“未命中的兄弟 Binding 仍被登记”；仅检查展开结果会允许实现把 closure-wide 冲突/预算域偷偷缩成过滤后的子集。
 - 批量 Binding verifier 要用两个不同 ID 的合法输入，再破坏非首项并单独拒绝重复/空集合；下游 Pack path 还需用 128-member exact max 贯通，且验证 disabled+unexposed member 仍有地址但不会被误造为 sealed route。
+- SubAgent 路径要成对覆盖 internal 与 external：internal 断言 target 后还有 dependency-owned Binding、same-version 自环拒绝和禁用目标地址；external 断言完整 leaf evidence 后终止于 target，且没有伪造 nested bindings/closure seal。不要为测试方便复制具有同 credential requirement ID 的 root Bindings而放宽全局唯一性。

@@ -4,11 +4,14 @@ import {
   canonicalBindingPath,
   compareCanonicalStrings,
   prepareExecutableSource,
+  prepareLeafResourceSource,
   prepareSkillPackSource,
   ReleaseCoreError,
 } from '../src/index.js';
 import {
   prepareAgentFlowDependencyPaths,
+  prepareAgentExternalSubagentDependencyPaths,
+  prepareAgentInternalSubagentDependencyPaths,
   prepareAgentSkillPackDependencyPaths,
   prepareFlowNodePaths,
   prepareRootBindingPaths,
@@ -20,6 +23,7 @@ import {
   richAgentSource,
 } from './executable-source-fixtures.js';
 import { workspaceId } from './fixtures.js';
+import { leafCandidate, record } from './leaf-resource-source-fixtures.js';
 import { skillPackSource } from './skill-pack-source-fixtures.js';
 
 function candidate(document: unknown = richAgentSource()) {
@@ -620,5 +624,255 @@ describe('Agent-owned Skill Pack member paths', () => {
     expect(compiled).not.toHaveProperty('skill_pack_operation_routes');
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(compiled?.members[0]?.member_binding_path_segments)).toBe(true);
+  });
+});
+
+function matchingInternalSubagentSources() {
+  const target = richAgentSource();
+  (target as unknown as { agent_id: string }).agent_id = '00000000-0000-7000-8000-000000000098';
+  (target as unknown as { agent_release_id: string }).agent_release_id =
+    '00000000-0000-7000-8000-000000000099';
+  const targetPin = {
+    ...prepareExecutableSource(candidate(target)).root.pin,
+    published_resource_kind: 'AGENT_RELEASE' as const,
+  };
+  const agent = richAgentSource();
+  const binding = agent.capability_bindings.find(
+    (item) => item.kind === 'subagent' && item.target_kind === 'internal_agent',
+  );
+  if (binding === undefined) throw new Error('fixture is missing its internal SubAgent Binding');
+  binding.pin = targetPin;
+  return { agent, target, binding };
+}
+
+describe('Agent-owned internal SubAgent target paths', () => {
+  it('registers the complete parent namespace and expands the target Agent namespace', () => {
+    const { agent, target, binding } = matchingInternalSubagentSources();
+    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    expect(result.bindings).toHaveLength(agent.capability_bindings.length);
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    expect(compiled?.subagent_target?.bindings).toHaveLength(target.capability_bindings.length);
+    expect(result.bindings.filter((item) => item.subagent_target !== undefined)).toHaveLength(1);
+  });
+
+  it('constructs root, parent Binding, target and dependency-owned Binding segments', () => {
+    const { agent, target, binding } = matchingInternalSubagentSources();
+    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    const targetPath = compiled?.subagent_target;
+    const targetBinding = targetPath?.bindings[0];
+    expect(targetPath?.target_path_segments.map((segment) => segment.segment_kind)).toEqual([
+      'root',
+      'binding',
+      'subagent_target',
+    ]);
+    expect(targetPath?.target_path_segments[2]).toEqual({
+      segment_kind: 'subagent_target',
+      target_pin: result.dependency.pin,
+    });
+    expect(targetBinding?.binding_path_segments.map((segment) => segment.segment_kind)).toEqual([
+      'root',
+      'binding',
+      'subagent_target',
+      'binding',
+    ]);
+    expect(targetBinding?.binding_path_segments[3]).toMatchObject({
+      owner: { owner_kind: 'published_dependency', pin: result.dependency.pin },
+    });
+    expect(targetBinding?.binding_path).toBe(
+      canonicalBindingPath(targetBinding?.binding_path_segments),
+    );
+  });
+
+  it('separates identical local Binding IDs in parent and target Agent namespaces', () => {
+    const { agent, target } = matchingInternalSubagentSources();
+    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    const parent = result.bindings.find((binding) => binding.binding_id === 'plugin');
+    const nested = result.bindings
+      .find((binding) => binding.subagent_target !== undefined)
+      ?.subagent_target?.bindings.find((binding) => binding.binding_id === 'plugin');
+    expect(parent?.binding_path).not.toBe(nested?.binding_path);
+  });
+
+  it('isolates one target Agent under two parent SubAgent Bindings', () => {
+    const { agent, target, binding } = matchingInternalSubagentSources();
+    const second = structuredClone(binding);
+    second.binding_id = 'subagent-second';
+    agent.capability_bindings.push(second);
+    agent.strategy.allowed_capability_binding_ids.push(second.binding_id);
+    const expanded = prepareAgentInternalSubagentDependencyPaths(
+      candidate(agent),
+      candidate(target),
+    ).bindings.filter((item) => item.subagent_target !== undefined);
+    expect(expanded).toHaveLength(2);
+    expect(expanded[0]?.subagent_target?.target_path).not.toBe(
+      expanded[1]?.subagent_target?.target_path,
+    );
+  });
+
+  it('keeps disabled target Bindings addressable and records their exact nested path', () => {
+    const { agent, target, binding } = matchingInternalSubagentSources();
+    const disabled = target.capability_bindings.find((item) => item.binding_id === 'knowledge');
+    if (disabled === undefined) throw new Error('fixture is missing the target Binding');
+    disabled.enabled = false;
+    const refreshedPin = {
+      ...prepareExecutableSource(candidate(target)).root.pin,
+      published_resource_kind: 'AGENT_RELEASE' as const,
+    };
+    binding.pin = refreshedPin;
+    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    const nested = result.bindings
+      .find((item) => item.binding_id === binding.binding_id)
+      ?.subagent_target?.bindings.find((item) => item.binding_id === disabled.binding_id);
+    expect(nested?.enabled).toBe(false);
+    expect(result.source_disabled_binding_paths).toEqual([nested?.binding_path]);
+  });
+
+  it('rejects a self-consistent Agent source that is not the parent exact target pin', () => {
+    const { agent, target } = matchingInternalSubagentSources();
+    (target as unknown as { agent_release_id: string }).agent_release_id =
+      '00000000-0000-7000-8000-000000000097';
+    expect(() =>
+      prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target)),
+    ).toThrow('CAPABILITY_DEPENDENCY_UNRESOLVED');
+  });
+
+  it('rejects a direct same-version SubAgent cycle before path expansion', () => {
+    const target = richAgentSource();
+    const targetPin = {
+      ...prepareExecutableSource(candidate(target)).root.pin,
+      published_resource_kind: 'AGENT_RELEASE' as const,
+    };
+    const agent = richAgentSource();
+    const binding = agent.capability_bindings.find(
+      (item) => item.kind === 'subagent' && item.target_kind === 'internal_agent',
+    );
+    if (binding === undefined) throw new Error('fixture is missing its internal SubAgent Binding');
+    binding.pin = targetPin;
+    expect(() =>
+      prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target)),
+    ).toThrow('CAPABILITY_DEPENDENCY_CYCLE');
+  });
+
+  it('rejects non-Agent dependencies at the internal target boundary', () => {
+    const { agent } = matchingInternalSubagentSources();
+    expect(() =>
+      prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(nestedFlowSource())),
+    ).toThrow('CLOSURE_SOURCE_INVALID');
+  });
+
+  it('returns deeply frozen paths without inventing a nested closure seal', () => {
+    const { agent, target, binding } = matchingInternalSubagentSources();
+    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    expect(result).not.toHaveProperty('closure_hash');
+    expect(compiled?.subagent_target).not.toHaveProperty('nested_closure_hash');
+    expect(Object.isFrozen(compiled?.subagent_target?.bindings)).toBe(true);
+    expect(Object.isFrozen(compiled?.subagent_target?.bindings[0]?.binding_path_segments)).toBe(
+      true,
+    );
+  });
+});
+
+function matchingExternalSubagentSources() {
+  const target = leafCandidate('A2A_AGENT_RELEASE');
+  const prepared = prepareLeafResourceSource(target);
+  const agent = richAgentSource();
+  const binding = agent.capability_bindings.find((item) => item.kind === 'subagent');
+  if (binding === undefined) throw new Error('fixture is missing its SubAgent Binding');
+  const mutable = record(binding);
+  mutable.target_kind = 'external_a2a';
+  mutable.pin = prepared.full_pin;
+  mutable.manual = {
+    ...record(target.document.manual),
+    hash: record(prepared.component_hashes).manual,
+  };
+  mutable.input_schema = structuredClone(record(target.document.operation).input_schema);
+  mutable.output_schema = structuredClone(record(target.document.operation).output_schema);
+  mutable.data_classification = 'internal';
+  const requirements = record(target.document.requirements).credential_requirements as unknown[];
+  mutable.credential_requirement = structuredClone(requirements[0]);
+  return { agent, target, binding };
+}
+
+describe('Agent-owned external A2A SubAgent target paths', () => {
+  it('registers the complete root namespace and compiles a terminal external target path', () => {
+    const { agent, target, binding } = matchingExternalSubagentSources();
+    const result = prepareAgentExternalSubagentDependencyPaths(candidate(agent), target);
+    expect(result.bindings).toHaveLength(agent.capability_bindings.length);
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    expect(
+      compiled?.subagent_target?.target_path_segments.map((segment) => segment.segment_kind),
+    ).toEqual(['root', 'binding', 'subagent_target']);
+    expect(compiled?.subagent_target?.target_path_segments[2]).toEqual({
+      segment_kind: 'subagent_target',
+      target_pin: result.dependency,
+    });
+    expect(compiled?.subagent_target?.target_path).toBe(
+      canonicalBindingPath(compiled?.subagent_target?.target_path_segments),
+    );
+  });
+
+  it('isolates the same external target under different parent Agent identities', () => {
+    const first = matchingExternalSubagentSources();
+    const firstPath = prepareAgentExternalSubagentDependencyPaths(
+      candidate(first.agent),
+      first.target,
+    ).bindings.find((item) => item.binding_id === first.binding.binding_id)?.subagent_target
+      ?.target_path;
+    const second = matchingExternalSubagentSources();
+    (second.agent as unknown as { agent_id: string }).agent_id =
+      '00000000-0000-7000-8000-000000000097';
+    const secondPath = prepareAgentExternalSubagentDependencyPaths(
+      candidate(second.agent),
+      second.target,
+    ).bindings.find((item) => item.binding_id === second.binding.binding_id)?.subagent_target
+      ?.target_path;
+    expect(firstPath).not.toBe(secondPath);
+  });
+
+  it('keeps a disabled external Binding addressable and records only its root path', () => {
+    const { agent, target, binding } = matchingExternalSubagentSources();
+    binding.enabled = false;
+    const result = prepareAgentExternalSubagentDependencyPaths(candidate(agent), target);
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    expect(compiled?.subagent_target).toBeDefined();
+    expect(result.source_disabled_binding_paths).toEqual([compiled?.binding_path]);
+  });
+
+  it('rejects an external source that is not the root exact target pin', () => {
+    const { agent, target } = matchingExternalSubagentSources();
+    target.document.resource_version_id = '00000000-0000-7000-8000-000000000099';
+    expect(() => prepareAgentExternalSubagentDependencyPaths(candidate(agent), target)).toThrow(
+      'CAPABILITY_DEPENDENCY_UNRESOLVED',
+    );
+  });
+
+  it('rejects stale external Binding evidence after the exact pin match', () => {
+    const { agent, target, binding } = matchingExternalSubagentSources();
+    binding.manual.description = 'stale description';
+    expect(() => prepareAgentExternalSubagentDependencyPaths(candidate(agent), target)).toThrow(
+      'CLOSURE_SOURCE_MISMATCH',
+    );
+  });
+
+  it('rejects non-A2A leaf dependencies at the external target boundary', () => {
+    const { agent } = matchingExternalSubagentSources();
+    expect(() =>
+      prepareAgentExternalSubagentDependencyPaths(
+        candidate(agent),
+        leafCandidate('PLUGIN_TOOL_RELEASE'),
+      ),
+    ).toThrow('CLOSURE_SOURCE_INVALID');
+  });
+
+  it('returns a deeply frozen terminal path without inventing nested Agent bindings or seals', () => {
+    const { agent, target, binding } = matchingExternalSubagentSources();
+    const result = prepareAgentExternalSubagentDependencyPaths(candidate(agent), target);
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    expect(result).not.toHaveProperty('closure_hash');
+    expect(compiled?.subagent_target).not.toHaveProperty('bindings');
+    expect(compiled?.subagent_target).not.toHaveProperty('nested_closure_hash');
+    expect(Object.isFrozen(compiled?.subagent_target?.target_path_segments)).toBe(true);
   });
 });

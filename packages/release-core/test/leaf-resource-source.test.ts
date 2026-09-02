@@ -4,6 +4,7 @@ import {
   prepareLeafResourceSource as prepare,
   verifyLeafResourceSource as verify,
   verifyLeafResourceBinding,
+  verifyLeafResourceBindings,
   canonicalJsonBytes,
   canonicalSha256,
   canonicalResourceNodeId,
@@ -105,6 +106,27 @@ describe('typed leaf resource sources', () => {
     expect(verifyLeafResourceBinding(bindingFor(input), input)).toEqual(result);
     expect(Object.isFrozen(result.document)).toBe(true);
     expect(Object.isFrozen(result.intrinsic_policy)).toBe(true);
+  });
+
+  it('verifies a unique Binding set against one leaf and rejects a bad non-first Binding', () => {
+    const input = leafCandidate('A2A_AGENT_RELEASE');
+    const first = bindingFor(input);
+    const second = structuredClone(first);
+    second.binding_id = 'external-second';
+    expect(verifyLeafResourceBindings([first, second], input)).toEqual(prepare(input));
+    record(second.manual).description = 'stale';
+    expect(() => verifyLeafResourceBindings([first, second], input)).toThrow(
+      'CLOSURE_SOURCE_MISMATCH',
+    );
+  });
+
+  it('rejects duplicate and empty leaf Binding verification sets', () => {
+    const input = leafCandidate('A2A_AGENT_RELEASE');
+    const binding = bindingFor(input);
+    expect(() => verifyLeafResourceBindings([], input)).toThrow('CLOSURE_SOURCE_MISMATCH');
+    expect(() => verifyLeafResourceBindings([binding, binding], input)).toThrow(
+      'CLOSURE_SOURCE_MISMATCH',
+    );
   });
 
   it.each(leafKinds)('rejects a changed %s source behind an existing full pin', (kind) => {
