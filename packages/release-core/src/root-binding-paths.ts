@@ -13,7 +13,11 @@ import {
 import { prepareExecutableSource, type PreparedExecutableSourceV1 } from './executable-source.js';
 import { ReleaseCoreError } from './errors.js';
 import { prepareLeafResourceSource, verifyLeafResourceBindings } from './leaf-resource-source.js';
-import { prepareSkillPackSource, verifySkillPackBindings } from './skill-pack-source.js';
+import {
+  prepareSkillPackSource,
+  type SkillPackExposedOperationV1,
+  verifySkillPackBindings,
+} from './skill-pack-source.js';
 
 type BindingPathSegmentV1 = ReturnType<typeof BindingPathSegmentV1Schema.parse>;
 
@@ -67,7 +71,12 @@ interface AgentSkillPackDependencyPaths {
   readonly dependency: ReturnType<typeof prepareSkillPackSource>['full_pin'];
   readonly bindings: readonly (CompiledRootBindingPathV1 & {
     readonly members: readonly CompiledSkillPackMemberPathV1[];
+    readonly selected_exposed_operations: readonly {
+      readonly exposed_operation_id: string;
+      readonly exposed_operation_contract_hash: string;
+    }[];
   })[];
+  readonly exposed_operations: readonly SkillPackExposedOperationV1[];
   readonly source_disabled_binding_paths: readonly `bp1.${string}`[];
 }
 
@@ -402,6 +411,10 @@ export function prepareAgentSkillPackDependencyPaths(
             compareCanonicalStrings(left.member_binding_path, right.member_binding_path),
           )
       : [];
+    const selected_exposed_operations =
+      binding.kind === 'skill_pack' && matchingIds.has(binding.binding_id)
+        ? binding.config.exposed_operations
+        : [];
     return {
       binding_id: binding.binding_id,
       binding_kind: binding.kind,
@@ -409,12 +422,14 @@ export function prepareAgentSkillPackDependencyPaths(
       binding_path_segments,
       enabled: binding.enabled,
       members,
+      selected_exposed_operations,
     };
   });
   return deepFreezeJson({
     root: rootSource.root,
     dependency: pack.full_pin,
     bindings,
+    exposed_operations: pack.exposed_operations,
     source_disabled_binding_paths: disabledPaths.sort(compareCanonicalStrings),
   });
 }
