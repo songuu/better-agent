@@ -1,7 +1,7 @@
 import type { CapabilityBindingV1, OperationContractPinV1 } from '@better-agent/domain-contracts';
 
 import { canonicalJsonBytes } from './canonical-json.js';
-import { prepareNestedCapabilityClosure } from './compiled-capability-closure.js';
+import { prepareNestedCapabilityDependency } from './compiled-capability-closure.js';
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
 import { prepareExecutableSource } from './executable-source.js';
 import { ReleaseCoreError } from './errors.js';
@@ -60,10 +60,11 @@ export function prepareGraphBoundNestedFlowBindingOperations(
     rootInput,
     dependencyInput,
   );
-  const nestedClosure = prepareNestedCapabilityClosure(
+  const nestedDependency = prepareNestedCapabilityDependency(
     graphBound.graph_binding.dependency_node,
     nestedClosureInput,
   );
+  const nestedClosure = nestedDependency.closure;
   const childSource = prepareExecutableSource(dependencyInput);
   const childNodes = prepareFlowNodePaths(dependencyInput);
   if (!sameJson(childNodes.root.pin, nestedClosure.root.pin)) {
@@ -74,7 +75,7 @@ export function prepareGraphBoundNestedFlowBindingOperations(
   }
   const closureRootNode = nestedClosure.resource_nodes.find((node) => node.node_role === 'root');
   if (
-    graphBound.graph_binding.dependency_node.dependency_manifest_hash !==
+    nestedDependency.resource_node.dependency_manifest_hash !==
       childSource.dependency_manifest.manifest_hash ||
     closureRootNode?.dependency_manifest_hash !== childSource.dependency_manifest.manifest_hash ||
     !sameJson(nestedClosure.assembly_pins, childSource.dependency_manifest.dependencies)

@@ -1,4 +1,5 @@
 import {
+  ClosureResourceNodeV1Schema,
   ClosureResourceNodeIdV1Schema,
   CompiledCapabilityClosureV1Schema,
   ContractHashSchema,
@@ -13,11 +14,18 @@ import { ReleaseCoreError } from './errors.js';
 import { canonicalSha256ExcludingRootKeys } from './hash.js';
 
 type CompiledClosureV1 = ReturnType<typeof CompiledCapabilityClosureV1Schema.parse>;
+type ClosureResourceNodeV1 = ReturnType<typeof ClosureResourceNodeV1Schema.parse>;
 interface NestedDependencyCommitmentV1 {
   readonly node_id: string;
   readonly pin: ReturnType<typeof PublishedResourcePinV1Schema.parse>;
   readonly dependency_manifest_hash: string;
   readonly nested_closure_hash: string;
+}
+
+export interface PreparedNestedCapabilityDependencyV1 {
+  readonly schema_version: 'prepared-nested-capability-dependency/1';
+  readonly closure: Readonly<CompiledClosureV1>;
+  readonly resource_node: Readonly<Extract<ClosureResourceNodeV1, { node_role: 'dependency' }>>;
 }
 
 function invalid(path: string, reason: string): never {
@@ -141,6 +149,14 @@ export function prepareNestedCapabilityClosure(
   dependencyNodeInput: unknown,
   closureInput: unknown,
 ): Readonly<CompiledClosureV1> {
+  return prepareNestedCapabilityDependency(dependencyNodeInput, closureInput).closure;
+}
+
+/** Join a strict graph commitment to the typed intrinsic requirements in its verified child root. */
+export function prepareNestedCapabilityDependency(
+  dependencyNodeInput: unknown,
+  closureInput: unknown,
+): Readonly<PreparedNestedCapabilityDependencyV1> {
   const node = parseNestedDependencyCommitment(dependencyNodeInput);
   verifyCanonicalResourceNodeId(node.node_id, node.pin);
   const closure = prepareCompiledCapabilityClosure(closureInput);
@@ -158,5 +174,31 @@ export function prepareNestedCapabilityClosure(
       'nested closure hash does not match the dependency graph commitment',
     );
   }
-  return closure;
+  const rootNode = closure.resource_nodes.find((candidate) => candidate.node_role === 'root');
+  if (
+    rootNode === undefined ||
+    rootNode.dependency_manifest_hash !== node.dependency_manifest_hash
+  ) {
+    throw new ReleaseCoreError(
+      'NESTED_CAPABILITY_CLOSURE_MISMATCH',
+      '$.dependency_manifest_hash',
+      'nested closure root manifest does not match the dependency graph commitment',
+    );
+  }
+  const resourceNode = ClosureResourceNodeV1Schema.parse({
+    node_id: node.node_id,
+    intrinsic_policy: rootNode.intrinsic_policy,
+    dependency_manifest_hash: node.dependency_manifest_hash,
+    node_role: 'dependency',
+    pin: node.pin,
+    nested_closure_hash: node.nested_closure_hash,
+  });
+  if (resourceNode.node_role !== 'dependency') {
+    invalid('$.dependency_node', 'nested resource node projection must remain a dependency');
+  }
+  return deepFreezeJson({
+    schema_version: 'prepared-nested-capability-dependency/1',
+    closure,
+    resource_node: resourceNode,
+  });
 }

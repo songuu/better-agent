@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
 import {
   prepareCompiledCapabilityClosure,
+  prepareNestedCapabilityDependency,
   prepareNestedCapabilityClosure,
 } from '../src/compiled-capability-closure.js';
 import { ReleaseCoreError } from '../src/errors.js';
@@ -256,6 +257,31 @@ describe('compiled capability closure verification', () => {
     const result = prepareNestedCapabilityClosure(dependencyNode(closure), closure);
     expect(result.root.pin.contract_hash).toBe(hashB);
     expect(result.root.pin.contract_hash).not.toBe(dependencyNode(closure).pin.contract_hash);
+  });
+
+  it('projects typed child-root intrinsic requirements through the graph commitment', () => {
+    const closure = closureInput();
+    const result = prepareNestedCapabilityDependency(dependencyNode(closure), closure);
+    expect(result.closure).toEqual(closure);
+    expect(result.resource_node).toEqual({
+      ...dependencyNode(closure),
+      intrinsic_policy: emptyCapabilityRequirements,
+      node_role: 'dependency',
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.resource_node.intrinsic_policy)).toBe(true);
+  });
+
+  it('rejects graph and child-root dependency manifest drift', () => {
+    const closure = closureInput();
+    expectCode(
+      () =>
+        prepareNestedCapabilityDependency(
+          { ...dependencyNode(closure), dependency_manifest_hash: hashB },
+          closure,
+        ),
+      'NESTED_CAPABILITY_CLOSURE_MISMATCH',
+    );
   });
 
   it('accepts the corresponding Flow nested closure', () => {
