@@ -36,3 +36,8 @@
 - Agent executable source and released Agent share fields and cross-reference refinements, but source rejects final compiled/closure hashes. A semantic seed, a closure-hash-bound compiled hash and authoritative registry provenance are three different facts; intermediate helpers must not unpause publication.
 - Before applying explicitly documented metadata exclusions or set ordering, compare complete canonical input and parsed output. A schema parser silently dropping a business JSON key must fail closed, not collapse distinct source documents into one hash.
 - Recursive tagged schema variants dispatch on their discriminator before parsing their body. Depth and byte budgets do not prevent exponential work caused by trial-union reparsing inside those budgets.
+
+## Operation declaration evidence
+
+- Operation source binds full input/output JSON to a versioned preimage and complete operation pin. Keep this distinct from schema meta-validation, provider/SQL/index implementation verification, target registry provenance and GateSpec authorization; none follows from a self-consistent digest.
+- A concrete Binding may add approval or operation-key requirements but cannot remove intrinsic requirements. G1 database operation verification independently checks read-only mode, safe effect and the Binding config's own stronger key declaration. Skill Pack exposure must use exact sealed member routes, never the single-operation checker as a generic fallback.

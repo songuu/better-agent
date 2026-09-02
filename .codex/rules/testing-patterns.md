@@ -9,3 +9,5 @@
 - DAG 最长路径回归必须包含先访问的共享非叶子子图，并断言 canonical 访问顺序；只共享叶节点无法捕获 memoized height 被错误清零。用 32/33 等值与 +1 成对案例、独立边集合模型和只读内存变异共同验证。
 - 语义 preimage 不仅测“哈希变化”，还要断言完整投影对象；对每类 Binding 使用非空有效配置并逐字段变异，防止整类字段被忽略而测试仍绿。共享 source/release refinements 用同一有效 fixture 的正反成对测试保护。
 - 递归图测试分别变异 second case、loop body、else，保持其他路径有效；规范集合排序和 first-match case 保序分开断言。复杂度回归在 schema 层计数 leaf parse，公网 source API 仍必须拒绝 getter/Proxy。
+- 两份声明“一致”不代表组合允许：G1 DB 即使 Binding 与 operation 双方都声明 unsafe、hash 都正确，read_only mode 也不能使它通过。单独构造双侧一致但违反平台约束的回归，不能只测两侧漂移。
+- operation 固有要求与 Binding 额外加严要求分开测试：operation 不要求 key、DB config 要求 key 时仍必须提供 key source。输出预算也需独立回归：整个输入 JCS 合法但封装后的 artifact 超限，应当次拒绝，并保留缩小输入可 prepare/verify 的正例。

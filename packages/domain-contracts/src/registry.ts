@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { OperationContractSourceV1Schema } from './operation-contract-source-v1.js';
 
 import {
   AgentDeploymentActivePointerV1Schema,
@@ -241,6 +242,7 @@ export const domainContractSchemaEntries = [
   },
   { schemaVersion: 'agent-release/1', schema: AgentReleaseV1Schema },
   { schemaVersion: 'agent-executable-source/1', schema: AgentExecutableSourceV1Schema },
+  { schemaVersion: 'operation-contract-source/1', schema: OperationContractSourceV1Schema },
   { schemaVersion: 'agent-strategy-release/1', schema: AgentStrategyReleaseV1Schema },
   { schemaVersion: 'experience-release/1', schema: ExperienceReleaseV1Schema },
   { schemaVersion: 'deployment-policy-pin/1', schema: ImmutableDeploymentPolicyPinV1Schema },

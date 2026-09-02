@@ -432,6 +432,16 @@ parent delegable closure
 
 `deriveExecutableCompiledHash` 仅把该 preimage 的 `schema_version` 换为 `executable-compiled-preimage/1`，追加严格 `capability_closure_hash`，再 SHA-256/JCS；`verifyExecutableCompiledHash` 同时核对完整 final pin。该纯 hash-binding primitive 不验证 closure 正文、registry seal 或准入。T3.2 剩余 compiler 必须从 source adapter 重建 Binding/policy/operation 和嵌套闭包，再允许把此摘要用于 T6 原子发布；本步骤不解封现有 publisher，也不更换历史 G0 Flow registry hash。
 
+#### 7.1.1 Operation declaration source profile
+
+`operation-contract-source/1` 是一个具体 operation 的闭集内容源，完整字段为 `schema_version`、五类 `operation_kind`、`operation_id`、`input_schema`、可选 `output_schema`、`side_effect_class`、`operation_key_required` 与 `approval_required`。它禁止调用方提供 `input_schema_hash`/`output_schema_hash`/`contract_hash`。`requires_key` class 必须显式要求 operation key，`knowledge_query` 的 class 只能为 safe。Plugin 的 operation ID 使用固定发布工具的 `provider_tool_name`；其他类型的 ID 由其固定目标 adapter 定义，不按名称发现或猜测。
+
+`prepareOperationContractSource` 首先应用 §7.1 的 source snapshot/无损解析边界，operation ID 另限 4,096 UTF-8 bytes。输入/输出 schema 对象完整 JCS/SHA-256，不删除 title、default、examples 或业务数组；对象 key 顺序无关，数组顺序保留。output schema 缺失和显式空对象不是同一事实。`operation-contract-preimage/1` 包含 `canonicalizer_version="rfc8785/1"`，以及 `OperationContractPinV1` 除 `contract_hash` 外的全部字段；`contract_hash=SHA-256(JCS(preimage))`。输出 `prepared-operation-contract-source/1` 固定原 source、preimage、完整 pin，并再次应用同一预算后深度冻结。两个 verify API 分别重算并比较完整 artifact 或完整 pin，不能只比较自报 contract hash。
+
+`verifyBindingOperationContract` 验证单个具体 Binding 与 operation 源的声明一致性：闭集 Binding/完整 typed target pin 语法、operation kind、输入/输出 hash 与缺失状态、精确 effect class、operation key source、所需 approval 声明；knowledge/database/plugin 还必须匹配 config 中的 operation hash，plugin 必须匹配 provider tool name。Binding 可额外要求审批或 operation key，但不得省掉 operation 所需的要求。database 必须同时为 G1 read-only/safe，并落实 config 中更严的 key 声明。disabled Binding 同样校验，不能藏入失效契约。Skill Pack 必须进入 T4 的精确成员路由，不使用此单 operation helper 降级。此 helper 不新增 path、授权或发布能力。
+
+**边界：** 这里证明的是完整 JSON 内容到 operation pin 的绑定，不执行 JSON Schema meta-validation/实例校验，不验证 provider/SQL/索引实现或 registry provenance，也不证明 GateSpec coverage。Flow/SubAgent Binding 没有本地 operation ID/hash 槽，该 helper 只核对共有声明；固定 target 与对应 operation source 的关系必须由后续 kind-specific release adapter 和 closure compiler 验证。最终编译仍须把真实 leaf/operation 资源源、schema validator、typed policy、嵌套 closure 与 registry 证据一起连接；不能把任意自洽 source/pin 当作目标已发布事实。G0 publisher 与历史摘要不受本 profile 更改。
+
 ### 7.2 Final closure integration
 
 `closure_hash = SHA-256(JCS(closure_without_closure_hash))`。JCS 指 RFC 8785 JSON Canonicalization Scheme。root 必须按以下两阶段顺序生成，不得把 final `compiled_hash` 又放回 closure 形成循环：
@@ -458,6 +468,7 @@ registry contract_hash = compiled_hash
 |---|---|---|
 | `CAPABILITY_TARGET_KIND_MISMATCH` | Compile | Binding 判别式与 registry target kind 不匹配 |
 | `CAPABILITY_DEPENDENCY_UNRESOLVED` | Compile | 传递性依赖不存在、未 seal 或 contract hash 不匹配 |
+| `CAPABILITY_OPERATION_CONTRACT_MISMATCH` | Compile/Load | 完整 operation 源/pin 或 Binding 声明不一致 |
 | `CAPABILITY_DEPENDENCY_CYCLE` | Compile | Flow/Skill Pack/SubAgent 调用图存在循环 |
 | `CAPABILITY_CLOSURE_LIMIT_EXCEEDED` | Compile | 闭包深度、节点、operation 或大小超平台上限 |
 | `CAPABILITY_POLICY_NOT_CLOSED` | Compile/Plan | 凭据、egress、数据、副作用、operation 或预算交集无法满足必经路径 |
