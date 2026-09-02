@@ -7,6 +7,7 @@ import {
 } from '@better-agent/domain-contracts';
 
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
+import { normalizeCapabilityRequirementExpression } from './capability-policy.js';
 import { canonicalJsonBytes } from './canonical-json.js';
 import { verifyCanonicalBindingPath, verifyCanonicalResourceNodeId } from './closure-identity.js';
 import { deepFreezeJson, publishedResourcePinKey } from './dependency-manifest.js';
@@ -56,6 +57,13 @@ export function prepareCompiledCapabilityClosure(input: unknown): Readonly<Compi
   }
   for (const node of parsed.data.resource_nodes) {
     verifyCanonicalResourceNodeId(node.node_id, node.pin);
+    const normalizedPolicy = normalizeCapabilityRequirementExpression(node.intrinsic_policy);
+    if (!canonicalJsonBytes(node.intrinsic_policy).equals(canonicalJsonBytes(normalizedPolicy))) {
+      invalid(
+        '$.resource_nodes[].intrinsic_policy',
+        'intrinsic requirement expression must use canonical branch and leaf ordering',
+      );
+    }
   }
   for (const binding of parsed.data.bindings) {
     verifyCanonicalBindingPath(binding.binding_path, binding.binding_path_segments);

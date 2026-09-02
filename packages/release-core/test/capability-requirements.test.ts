@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  normalizeCapabilityRequirementExpression as normalizeExpression,
   normalizeCapabilityRequirements as normalize,
   resolveEffectiveCapabilityPolicy,
 } from '../src/index.js';
@@ -68,6 +69,77 @@ describe('intrinsic requirement normalization', () => {
       normalize({
         ...requirements(),
         credential_requirements: Array(33).fill(requirements().credential_requirements[0]),
+      }),
+    ).toThrow('CLOSURE_POLICY_INPUT_INVALID');
+  });
+});
+
+describe('requirement expression normalization', () => {
+  const leaf = (principalMode: 'caller_delegated' | 'service_principal') => ({
+    schema_version: 'capability-requirement-expression/1',
+    expression_kind: 'leaf',
+    requirements: { ...requirements(), principal_modes: [principalMode] },
+  });
+
+  it('preserves ordered sequence topology but canonicalizes alternative and parallel branches', () => {
+    const delegated = leaf('caller_delegated');
+    const service = leaf('service_principal');
+    const sequence = normalizeExpression({
+      schema_version: 'capability-requirement-expression/1',
+      expression_kind: 'sequence',
+      children: [service, delegated],
+    });
+    if (sequence.expression_kind !== 'sequence') throw new Error('expected sequence expression');
+    expect(sequence).not.toEqual(
+      normalizeExpression({ ...sequence, children: [...sequence.children].reverse() }),
+    );
+
+    for (const expressionKind of ['alternative', 'parallel'] as const) {
+      const forward = normalizeExpression({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: expressionKind,
+        children: [service, delegated],
+      });
+      const reverse = normalizeExpression({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: expressionKind,
+        children: [delegated, service],
+      });
+      expect(forward).toEqual(reverse);
+      expect(Object.isFrozen(forward)).toBe(true);
+      if (forward.expression_kind !== expressionKind) {
+        throw new Error(`expected ${expressionKind} expression`);
+      }
+      expect(Object.isFrozen(forward.children)).toBe(true);
+    }
+  });
+
+  it('rejects duplicate unordered branches instead of silently changing cardinality', () => {
+    const child = leaf('service_principal');
+    expect(() =>
+      normalizeExpression({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'alternative',
+        children: [child, child],
+      }),
+    ).toThrow('CLOSURE_POLICY_INPUT_INVALID');
+  });
+
+  it('accepts the exact topology depth boundary and rejects the next level', () => {
+    let expression: unknown = leaf('service_principal');
+    for (let index = 0; index < 31; index += 1) {
+      expression = {
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'nested_call',
+        child: expression,
+      };
+    }
+    expect(normalizeExpression(expression)).toBeDefined();
+    expect(() =>
+      normalizeExpression({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'nested_call',
+        child: expression,
       }),
     ).toThrow('CLOSURE_POLICY_INPUT_INVALID');
   });

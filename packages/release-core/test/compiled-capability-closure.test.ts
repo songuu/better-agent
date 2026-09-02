@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
+import { normalizeCapabilityRequirementExpression } from '../src/capability-policy.js';
 import {
   prepareCompiledCapabilityClosure,
   prepareNestedCapabilityDependency,
@@ -8,7 +9,7 @@ import {
 } from '../src/compiled-capability-closure.js';
 import { ReleaseCoreError } from '../src/errors.js';
 import { canonicalSha256ExcludingRootKeys } from '../src/hash.js';
-import { emptyCapabilityRequirements } from './fixtures.js';
+import { emptyCapabilityRequirementExpression } from './fixtures.js';
 
 const hashA = `sha256:${'a'.repeat(64)}` as const;
 const hashB = `sha256:${'b'.repeat(64)}` as const;
@@ -55,7 +56,7 @@ function closureInput(
     resource_nodes: [
       {
         node_id: canonicalResourceNodeId(pin),
-        intrinsic_policy: emptyCapabilityRequirements,
+        intrinsic_policy: emptyCapabilityRequirementExpression,
         dependency_manifest_hash: hashA,
         node_role: 'root',
         pin,
@@ -181,7 +182,7 @@ describe('compiled capability closure verification', () => {
         ...valid.resource_nodes,
         {
           node_id: dependencyNodeId,
-          intrinsic_policy: emptyCapabilityRequirements,
+          intrinsic_policy: emptyCapabilityRequirementExpression,
           dependency_manifest_hash: hashA,
           node_role: 'dependency',
           pin: target,
@@ -230,6 +231,41 @@ describe('compiled capability closure verification', () => {
     );
   });
 
+  it('rejects noncanonical intrinsic branch order even when the closure hash matches it', () => {
+    const valid = closureInput();
+    const serviceLeaf = {
+      ...emptyCapabilityRequirementExpression,
+      requirements: {
+        ...emptyCapabilityRequirementExpression.requirements,
+        principal_modes: ['service_principal'],
+      },
+    } as const;
+    const canonical = normalizeCapabilityRequirementExpression({
+      schema_version: 'capability-requirement-expression/1',
+      expression_kind: 'alternative',
+      children: [emptyCapabilityRequirementExpression, serviceLeaf],
+    });
+    if (canonical.expression_kind !== 'alternative') throw new Error('expected alternative');
+    const candidate = {
+      ...valid,
+      resource_nodes: [
+        {
+          ...valid.resource_nodes[0],
+          intrinsic_policy: { ...canonical, children: [...canonical.children].reverse() },
+        },
+      ],
+      closure_hash: hashA,
+    };
+    expectCode(
+      () =>
+        prepareCompiledCapabilityClosure({
+          ...candidate,
+          closure_hash: canonicalSha256ExcludingRootKeys(candidate, ['closure_hash']),
+        }),
+      'COMPILED_CAPABILITY_CLOSURE_INVALID',
+    );
+  });
+
   it('rejects accessor and proxy input before schema parsing', () => {
     const accessor = closureInput() as Record<string, unknown>;
     Object.defineProperty(accessor, 'closure_hash', {
@@ -265,7 +301,7 @@ describe('compiled capability closure verification', () => {
     expect(result.closure).toEqual(closure);
     expect(result.resource_node).toEqual({
       ...dependencyNode(closure),
-      intrinsic_policy: emptyCapabilityRequirements,
+      intrinsic_policy: emptyCapabilityRequirementExpression,
       node_role: 'dependency',
     });
     expect(Object.isFrozen(result)).toBe(true);

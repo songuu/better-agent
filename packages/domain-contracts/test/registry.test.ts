@@ -192,7 +192,11 @@ describe('domain contract registry', () => {
         resource_nodes: [
           {
             node_id: resourceNodeId,
-            intrinsic_policy: intrinsicRequirements,
+            intrinsic_policy: {
+              schema_version: 'capability-requirement-expression/1',
+              expression_kind: 'leaf',
+              requirements: intrinsicRequirements,
+            },
             dependency_manifest_hash: hash,
             node_role: 'root',
             pin: rootPin,

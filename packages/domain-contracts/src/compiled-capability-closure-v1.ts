@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { BindingKindV1Schema, PublishedResourcePinV1Schema } from './agent-release-v1.js';
 import {
-  CapabilityRequirementsV1Schema,
+  CapabilityRequirementExpressionV1Schema,
   EffectiveCapabilityPolicyV1Schema,
 } from './capability-policy-v1.js';
 import {
@@ -420,14 +420,14 @@ export const ClosureResourceNodeV1Schema = z
   .union([
     z.strictObject({
       node_id: ClosureResourceNodeIdV1Schema,
-      intrinsic_policy: CapabilityRequirementsV1Schema,
+      intrinsic_policy: CapabilityRequirementExpressionV1Schema,
       dependency_manifest_hash: ContractHashSchema,
       node_role: z.literal('root'),
       pin: ClosureRootPinV1Schema,
     }),
     z.strictObject({
       node_id: ClosureResourceNodeIdV1Schema,
-      intrinsic_policy: CapabilityRequirementsV1Schema,
+      intrinsic_policy: CapabilityRequirementExpressionV1Schema,
       dependency_manifest_hash: ContractHashSchema,
       node_role: z.literal('dependency'),
       pin: PublishedResourcePinV1Schema,

@@ -18,9 +18,10 @@ function isScalarText(value: string): boolean {
 /** Bound before schema parsing/JCS so hostile input cannot allocate an unbounded encoding. */
 export function boundedDataSnapshot(
   input: unknown,
-  profile: 'identity' | 'policy' | 'graph' | 'source' | 'closure',
+  profile: 'identity' | 'policy' | 'requirement_expression' | 'graph' | 'source' | 'closure',
 ): unknown {
-  const policy = profile === 'policy';
+  const policy = profile === 'policy' || profile === 'requirement_expression';
+  const requirementExpression = profile === 'requirement_expression';
   const graph = profile === 'graph';
   const source = profile === 'source';
   const closure = profile === 'closure';
@@ -62,7 +63,10 @@ export function boundedDataSnapshot(
 
   function visit(value: unknown, path: string, depth: number): unknown {
     remainingNodes -= 1;
-    if (depth > (source || closure ? 64 : policy || graph ? 12 : 8) || remainingNodes < 0)
+    if (
+      depth > (source || closure ? 64 : requirementExpression ? 40 : policy || graph ? 12 : 8) ||
+      remainingNodes < 0
+    )
       limit(path, 'input structure exceeds its budget');
     if (typeof value === 'string') {
       if (value.length > maximumStringBytes) limit(path, 'input string exceeds byte limit');

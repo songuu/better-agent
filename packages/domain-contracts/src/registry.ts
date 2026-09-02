@@ -74,6 +74,7 @@ import {
   CanonicalEgressRuleV1Schema,
   CapabilityBudgetV1Schema,
   CapabilityPolicyCeilingV1Schema,
+  CapabilityRequirementExpressionV1Schema,
   CapabilityRequirementsV1Schema,
 } from './capability-policy-v1.js';
 import {
@@ -445,6 +446,10 @@ export const domainContractSchemaEntries = [
   {
     schemaVersion: 'capability-requirements/1',
     schema: CapabilityRequirementsV1Schema,
+  },
+  {
+    schemaVersion: 'capability-requirement-expression/1',
+    schema: CapabilityRequirementExpressionV1Schema,
   },
   {
     schemaVersion: 'compiled-capability-closure/1',

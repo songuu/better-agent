@@ -3,6 +3,8 @@ import {
   type CapabilityBudgetV1,
   type CapabilityPolicyCeilingV1,
   CapabilityPolicyCeilingV1Schema,
+  type CapabilityRequirementExpressionV1,
+  CapabilityRequirementExpressionV1Schema,
   type CapabilityRequirementsV1,
   CapabilityRequirementsV1Schema,
   type EffectiveCapabilityPolicyV1,
@@ -224,6 +226,60 @@ export function normalizeCapabilityRequirements(
       CapabilityRequirementsV1Schema,
     ),
   );
+}
+
+function normalizeRequirementExpressionNode(
+  value: CapabilityRequirementExpressionV1,
+): CapabilityRequirementExpressionV1 {
+  if (value.expression_kind === 'leaf') {
+    return {
+      schema_version: value.schema_version,
+      expression_kind: value.expression_kind,
+      requirements: normalizeCapabilityRequirements(value.requirements),
+    };
+  }
+  if (value.expression_kind === 'repeat') {
+    return {
+      schema_version: value.schema_version,
+      expression_kind: value.expression_kind,
+      max_iterations: value.max_iterations,
+      child: normalizeRequirementExpressionNode(value.child),
+    };
+  }
+  if (value.expression_kind === 'nested_call') {
+    return {
+      schema_version: value.schema_version,
+      expression_kind: value.expression_kind,
+      child: normalizeRequirementExpressionNode(value.child),
+    };
+  }
+
+  let children = value.children.map(normalizeRequirementExpressionNode);
+  if (value.expression_kind !== 'sequence') {
+    children = canonicalSort(children);
+    const childKeys = children.map((child) => canonicalJsonBytes(child).toString('utf8'));
+    if (new Set(childKeys).size !== childKeys.length) invalid('$.children');
+  }
+  return {
+    schema_version: value.schema_version,
+    expression_kind: value.expression_kind,
+    children,
+  };
+}
+
+/** Preserve control topology while canonicalizing set-like branch order and every leaf demand. */
+export function normalizeCapabilityRequirementExpression(
+  input: unknown,
+): Readonly<CapabilityRequirementExpressionV1> {
+  const snapshot = boundedDataSnapshot(input, 'requirement_expression');
+  const result = CapabilityRequirementExpressionV1Schema.safeParse(snapshot);
+  if (!result.success) invalid('$');
+  const value = result.data;
+  const normalized = CapabilityRequirementExpressionV1Schema.safeParse(
+    normalizeRequirementExpressionNode(value),
+  );
+  if (!normalized.success) invalid('$');
+  return deepFreezeJson(normalized.data);
 }
 
 function sealCeiling(value: Ceiling): Readonly<Ceiling> {

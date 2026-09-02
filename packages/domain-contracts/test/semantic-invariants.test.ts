@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BindingPathSegmentV1Schema,
+  CapabilityRequirementExpressionV1Schema,
   CompiledBindingEntryV1Schema,
   CompiledCapabilityClosureV1Schema,
   ClosureResourceNodeV1Schema,
@@ -63,6 +64,12 @@ const intrinsicRequirements = {
     parallelism: 0,
     budget: effectivePolicy.budget,
   },
+} as const;
+
+const intrinsicExpression = {
+  schema_version: 'capability-requirement-expression/1',
+  expression_kind: 'leaf',
+  requirements: intrinsicRequirements,
 } as const;
 
 function actionNode(nodeId: string, key: string, type: 'output' | 'start' | 'text') {
@@ -202,24 +209,74 @@ describe('Flow graph semantic invariants', () => {
 });
 
 describe('Compiled closure reference integrity', () => {
-  it('requires every resource node to carry typed intrinsic capability requirements', () => {
+  it('requires every resource node to carry a topology-preserving requirement expression', () => {
     const node = {
       node_id: rootNodeId,
-      intrinsic_policy: intrinsicRequirements,
+      intrinsic_policy: intrinsicExpression,
       dependency_manifest_hash: hash,
       node_role: 'root',
       pin: rootPin,
     } as const;
     expect(ClosureResourceNodeV1Schema.safeParse(node).success).toBe(true);
+    expect(
+      ClosureResourceNodeV1Schema.safeParse({
+        ...node,
+        intrinsic_policy: intrinsicRequirements,
+      }).success,
+    ).toBe(false);
     expect(ClosureResourceNodeV1Schema.safeParse({ ...node, intrinsic_policy: {} }).success).toBe(
       false,
     );
     expect(
       ClosureResourceNodeV1Schema.safeParse({
         ...node,
-        intrinsic_policy: { ...intrinsicRequirements, trusted: true },
+        intrinsic_policy: { ...intrinsicExpression, trusted: true },
       }).success,
     ).toBe(false);
+  });
+
+  it('preserves alternatives and bounds expression fanout and depth', () => {
+    const servicePrincipalLeaf = {
+      ...intrinsicExpression,
+      requirements: { ...intrinsicRequirements, principal_modes: ['service_principal'] },
+    } as const;
+    const delegatedLeaf = {
+      ...intrinsicExpression,
+      requirements: { ...intrinsicRequirements, principal_modes: ['caller_delegated'] },
+    } as const;
+    const alternative = {
+      schema_version: 'capability-requirement-expression/1',
+      expression_kind: 'alternative',
+      children: [servicePrincipalLeaf, delegatedLeaf],
+    } as const;
+    expect(CapabilityRequirementExpressionV1Schema.safeParse(alternative).success).toBe(true);
+    expect(
+      CapabilityRequirementExpressionV1Schema.safeParse({
+        ...alternative,
+        children: Array.from({ length: 129 }, () => intrinsicExpression),
+      }).success,
+    ).toBe(false);
+
+    let tooDeep: unknown = intrinsicExpression;
+    for (let index = 0; index < 32; index += 1) {
+      tooDeep = {
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'nested_call',
+        child: tooDeep,
+      };
+    }
+    expect(CapabilityRequirementExpressionV1Schema.safeParse(tooDeep).success).toBe(false);
+
+    let hostileDepth: unknown = intrinsicExpression;
+    for (let index = 0; index < 2_048; index += 1) {
+      hostileDepth = {
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'nested_call',
+        child: hostileDepth,
+      };
+    }
+    expect(() => CapabilityRequirementExpressionV1Schema.safeParse(hostileDepth)).not.toThrow();
+    expect(CapabilityRequirementExpressionV1Schema.safeParse(hostileDepth).success).toBe(false);
   });
 
   const binding = {
@@ -447,7 +504,7 @@ describe('Compiled closure reference integrity', () => {
       resource_nodes: [
         {
           node_id: rootNodeId,
-          intrinsic_policy: intrinsicRequirements,
+          intrinsic_policy: intrinsicExpression,
           dependency_manifest_hash: hash,
           node_role: 'root',
           pin: rootPin,

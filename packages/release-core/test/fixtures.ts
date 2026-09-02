@@ -48,6 +48,12 @@ export const emptyCapabilityRequirements = {
   },
 } as const;
 
+export const emptyCapabilityRequirementExpression = {
+  schema_version: 'capability-requirement-expression/1',
+  expression_kind: 'leaf',
+  requirements: emptyCapabilityRequirements,
+} as const;
+
 export function makeStrategyRelease() {
   const candidate = {
     schema_version: 'agent-strategy-release/1',

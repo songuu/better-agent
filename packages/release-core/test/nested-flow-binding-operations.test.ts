@@ -15,7 +15,7 @@ import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js'
 import { prepareFlowNodePaths } from '../src/root-binding-paths.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import {
-  emptyCapabilityRequirements,
+  emptyCapabilityRequirementExpression,
   hashA,
   hashB,
   makeFlowIr,
@@ -101,14 +101,14 @@ function compiledClosure(flow: ReturnType<typeof sources>['flow']) {
   const resourceNodes = [
     {
       node_id: canonicalResourceNodeId(paths.root.pin),
-      intrinsic_policy: emptyCapabilityRequirements,
+      intrinsic_policy: emptyCapabilityRequirementExpression,
       dependency_manifest_hash: prepared.dependency_manifest.manifest_hash,
       node_role: 'root' as const,
       pin: paths.root.pin,
     },
     {
       node_id: canonicalResourceNodeId(target),
-      intrinsic_policy: emptyCapabilityRequirements,
+      intrinsic_policy: emptyCapabilityRequirementExpression,
       dependency_manifest_hash: hashA,
       node_role: 'dependency' as const,
       pin: target,
@@ -219,7 +219,7 @@ describe('nested Flow Binding operation projection', () => {
     expect(result.dependency_resource_node).toMatchObject({
       node_role: 'dependency',
       pin: value.flowPin,
-      intrinsic_policy: emptyCapabilityRequirements,
+      intrinsic_policy: emptyCapabilityRequirementExpression,
     });
     expect(Object.isFrozen(result.dependency_resource_node.intrinsic_policy)).toBe(true);
   });

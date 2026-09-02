@@ -1,5 +1,7 @@
 # Resource node intrinsic policy 必须类型化，graph commitment 不得伪装
 
+> 后续演进：`CapabilityRequirementsV1` 现仅作为 leaf demand；resource node 已升级为 [[2026-09-02-topology-aware-requirement-expression]] 的递归表达式。
+
 ## 问题
 
 Closure resource node 的 `intrinsic_policy` 曾接受任意 JSON。嵌套 Agent/Flow 适配器又把 pinned-graph node 展开后补上 `intrinsic_policy: {}` 与 `node_role: dependency`，以便调用 closure-node 校验器。这既允许 ad-hoc policy，也把“图承诺”和“closure 语义节点”混成同一 artifact。

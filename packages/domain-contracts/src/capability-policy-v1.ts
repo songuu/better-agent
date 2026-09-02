@@ -197,3 +197,127 @@ export type CapabilityBudgetV1 = z.infer<typeof CapabilityBudgetV1Schema>;
 export type CapabilityPolicyCeilingV1 = z.infer<typeof CapabilityPolicyCeilingV1Schema>;
 export type CapabilityRequirementsV1 = z.infer<typeof CapabilityRequirementsV1Schema>;
 export type EffectiveCapabilityPolicyV1 = z.infer<typeof EffectiveCapabilityPolicyV1Schema>;
+
+export type CapabilityRequirementExpressionV1 =
+  | {
+      readonly schema_version: 'capability-requirement-expression/1';
+      readonly expression_kind: 'leaf';
+      readonly requirements: CapabilityRequirementsV1;
+    }
+  | {
+      readonly schema_version: 'capability-requirement-expression/1';
+      readonly expression_kind: 'sequence' | 'parallel' | 'alternative';
+      readonly children: readonly CapabilityRequirementExpressionV1[];
+    }
+  | {
+      readonly schema_version: 'capability-requirement-expression/1';
+      readonly expression_kind: 'repeat';
+      readonly max_iterations: number;
+      readonly child: CapabilityRequirementExpressionV1;
+    }
+  | {
+      readonly schema_version: 'capability-requirement-expression/1';
+      readonly expression_kind: 'nested_call';
+      readonly child: CapabilityRequirementExpressionV1;
+    };
+
+const CapabilityRequirementExpressionNodeV1Schema: z.ZodType<CapabilityRequirementExpressionV1> =
+  z.lazy(() =>
+    z.discriminatedUnion('expression_kind', [
+      z.strictObject({
+        schema_version: z.literal('capability-requirement-expression/1'),
+        expression_kind: z.literal('leaf'),
+        requirements: CapabilityRequirementsV1Schema,
+      }),
+      z.strictObject({
+        schema_version: z.literal('capability-requirement-expression/1'),
+        expression_kind: z.enum(['sequence', 'parallel', 'alternative']),
+        children: z.array(CapabilityRequirementExpressionNodeV1Schema).min(1).max(128),
+      }),
+      z.strictObject({
+        schema_version: z.literal('capability-requirement-expression/1'),
+        expression_kind: z.literal('repeat'),
+        max_iterations: z.number().int().min(1).max(10_000),
+        child: CapabilityRequirementExpressionNodeV1Schema,
+      }),
+      z.strictObject({
+        schema_version: z.literal('capability-requirement-expression/1'),
+        expression_kind: z.literal('nested_call'),
+        child: CapabilityRequirementExpressionNodeV1Schema,
+      }),
+    ]),
+  );
+
+function hasBoundedRequirementExpressionTopology(input: unknown): boolean {
+  const pending: Array<{ value: unknown; depth: number }> = [{ value: input, depth: 1 }];
+  let count = 0;
+  try {
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === undefined) break;
+      count += 1;
+      if (count > 1_024 || current.depth > 32) return false;
+      if (
+        typeof current.value !== 'object' ||
+        current.value === null ||
+        Array.isArray(current.value)
+      ) {
+        continue;
+      }
+      const expressionKind = Object.getOwnPropertyDescriptor(current.value, 'expression_kind');
+      if (expressionKind === undefined || !('value' in expressionKind)) continue;
+      if (
+        expressionKind.value === 'sequence' ||
+        expressionKind.value === 'parallel' ||
+        expressionKind.value === 'alternative'
+      ) {
+        const children = Object.getOwnPropertyDescriptor(current.value, 'children');
+        if (children !== undefined && 'value' in children && Array.isArray(children.value)) {
+          for (const child of children.value) {
+            pending.push({ value: child, depth: current.depth + 1 });
+          }
+        }
+      } else if (expressionKind.value === 'repeat' || expressionKind.value === 'nested_call') {
+        const child = Object.getOwnPropertyDescriptor(current.value, 'child');
+        if (child !== undefined && 'value' in child) {
+          pending.push({ value: child.value, depth: current.depth + 1 });
+        }
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Closed topology grammar; normalization/canonical child order remains a compiler responsibility. */
+export const CapabilityRequirementExpressionV1Schema: z.ZodType<CapabilityRequirementExpressionV1> =
+  z
+    .preprocess(
+      (input) => (hasBoundedRequirementExpressionTopology(input) ? input : undefined),
+      CapabilityRequirementExpressionNodeV1Schema,
+    )
+    .superRefine((root, ctx) => {
+      let count = 0;
+      const pending: Array<{ node: CapabilityRequirementExpressionV1; depth: number }> = [
+        { node: root, depth: 1 },
+      ];
+      while (pending.length > 0) {
+        const current = pending.pop();
+        if (current === undefined) break;
+        count += 1;
+        if (count > 1_024 || current.depth > 32) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'requirement expression exceeds topology limits',
+          });
+          return;
+        }
+        if ('children' in current.node) {
+          for (const child of current.node.children)
+            pending.push({ node: child, depth: current.depth + 1 });
+        } else if ('child' in current.node) {
+          pending.push({ node: current.node.child, depth: current.depth + 1 });
+        }
+      }
+    });
