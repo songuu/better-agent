@@ -29,3 +29,4 @@
 - Binding approval coverage 用四类负例保护：operation intrinsic approval 与 Binding none 冲突、required approval 空集合、重复 operation pin、Gate protected set 缺项。正例必须断言输出 Gate ID/hash 来自同一 prepared Agent source，而非调用方自报。
 - Leaf Binding operation collector 必须对 Knowledge/Database/Plugin/A2A 四类真实 verifier 参数化，并额外断言未命中的 sibling path 仍存在且 operation set 为空；只测试命中项会漏掉 positional operation 泄漏。
 - Pack route/operation 测试要构造两个 exposed aliases 指向同一 member operation：routes 必须保留两条，Binding operation pins 必须按 contract hash 去重为一条，防止错误地把“调用入口”和“执行合同”当成同一集合。
+- Compiled closure verifier 必须覆盖：完整 hash 重算、unknown/future fields、accessor/proxy、collection budget、resource node/path identity 重算，以及 nested Agent/Flow 的 version tuple/hash 双重 join。必须保留“published pin hash 与 semantic seed hash 可以不同”的正例，防止误把两个 hash 层级合并。

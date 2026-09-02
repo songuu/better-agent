@@ -1,6 +1,6 @@
 # better-agent
 
-Better Agent 的目标是对标 `ai.betteryeah.com` 的完整 Agent 应用；`E:/project/ai/agent` 只作为服务器部署方式参考。
+Better Agent 的目标是对标 `ai.betteryeah.com` 的完整 Agent 应用；`E:/project/ai/agent` 只作为服务器部署方式参考。产品范围以 [完整应用交付总图](docs/plans/2026-09-02-complete-agent-application-delivery.md) 为准，不能用架构门禁、API 或入口页替代完整应用。
 
 Gate A 与 G0 底座已完成；G0-08 的 generation 3 host-attested passed Receipt 记录在 [历史验收状态](docs/plans/.handoff/active-sprint.json)，其准入已解除。当前正在实施 [G1-A1 能力内核](docs/plans/2026-09-02-g1-a1-capability-closure-kernel.md)：canonical identity 首个切片已有实现和本地回归，完整 closure/policy/admission、公开业务 handler、Studio 与运行时仍未完成，不能据此宣称应用已上线。历史 Receipt 只覆盖原 subject；原本机 authority 库暂不可回读不自动撤回旧准入，新代码仍须取得自己的完整测试与验收证据。
 

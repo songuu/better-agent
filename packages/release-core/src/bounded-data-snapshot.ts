@@ -18,46 +18,51 @@ function isScalarText(value: string): boolean {
 /** Bound before schema parsing/JCS so hostile input cannot allocate an unbounded encoding. */
 export function boundedDataSnapshot(
   input: unknown,
-  profile: 'identity' | 'policy' | 'graph' | 'source',
+  profile: 'identity' | 'policy' | 'graph' | 'source' | 'closure',
 ): unknown {
   const policy = profile === 'policy';
   const graph = profile === 'graph';
   const source = profile === 'source';
-  const maximumArrayLength = graph || source ? 1_024 : 128;
+  const closure = profile === 'closure';
+  const maximumArrayLength = closure ? 8_192 : graph || source ? 1_024 : 128;
   function invalid(path: string, reason: string): never {
     throw new ReleaseCoreError(
-      source
-        ? 'CLOSURE_SOURCE_INVALID'
-        : graph
-          ? 'CAPABILITY_GRAPH_INPUT_INVALID'
-          : policy
-            ? 'CLOSURE_POLICY_INPUT_INVALID'
-            : 'CLOSURE_IDENTITY_INPUT_INVALID',
+      closure
+        ? 'COMPILED_CAPABILITY_CLOSURE_INVALID'
+        : source
+          ? 'CLOSURE_SOURCE_INVALID'
+          : graph
+            ? 'CAPABILITY_GRAPH_INPUT_INVALID'
+            : policy
+              ? 'CLOSURE_POLICY_INPUT_INVALID'
+              : 'CLOSURE_IDENTITY_INPUT_INVALID',
       path,
       reason,
     );
   }
   function limit(path: string, reason: string): never {
     throw new ReleaseCoreError(
-      source
-        ? 'CLOSURE_SOURCE_LIMIT_EXCEEDED'
-        : graph
-          ? 'CAPABILITY_CLOSURE_LIMIT_EXCEEDED'
-          : policy
-            ? 'CLOSURE_POLICY_LIMIT_EXCEEDED'
-            : 'CLOSURE_IDENTITY_LIMIT_EXCEEDED',
+      closure
+        ? 'CAPABILITY_CLOSURE_LIMIT_EXCEEDED'
+        : source
+          ? 'CLOSURE_SOURCE_LIMIT_EXCEEDED'
+          : graph
+            ? 'CAPABILITY_CLOSURE_LIMIT_EXCEEDED'
+            : policy
+              ? 'CLOSURE_POLICY_LIMIT_EXCEEDED'
+              : 'CLOSURE_IDENTITY_LIMIT_EXCEEDED',
       path,
       reason,
     );
   }
-  let remainingBytes = graph || source ? 8_388_608 : 1_048_576;
-  let remainingNodes = graph || source ? 131_072 : policy ? 32_768 : 8_192;
-  const maximumStringBytes = source ? 65_536 : 4_096;
+  let remainingBytes = closure ? 33_554_432 : graph || source ? 8_388_608 : 1_048_576;
+  let remainingNodes = closure ? 524_288 : graph || source ? 131_072 : policy ? 32_768 : 8_192;
+  const maximumStringBytes = source || closure ? 65_536 : 4_096;
   const active = new Set<object>();
 
   function visit(value: unknown, path: string, depth: number): unknown {
     remainingNodes -= 1;
-    if (depth > (source ? 64 : policy || graph ? 12 : 8) || remainingNodes < 0)
+    if (depth > (source || closure ? 64 : policy || graph ? 12 : 8) || remainingNodes < 0)
       limit(path, 'input structure exceeds its budget');
     if (typeof value === 'string') {
       if (value.length > maximumStringBytes) limit(path, 'input string exceeds byte limit');
@@ -71,9 +76,9 @@ export function boundedDataSnapshot(
       }
       return value;
     }
-    if (source && value === null) return value;
-    if ((policy || source) && typeof value === 'boolean') return value;
-    if ((policy || source) && typeof value === 'number' && Number.isFinite(value))
+    if ((source || closure) && value === null) return value;
+    if ((policy || source || closure) && typeof value === 'boolean') return value;
+    if ((policy || source || closure) && typeof value === 'number' && Number.isFinite(value))
       return value === 0 ? 0 : value;
     if (typeof value !== 'object' || value === null) {
       invalid(path, 'input accepts data objects, arrays and strings only');
@@ -88,7 +93,9 @@ export function boundedDataSnapshot(
     if (array && value.length > maximumArrayLength)
       limit(path, 'input array exceeds its entry budget');
     const keys = Reflect.ownKeys(value);
-    if (keys.length > (array ? maximumArrayLength + 1 : source ? 128 : policy ? 20 : 12)) {
+    if (
+      keys.length > (array ? maximumArrayLength + 1 : source || closure ? 128 : policy ? 20 : 12)
+    ) {
       limit(path, 'input container has too many properties');
     }
     const copy: Record<string, unknown> | unknown[] = array ? [] : Object.create(null);
@@ -96,9 +103,9 @@ export function boundedDataSnapshot(
     try {
       for (const key of keys) {
         if (array && key === 'length') continue;
-        if (typeof key !== 'string' || key.length > (source ? 256 : 64))
+        if (typeof key !== 'string' || key.length > (source || closure ? 256 : 64))
           invalid(path, 'invalid input key');
-        if (source) {
+        if (source || closure) {
           const bytes = Buffer.byteLength(key, 'utf8');
           remainingBytes -= bytes;
           if (bytes > 256 || remainingBytes < 0) limit(path, 'input key data exceeds byte budget');
