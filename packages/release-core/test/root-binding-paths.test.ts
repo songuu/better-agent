@@ -6,7 +6,11 @@ import {
   prepareExecutableSource,
   ReleaseCoreError,
 } from '../src/index.js';
-import { prepareFlowNodePaths, prepareRootBindingPaths } from '../src/root-binding-paths.js';
+import {
+  prepareAgentFlowDependencyPaths,
+  prepareFlowNodePaths,
+  prepareRootBindingPaths,
+} from '../src/root-binding-paths.js';
 import {
   deeplyNestedFlowSource,
   maximumNodeFlowSource,
@@ -322,5 +326,138 @@ describe('recursive Flow node path compilation', () => {
     }
     expect(thrown).toBeInstanceOf(ReleaseCoreError);
     expect(thrown).toMatchObject({ code, path: '$.document' });
+  });
+});
+
+function matchingAgentFlowSources() {
+  const flow = nestedFlowSource();
+  const flowPin = {
+    ...prepareExecutableSource(candidate(flow)).root.pin,
+    published_resource_kind: 'FLOW_VERSION' as const,
+  };
+  const agent = richAgentSource();
+  const binding = agent.capability_bindings.find((item) => item.kind === 'flow');
+  if (binding === undefined) throw new Error('fixture is missing its Flow Binding');
+  binding.pin = flowPin;
+  return { agent, flow, binding };
+}
+
+describe('Agent-owned Flow dependency paths', () => {
+  it('prefixes nested Flow nodes with the exact root Binding path', () => {
+    const { agent, flow, binding } = matchingAgentFlowSources();
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    const node = compiled?.nodes.find(
+      (candidateNode) => candidateNode.graph_id === 'root' && candidateNode.node_id === 'start-1',
+    );
+    expect(compiled?.binding_id).toBe(binding.binding_id);
+    expect(node?.source_path_segments.map((segment) => segment.segment_kind)).toEqual([
+      'root',
+      'binding',
+      'flow_node',
+    ]);
+    expect(node?.source_path_segments[1]).toMatchObject({
+      binding_kind: 'flow',
+      local_binding_id: binding.binding_id,
+    });
+    expect(node?.source_path_segments[2]).toMatchObject({
+      owner: { owner_kind: 'published_dependency', pin: result.dependency.pin },
+      graph_id: 'root',
+      node_id: 'start-1',
+    });
+    expect(node?.source_path).toBe(canonicalBindingPath(node?.source_path_segments));
+  });
+
+  it('registers the complete root Binding namespace before expanding one dependency', () => {
+    const { agent, flow } = matchingAgentFlowSources();
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    expect(result.bindings).toHaveLength(agent.capability_bindings.length);
+    expect(result.bindings.filter((binding) => binding.nodes.length > 0)).toHaveLength(1);
+    expect(result.bindings.filter((binding) => binding.nodes.length === 0)).toHaveLength(
+      agent.capability_bindings.length - 1,
+    );
+  });
+
+  it('retains the root Binding plus every recursive Flow ancestor', () => {
+    const { agent, flow } = matchingAgentFlowSources();
+    const compiled = prepareAgentFlowDependencyPaths(
+      candidate(agent),
+      candidate(flow),
+    ).bindings.find((binding) => binding.binding_kind === 'flow' && binding.nodes.length > 0);
+    const leaf = compiled?.nodes.find(
+      (node) => node.graph_id === 'body' && node.node_id === 'leaf',
+    );
+    expect(leaf?.source_path_segments.map((segment) => segment.segment_kind)).toEqual([
+      'root',
+      'binding',
+      'flow_node',
+      'flow_node',
+      'flow_node',
+    ]);
+  });
+
+  it('creates distinct namespaces for two root Bindings to the same Flow pin', () => {
+    const { agent, flow, binding } = matchingAgentFlowSources();
+    const second = structuredClone(binding);
+    second.binding_id = 'flow-second';
+    agent.capability_bindings.push(second);
+    agent.strategy.allowed_capability_binding_ids.push(second.binding_id);
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    const expanded = result.bindings.filter((item) => item.nodes.length > 0);
+    expect(expanded).toHaveLength(2);
+    const firstNode = expanded[0]?.nodes.find((node) => node.node_id === 'start-1');
+    const secondNode = expanded[1]?.nodes.find((node) => node.node_id === 'start-1');
+    expect(firstNode?.source_path).not.toBe(secondNode?.source_path);
+  });
+
+  it('keeps disabled dependency Bindings addressable and projects their root path only', () => {
+    const { agent, flow, binding } = matchingAgentFlowSources();
+    binding.enabled = false;
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    expect(compiled?.nodes).toHaveLength(12);
+    expect(result.source_disabled_binding_paths).toEqual([compiled?.binding_path]);
+  });
+
+  it('admits the exact 4096-node Flow after adding root, dependency and Binding identities', () => {
+    const flow = maximumNodeFlowSource();
+    const flowPin = {
+      ...prepareExecutableSource(candidate(flow)).root.pin,
+      published_resource_kind: 'FLOW_VERSION' as const,
+    };
+    const agent = richAgentSource();
+    const binding = agent.capability_bindings.find((item) => item.kind === 'flow');
+    if (binding === undefined) throw new Error('fixture is missing its Flow Binding');
+    binding.pin = flowPin;
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    expect(
+      result.bindings.find((item) => item.binding_id === binding.binding_id)?.nodes,
+    ).toHaveLength(4096);
+  });
+
+  it('rejects a self-consistent Flow source that is not the root Binding exact pin', () => {
+    const { agent, flow } = matchingAgentFlowSources();
+    (flow as unknown as { flow_version_id: string }).flow_version_id =
+      '00000000-0000-7000-8000-000000000099';
+    expect(() => prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow))).toThrow(
+      'CAPABILITY_DEPENDENCY_UNRESOLVED',
+    );
+  });
+
+  it('revalidates both raw sources and rejects reversed root/dependency roles', () => {
+    const { agent, flow } = matchingAgentFlowSources();
+    expect(() => prepareAgentFlowDependencyPaths(candidate(flow), candidate(agent))).toThrow(
+      'CLOSURE_SOURCE_INVALID',
+    );
+  });
+
+  it('returns one deeply frozen closure-local snapshot without an authority hash', () => {
+    const { agent, flow } = matchingAgentFlowSources();
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    expect(result).not.toHaveProperty('closure_hash');
+    expect(Object.isFrozen(result)).toBe(true);
+    const expanded = result.bindings.find((binding) => binding.nodes.length > 0);
+    expect(Object.isFrozen(expanded?.nodes)).toBe(true);
+    expect(Object.isFrozen(expanded?.nodes[0]?.source_path_segments)).toBe(true);
   });
 });

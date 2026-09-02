@@ -287,6 +287,8 @@ G1 的 identity 实现使用以下固定字节语法；这是第 3 节 length-pr
 
 `bp1.` / `rn1.` 后只能是 SHA-256 的 32 字节摘要的 canonical base64url（43 个字符，最后字符的未使用位必须为 0），不允许 `=`、标准 base64 别名、换行、前后空白或再次编码。loader 从原始 segments/pin 重算并精确比较，不把仅通过格式 Schema 当作身份验证。编译器在单个 closure 内登记 canonical bytes：binding path 重复拒绝，resource node 相同完整 pin 可去重，相同 digest 对应不同 canonical bytes 分别以 `BINDING_PATH_DIGEST_COLLISION` / `RESOURCE_NODE_ID_COLLISION` 失败。该内存登记器只服务有界编译过程，不作为跨请求的全局缓存；两类身份合计最多 8,192 entries、16,777,216 retained bytes，超限登记不得修改已存状态。8,192 的 entry ceiling 必须容纳合法的 4,096-node Flow、root resource identity 和后续有界依赖身份；retained-byte ceiling 仍独立生效。
 
+当前私有 direct Agent→Flow expansion 只接受双方 raw executable source，分别重走 closed source preparation，并要求 Agent 的 `flow` Binding target full pin 与重算 Flow pin 精确相等。它在同一 closure-local registry 内先登记 root/dependency resource，再生成 `root → binding → flow_node...`；Flow node owner 为 `published_dependency` 且携带目标完整 pin，嵌套 case/else/loop 保留全部祖先 node segments。同一 Flow 被多个 root Bindings 引用时必须形成互不重叠的命名空间。这个中间结果没有 hash、公共 barrel export 或 registry 权威含义，也未处理传递 Agent/Flow、Pack/SubAgent；authoritative pinned graph 与 nested closure seal 仍必须在最终 compiler/publisher 接入。
+
 ### 4.1 发布时展开
 
 1. 从固定的 Agent Release 或 Flow Version 开始，读取同 Workspace 或受控全局目录中的 typed release registry，固定 `ClosureRootV1.pin/semantic_seed_hash`，并为完整 root pin 生成/验证 resource node ID。
