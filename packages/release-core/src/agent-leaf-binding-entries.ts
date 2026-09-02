@@ -12,10 +12,16 @@ import {
   resolveEffectiveCapabilityPolicy,
 } from './capability-policy.js';
 import { canonicalResourceNodeId } from './closure-identity.js';
-import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
+import {
+  compareCanonicalStrings,
+  deepFreezeJson,
+  publishedResourcePinKey,
+} from './dependency-manifest.js';
 import { prepareExecutableSource } from './executable-source.js';
 import { ReleaseCoreError } from './errors.js';
 import { canonicalSha256 } from './hash.js';
+import { prepareLeafResourceSource } from './leaf-resource-source.js';
+import { prepareGraphBoundDirectDependencies } from './pinned-graph-slice.js';
 import { prepareRootBindingPaths } from './root-binding-paths.js';
 
 type CompiledBindingEntryV1 = ReturnType<typeof CompiledBindingEntryV1Schema.parse>;
@@ -25,6 +31,19 @@ interface PreparedAgentLeafBindingEntriesV1 {
   readonly root: ReturnType<typeof prepareExecutableSource>['root'];
   readonly dependency: ReturnType<typeof prepareAgentLeafBindingOperations>['dependency'];
   readonly entries: readonly CompiledBindingEntryV1[];
+}
+
+interface PreparedAgentLeafBindingEntrySetV1 {
+  readonly schema_version: 'prepared-agent-leaf-binding-entry-set/1';
+  readonly root: ReturnType<typeof prepareExecutableSource>['root'];
+  readonly dependencies: readonly ReturnType<typeof prepareLeafResourceSource>['full_pin'][];
+  readonly entries: readonly CompiledBindingEntryV1[];
+}
+
+interface GraphBoundAgentLeafBindingEntrySetV1 {
+  readonly schema_version: 'graph-bound-agent-leaf-binding-entry-set/1';
+  readonly graph_hash: `sha256:${string}`;
+  readonly prepared_entries: PreparedAgentLeafBindingEntrySetV1;
 }
 
 interface PolicyInput {
@@ -177,5 +196,112 @@ export function prepareAgentLeafBindingEntries(
     root: source.root,
     dependency: projection.dependency,
     entries,
+  });
+}
+
+/** Assemble every root leaf Binding exactly once; composite mounts remain for later compilers. */
+export function prepareAgentLeafBindingEntrySet(
+  rootInput: unknown,
+  dependencyInputs: unknown,
+  policyInput: unknown,
+): PreparedAgentLeafBindingEntrySetV1 {
+  const dependencies = boundedDataSnapshot(dependencyInputs, 'source');
+  if (!Array.isArray(dependencies) || dependencies.length === 0) notClosed('$.dependencies');
+  const source = prepareExecutableSource(rootInput);
+  if (source.root.pin.published_resource_kind !== 'AGENT_RELEASE') notClosed('$.root');
+  const document = source.preimage.document as unknown as {
+    capability_bindings: readonly CapabilityBindingV1[];
+  };
+  const rootPaths = prepareRootBindingPaths(rootInput);
+  const leafBindings = document.capability_bindings.filter(
+    (binding) =>
+      binding.kind === 'knowledge' ||
+      binding.kind === 'database' ||
+      binding.kind === 'plugin' ||
+      (binding.kind === 'subagent' && binding.target_kind === 'external_a2a'),
+  );
+  if (leafBindings.length === 0) notClosed('$.root.capability_bindings');
+  const expected = leafBindings.map((binding) => {
+    const path = rootPaths.bindings.find(
+      (candidate) => candidate.binding_id === binding.binding_id,
+    );
+    if (path === undefined) notClosed('$.binding_path');
+    return { path: path.binding_path, target_key: publishedResourcePinKey(binding.pin) };
+  });
+  const policies = parsePolicyInput(policyInput);
+  const expectedPaths = new Set<string>(expected.map((item) => item.path));
+  if (
+    policies.binding_ceilings.length !== expectedPaths.size ||
+    policies.binding_ceilings.some((item) => !expectedPaths.has(item.binding_path))
+  )
+    notClosed('$.policy.binding_ceilings');
+
+  const preparedByTarget = new Map<
+    string,
+    { input: unknown; pin: ReturnType<typeof prepareLeafResourceSource>['full_pin'] }
+  >();
+  for (const dependency of dependencies) {
+    const prepared = prepareLeafResourceSource(dependency);
+    const key = publishedResourcePinKey(prepared.full_pin);
+    if (preparedByTarget.has(key) || !expected.some((item) => item.target_key === key))
+      notClosed('$.dependencies');
+    preparedByTarget.set(key, { input: dependency, pin: prepared.full_pin });
+  }
+  if (expected.some((item) => !preparedByTarget.has(item.target_key))) notClosed('$.dependencies');
+
+  const entries = [...preparedByTarget.entries()]
+    .flatMap(([targetKey, dependency]) => {
+      const targetPaths = new Set<string>(
+        expected.filter((item) => item.target_key === targetKey).map((item) => item.path),
+      );
+      return prepareAgentLeafBindingEntries(rootInput, dependency.input, {
+        schema_version: 'agent-leaf-binding-policy-input/1',
+        workspace_ceiling: policies.workspace_ceiling,
+        root_ceiling: policies.root_ceiling,
+        binding_ceilings: policies.binding_ceilings.filter((item) =>
+          targetPaths.has(item.binding_path),
+        ),
+      }).entries;
+    })
+    .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
+  if (
+    entries.length !== expectedPaths.size ||
+    new Set(entries.map((entry) => entry.binding_path)).size !== entries.length
+  )
+    notClosed('$.entries');
+  return deepFreezeJson({
+    schema_version: 'prepared-agent-leaf-binding-entry-set/1',
+    root: source.root,
+    dependencies: [...preparedByTarget.values()]
+      .map((item) => item.pin)
+      .sort((left, right) =>
+        compareCanonicalStrings(publishedResourcePinKey(left), publishedResourcePinKey(right)),
+      ),
+    entries,
+  });
+}
+
+/** Bind the complete leaf entry set to the source's exact graph manifest and direct edges. */
+export function prepareGraphBoundAgentLeafBindingEntrySet(
+  expectedGraph: unknown,
+  graphCandidate: unknown,
+  rootInput: unknown,
+  dependencyInputs: unknown,
+  policyInput: unknown,
+): GraphBoundAgentLeafBindingEntrySetV1 {
+  const prepared = prepareAgentLeafBindingEntrySet(rootInput, dependencyInputs, policyInput);
+  const source = prepareExecutableSource(rootInput);
+  const graphBinding = prepareGraphBoundDirectDependencies(
+    expectedGraph,
+    graphCandidate,
+    prepared.root.pin,
+    prepared.dependencies,
+  );
+  if (graphBinding.root_node.dependency_manifest_hash !== source.dependency_manifest.manifest_hash)
+    notClosed('$.graph');
+  return deepFreezeJson({
+    schema_version: 'graph-bound-agent-leaf-binding-entry-set/1',
+    graph_hash: graphBinding.graph_hash,
+    prepared_entries: prepared,
   });
 }

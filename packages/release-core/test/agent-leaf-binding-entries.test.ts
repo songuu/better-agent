@@ -3,10 +3,16 @@ import { describe, expect, it } from 'vitest';
 
 import { canonicalResourceNodeId } from '../src/closure-identity.js';
 import { canonicalSha256 } from '../src/hash.js';
-import { prepareAgentLeafBindingEntries } from '../src/agent-leaf-binding-entries.js';
+import {
+  prepareAgentLeafBindingEntries,
+  prepareAgentLeafBindingEntrySet,
+  prepareGraphBoundAgentLeafBindingEntrySet,
+} from '../src/agent-leaf-binding-entries.js';
+import { deriveDependencyManifest, publishedResourcePinKey } from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
 import { prepareLeafResourceSource } from '../src/leaf-resource-source.js';
 import { prepareRootBindingPaths } from '../src/root-binding-paths.js';
+import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import { workspaceId } from './fixtures.js';
 import { leafCandidate, record, type LeafKind } from './leaf-resource-source-fixtures.js';
@@ -212,5 +218,149 @@ describe('Agent leaf compiled Binding entry assembly', () => {
     expect(result).not.toHaveProperty('closure_hash');
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.entries[0]?.effective_policy)).toBe(true);
+  });
+});
+
+describe('complete Agent root leaf Binding entry set', () => {
+  function mountedTwice() {
+    const value = fixture('KNOWLEDGE_INDEX_GENERATION');
+    const second = structuredClone(value.binding);
+    second.binding_id = 'knowledge-second';
+    if (second.kind === 'knowledge' && record(second.config).selection === 'force') {
+      const forced = record(record(second.config).forced_execution);
+      forced.order = Number(forced.order) + 1;
+    }
+    value.agent.capability_bindings = [
+      value.binding,
+      second,
+    ] as unknown as typeof value.agent.capability_bindings;
+    value.agent.strategy.allowed_capability_binding_ids = [
+      'knowledge-second',
+      String(value.binding.binding_id),
+    ];
+    value.agent.instruction_skill_bindings = [];
+    value.agent.public_capability_handles = [];
+    const root = candidate(value.agent);
+    const paths = prepareRootBindingPaths(root).bindings;
+    const policies = {
+      ...value.policies,
+      binding_ceilings: paths.map((path) => ({
+        binding_path: path.binding_path,
+        ceiling: value.policies.workspace_ceiling,
+      })),
+    };
+    return { ...value, root, paths, policies };
+  }
+
+  function graphFixture() {
+    const value = mountedTwice();
+    const source = prepareExecutableSource(value.root);
+    const resources = source.dependency_manifest.dependencies.map((pin) => {
+      const { contract_hash: _hash, binding_mode: _mode, ...owner } = pin;
+      return {
+        schema_version: 'pinned-dependency-record/1' as const,
+        pin,
+        publication_state: 'sealed' as const,
+        dependency_manifest: deriveDependencyManifest(owner, []),
+        ...(pin.published_resource_kind === 'AGENT_RELEASE' ||
+        pin.published_resource_kind === 'FLOW_VERSION'
+          ? { nested_closure_hash: value.prepared.full_pin.contract_hash }
+          : {}),
+      };
+    });
+    const graphCandidate = {
+      schema_version: 'pinned-dependency-graph-candidate/1' as const,
+      root: { pin: source.root.pin, semantic_seed_hash: source.root.semantic_seed_hash },
+      root_dependencies: source.dependency_manifest.dependencies,
+      resources,
+    };
+    return {
+      ...value,
+      source,
+      graphCandidate,
+      graph: preparePinnedDependencyGraph(graphCandidate),
+    };
+  }
+
+  it('assembles all mounts of one verified leaf dependency in canonical path order', () => {
+    const value = mountedTwice();
+    const result = prepareAgentLeafBindingEntrySet(value.root, [value.dependency], value.policies);
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries.map((entry) => entry.binding_path)).toEqual(
+      [...value.paths.map((path) => path.binding_path)].sort(),
+    );
+    expect(result.dependencies).toEqual([value.prepared.full_pin]);
+    expect(Object.isFrozen(result.entries)).toBe(true);
+    expect(result).not.toHaveProperty('closure_hash');
+  });
+
+  it('rejects missing, duplicate, and unrelated dependency candidates', () => {
+    const value = mountedTwice();
+    expect(() => prepareAgentLeafBindingEntrySet(value.root, [], value.policies)).toThrow(
+      'CLOSURE_BINDING_ENTRY_NOT_CLOSED',
+    );
+    expect(() =>
+      prepareAgentLeafBindingEntrySet(
+        value.root,
+        [value.dependency, value.dependency],
+        value.policies,
+      ),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+    expect(() =>
+      prepareAgentLeafBindingEntrySet(
+        value.root,
+        [value.dependency, leafCandidate('PLUGIN_TOOL_RELEASE')],
+        value.policies,
+      ),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+  });
+
+  it('requires the policy ceiling set to equal the complete leaf path set', () => {
+    const value = mountedTwice();
+    expect(() =>
+      prepareAgentLeafBindingEntrySet(value.root, [value.dependency], {
+        ...value.policies,
+        binding_ceilings: value.policies.binding_ceilings.slice(0, 1),
+      }),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+  });
+
+  it('binds the complete set to the source manifest and every direct graph edge', () => {
+    const value = graphFixture();
+    const result = prepareGraphBoundAgentLeafBindingEntrySet(
+      value.graph,
+      value.graphCandidate,
+      value.root,
+      [value.dependency],
+      value.policies,
+    );
+    expect(result.graph_hash).toBe(value.graph.graph_hash);
+    expect(result.prepared_entries.entries).toHaveLength(2);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('rejects a leaf that exists in the graph only as a transitive dependency', () => {
+    const value = graphFixture();
+    const leafKey = publishedResourcePinKey(value.prepared.full_pin);
+    const direct = value.graphCandidate.root_dependencies.filter(
+      (pin) => publishedResourcePinKey(pin) !== leafKey,
+    );
+    const parent = value.graphCandidate.resources.find(
+      (record) => publishedResourcePinKey(record.pin) !== leafKey,
+    );
+    if (parent === undefined) throw new Error('missing graph parent fixture');
+    const { contract_hash: _hash, binding_mode: _mode, ...owner } = parent.pin;
+    parent.dependency_manifest = deriveDependencyManifest(owner, [value.prepared.full_pin]);
+    const transitiveCandidate = { ...value.graphCandidate, root_dependencies: direct };
+    const transitiveGraph = preparePinnedDependencyGraph(transitiveCandidate);
+    expect(() =>
+      prepareGraphBoundAgentLeafBindingEntrySet(
+        transitiveGraph,
+        transitiveCandidate,
+        value.root,
+        [value.dependency],
+        value.policies,
+      ),
+    ).toThrow();
   });
 });

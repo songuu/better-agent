@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { PublishedResourcePinV1 } from '@better-agent/domain-contracts';
 import { deriveDependencyManifest, preparePinnedDependencyGraph } from '../src/index.js';
-import { prepareGraphBoundDirectDependency } from '../src/pinned-graph-slice.js';
+import {
+  prepareGraphBoundDirectDependencies,
+  prepareGraphBoundDirectDependency,
+} from '../src/pinned-graph-slice.js';
 import { hashA, hashB, workspaceId } from './fixtures.js';
 
 function uuid(value: number) {
@@ -122,5 +125,34 @@ describe('graph-bound direct dependency slices', () => {
     expect(result).not.toHaveProperty('closure_hash');
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.dependency_node.pin)).toBe(true);
+  });
+
+  it('verifies multiple direct dependencies in one graph-bound batch', () => {
+    const value = fixture();
+    const candidate = {
+      ...value.candidate,
+      root_dependencies: [value.direct, value.transitive],
+      resources: [record(value.direct), record(value.transitive)],
+    };
+    const graph = preparePinnedDependencyGraph(candidate);
+    const result = prepareGraphBoundDirectDependencies(graph, candidate, value.root, [
+      value.direct,
+      value.transitive,
+    ]);
+    expect(result.dependency_nodes.map((node) => node.pin)).toEqual([
+      value.direct,
+      value.transitive,
+    ]);
+    expect(Object.isFrozen(result.dependency_nodes)).toBe(true);
+  });
+
+  it('rejects duplicate dependency pins in a direct batch', () => {
+    const value = fixture();
+    expect(() =>
+      prepareGraphBoundDirectDependencies(value.graph, value.candidate, value.root, [
+        value.direct,
+        value.direct,
+      ]),
+    ).toThrow('CAPABILITY_DEPENDENCY_UNRESOLVED');
   });
 });

@@ -14,6 +14,13 @@ export interface PreparedGraphBoundDirectDependencyV1 {
   readonly dependency_node: PinnedDependencyGraphNodeV1;
 }
 
+export interface PreparedGraphBoundDirectDependenciesV1 {
+  readonly schema_version: 'graph-bound-direct-dependencies/1';
+  readonly graph_hash: `sha256:${string}`;
+  readonly root_node: PinnedDependencyGraphNodeV1;
+  readonly dependency_nodes: readonly PinnedDependencyGraphNodeV1[];
+}
+
 function unresolved(): never {
   throw new ReleaseCoreError(
     'CAPABILITY_DEPENDENCY_UNRESOLVED',
@@ -29,26 +36,50 @@ export function prepareGraphBoundDirectDependency(
   rootPin: PublishedResourcePinV1,
   dependencyPin: PublishedResourcePinV1,
 ): PreparedGraphBoundDirectDependencyV1 {
+  const batch = prepareGraphBoundDirectDependencies(expectedGraph, graphCandidate, rootPin, [
+    dependencyPin,
+  ]);
+  const dependencyNode = batch.dependency_nodes[0];
+  if (dependencyNode === undefined) unresolved();
+  return deepFreezeJson({
+    schema_version: 'graph-bound-direct-dependency/1',
+    graph_hash: batch.graph_hash,
+    root_node: batch.root_node,
+    dependency_node: dependencyNode,
+  });
+}
+
+/** Verify a bounded direct dependency set while parsing and hashing the graph only once. */
+export function prepareGraphBoundDirectDependencies(
+  expectedGraph: unknown,
+  graphCandidate: unknown,
+  rootPin: PublishedResourcePinV1,
+  dependencyPins: readonly PublishedResourcePinV1[],
+): PreparedGraphBoundDirectDependenciesV1 {
   const graph = verifyPinnedDependencyGraph(expectedGraph, graphCandidate);
   if (publishedResourcePinKey(graph.root.pin) !== publishedResourcePinKey(rootPin)) unresolved();
   const rootNode = graph.nodes.find(
     (node) => publishedResourcePinKey(node.pin) === publishedResourcePinKey(rootPin),
   );
-  const dependencyNode = graph.nodes.find(
-    (node) => publishedResourcePinKey(node.pin) === publishedResourcePinKey(dependencyPin),
-  );
-  if (rootNode === undefined || dependencyNode === undefined) unresolved();
-  if (
-    !graph.edges.some(
-      (edge) =>
-        edge.from_node_id === rootNode.node_id && edge.to_node_id === dependencyNode.node_id,
-    )
-  )
+  if (rootNode === undefined || dependencyPins.length === 0 || dependencyPins.length > 128)
     unresolved();
+  const keys = dependencyPins.map(publishedResourcePinKey);
+  if (new Set(keys).size !== keys.length) unresolved();
+  const dependencyNodes = keys.map((key) => {
+    const node = graph.nodes.find((candidate) => publishedResourcePinKey(candidate.pin) === key);
+    if (
+      node === undefined ||
+      !graph.edges.some(
+        (edge) => edge.from_node_id === rootNode.node_id && edge.to_node_id === node.node_id,
+      )
+    )
+      unresolved();
+    return node;
+  });
   return deepFreezeJson({
-    schema_version: 'graph-bound-direct-dependency/1',
+    schema_version: 'graph-bound-direct-dependencies/1',
     graph_hash: graph.graph_hash,
     root_node: rootNode,
-    dependency_node: dependencyNode,
+    dependency_nodes: dependencyNodes,
   });
 }
