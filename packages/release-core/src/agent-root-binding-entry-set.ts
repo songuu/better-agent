@@ -154,7 +154,14 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
     const prepared = record(slice.prepared_entries, `${path}.prepared_entries`);
     exactKeys(
       prepared,
-      ['schema_version', 'root', 'dependencies', 'entries', 'requirement_expressions'],
+      [
+        'schema_version',
+        'root',
+        'dependencies',
+        'dependency_intrinsic_policies',
+        'entries',
+        'requirement_expressions',
+      ],
       `${path}.prepared_entries`,
     );
     if (prepared.schema_version !== 'prepared-agent-leaf-binding-entry-set/1') notClosed(path);
@@ -187,6 +194,7 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
         'root',
         'pack_dependency',
         'leaf_dependencies',
+        'leaf_dependency_intrinsic_policies',
         'pack_entries',
         'pack_requirement_expressions',
         'entries',

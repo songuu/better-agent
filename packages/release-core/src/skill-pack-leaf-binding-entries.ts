@@ -44,6 +44,11 @@ export interface PreparedSkillPackLeafBindingEntrySetV1 {
   readonly root: ReturnType<typeof prepareExecutableSource>['root'];
   readonly pack_dependency: ReturnType<typeof prepareSkillPackSource>['full_pin'];
   readonly leaf_dependencies: readonly ReturnType<typeof prepareLeafResourceSource>['full_pin'][];
+  readonly leaf_dependency_intrinsic_policies: readonly {
+    readonly node_id: ReturnType<typeof canonicalResourceNodeId>;
+    readonly pin: ReturnType<typeof prepareLeafResourceSource>['full_pin'];
+    readonly intrinsic_policy: CapabilityRequirementExpressionV1;
+  }[];
   readonly pack_entries: readonly CompiledBindingEntryV1[];
   readonly pack_requirement_expressions: readonly {
     readonly binding_path: `bp1.${string}`;
@@ -449,6 +454,17 @@ export function prepareSkillPackLeafBindingEntrySet(
       .sort((left, right) =>
         compareCanonicalStrings(publishedResourcePinKey(left), publishedResourcePinKey(right)),
       ),
+    leaf_dependency_intrinsic_policies: [...leaves.values()]
+      .map(({ prepared }) => ({
+        node_id: canonicalResourceNodeId(prepared.full_pin),
+        pin: prepared.full_pin,
+        intrinsic_policy: normalizeCapabilityRequirementExpression({
+          schema_version: 'capability-requirement-expression/1',
+          expression_kind: 'leaf',
+          requirements: prepared.intrinsic_policy,
+        }),
+      }))
+      .sort((left, right) => compareCanonicalStrings(left.node_id, right.node_id)),
     pack_entries: packEntries,
     pack_requirement_expressions: packRequirementExpressions.sort((left, right) =>
       compareCanonicalStrings(left.binding_path, right.binding_path),

@@ -227,6 +227,10 @@ describe('Agent root Binding entry-set assembly', () => {
     expect(result.entries).toHaveLength(1);
     expect(result.requirement_expressions).toEqual([]);
     expect(result.disabled_binding_paths).toEqual([value.path.binding_path]);
+    expect(value.slice.prepared_entries.dependency_intrinsic_policies).toHaveLength(1);
+    expect(
+      value.slice.prepared_entries.dependency_intrinsic_policies[0]?.intrinsic_policy,
+    ).toMatchObject({ expression_kind: 'leaf' });
     expect(result.aggregate_limits).toMatchObject({
       principal_modes: ['none'],
       operation_contract_hashes: [],

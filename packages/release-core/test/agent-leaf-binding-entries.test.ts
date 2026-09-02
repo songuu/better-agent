@@ -319,11 +319,23 @@ describe('complete Agent root leaf Binding entry set', () => {
       [...value.paths.map((path) => path.binding_path)].sort(),
     );
     expect(result.dependencies).toEqual([value.prepared.full_pin]);
+    expect(result.dependency_intrinsic_policies).toEqual([
+      {
+        node_id: canonicalResourceNodeId(value.prepared.full_pin),
+        pin: value.prepared.full_pin,
+        intrinsic_policy: {
+          schema_version: 'capability-requirement-expression/1',
+          expression_kind: 'leaf',
+          requirements: value.prepared.intrinsic_policy,
+        },
+      },
+    ]);
     expect(result.requirement_expressions).toHaveLength(2);
     expect(result.requirement_expressions.map((item) => item.binding_path)).toEqual(
       [...value.paths.map((path) => path.binding_path)].sort(),
     );
     expect(Object.isFrozen(result.entries)).toBe(true);
+    expect(Object.isFrozen(result.dependency_intrinsic_policies[0]?.intrinsic_policy)).toBe(true);
     expect(result).not.toHaveProperty('closure_hash');
   });
 

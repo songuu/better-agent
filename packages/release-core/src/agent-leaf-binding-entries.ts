@@ -32,6 +32,9 @@ interface PreparedAgentLeafBindingEntriesV1 {
   readonly schema_version: 'prepared-agent-leaf-binding-entries/1';
   readonly root: ReturnType<typeof prepareExecutableSource>['root'];
   readonly dependency: ReturnType<typeof prepareAgentLeafBindingOperations>['dependency'];
+  readonly intrinsic_policy: ReturnType<
+    typeof prepareAgentLeafBindingOperations
+  >['intrinsic_policy'];
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly requirement_expressions: readonly {
     readonly binding_path: `bp1.${string}`;
@@ -43,6 +46,11 @@ interface PreparedAgentLeafBindingEntrySetV1 {
   readonly schema_version: 'prepared-agent-leaf-binding-entry-set/1';
   readonly root: ReturnType<typeof prepareExecutableSource>['root'];
   readonly dependencies: readonly ReturnType<typeof prepareLeafResourceSource>['full_pin'][];
+  readonly dependency_intrinsic_policies: readonly {
+    readonly node_id: ReturnType<typeof canonicalResourceNodeId>;
+    readonly pin: ReturnType<typeof prepareLeafResourceSource>['full_pin'];
+    readonly intrinsic_policy: CapabilityRequirementExpressionV1;
+  }[];
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly requirement_expressions: PreparedAgentLeafBindingEntriesV1['requirement_expressions'];
 }
@@ -162,6 +170,7 @@ export function prepareAgentLeafBindingEntries(
     schema_version: 'prepared-agent-leaf-binding-entries/1',
     root: source.root,
     dependency: projection.dependency,
+    intrinsic_policy: projection.intrinsic_policy,
     entries,
     requirement_expressions: requirementExpressions,
   });
@@ -246,6 +255,17 @@ export function prepareAgentLeafBindingEntrySet(
       .sort((left, right) =>
         compareCanonicalStrings(publishedResourcePinKey(left), publishedResourcePinKey(right)),
       ),
+    dependency_intrinsic_policies: preparedSets
+      .map((prepared) => ({
+        node_id: canonicalResourceNodeId(prepared.dependency),
+        pin: prepared.dependency,
+        intrinsic_policy: normalizeCapabilityRequirementExpression({
+          schema_version: 'capability-requirement-expression/1',
+          expression_kind: 'leaf',
+          requirements: prepared.intrinsic_policy,
+        }),
+      }))
+      .sort((left, right) => compareCanonicalStrings(left.node_id, right.node_id)),
     entries,
     requirement_expressions: preparedSets
       .flatMap((prepared) => prepared.requirement_expressions)

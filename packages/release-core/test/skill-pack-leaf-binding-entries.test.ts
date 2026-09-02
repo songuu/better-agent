@@ -205,6 +205,16 @@ describe('Skill Pack leaf Binding entry assembly', () => {
     });
     expect(result.pack_entries[0]?.skill_pack_operation_routes).toHaveLength(1);
     expect(result.pack_requirement_expressions).toHaveLength(1);
+    expect(result.leaf_dependency_intrinsic_policies).toHaveLength(1);
+    expect(
+      result.leaf_dependency_intrinsic_policies.find(
+        (item) => item.node_id === canonicalResourceNodeId(value.leaf.full_pin),
+      )?.intrinsic_policy,
+    ).toEqual({
+      schema_version: 'capability-requirement-expression/1',
+      expression_kind: 'leaf',
+      requirements: value.leaf.intrinsic_policy,
+    });
   });
 
   it('deduplicates one member operation exposed through multiple Pack aliases', () => {
@@ -340,6 +350,7 @@ describe('Skill Pack leaf Binding entry assembly', () => {
       max_calls: 0,
     });
     expect(result.pack_requirement_expressions).toEqual([]);
+    expect(result.leaf_dependency_intrinsic_policies).toHaveLength(1);
     expect(result.policy_disabled_binding_paths).toEqual(
       [result.entries[0]?.binding_path, result.pack_entries[0]?.binding_path].sort(),
     );
@@ -376,6 +387,9 @@ describe('Skill Pack leaf Binding entry assembly', () => {
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.entries[0]?.effective_policy)).toBe(true);
     expect(Object.isFrozen(result.pack_entries[0]?.skill_pack_operation_routes)).toBe(true);
+    expect(Object.isFrozen(result.leaf_dependency_intrinsic_policies[0]?.intrinsic_policy)).toBe(
+      true,
+    );
   });
 
   it('seals Agent to Pack and Pack to every unique leaf in one graph snapshot', () => {
