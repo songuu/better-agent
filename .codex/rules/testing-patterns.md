@@ -35,3 +35,4 @@
 - Nested Flow operation projection 除多 mount/path/freeze 外，还必须用重封后的非 Flow-node canonical path、缺失 source dependency 的 graph manifest 和缺失 assembly pin 的 closure 分别测试；只测 nested closure hash 会漏掉 source→graph→closure 三方装配漂移。
 - Parent child-call operation 测试必须让 child closure 复用 parent Binding ID，并断言 `flow_call`/`subagent_call` 只落在 parent canonical path；多 mount 需要 exact declaration cardinality，另测 missing/unknown/duplicate/wrong-kind/schema-drift。
 - Nested Agent manifest 回归的合法 fixture 必须使用完整 executable dependency manifest（不仅是 Capability Binding pins），并分别拒绝 graph manifest 省略依赖和重封 closure assembly 省略依赖；否则会漏掉 Strategy/Instruction 的传递图缺口。
+- 完整 Binding entry 回归不能只做 Schema `safeParse`：逐字段断言 path segments、target、config/source hash、operation、dependency node，并分别收窄 Workspace/root/Binding ceiling。另测 path-keyed policy 缺失/重复、固有 demand 不可满足，以及 policy 要求 approval 但 source GateSpec 未覆盖时 fail closed。
