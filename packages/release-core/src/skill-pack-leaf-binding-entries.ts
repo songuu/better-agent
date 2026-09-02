@@ -1,12 +1,16 @@
 import {
+  type CapabilityRequirementExpressionV1,
   type CapabilityBindingV1,
   CompiledBindingEntryV1Schema,
+  EffectiveCapabilityPolicyV1Schema,
 } from '@better-agent/domain-contracts';
 
 import { prepareAgentBindingApprovalGate } from './agent-gate-specs.js';
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
 import {
+  compileCapabilityRequirementEnvelope,
   meetCapabilityPolicyCeilings,
+  normalizeCapabilityRequirementExpression,
   normalizeCapabilityPolicyCeiling,
   resolveEffectiveCapabilityPolicy,
 } from './capability-policy.js';
@@ -40,6 +44,11 @@ export interface PreparedSkillPackLeafBindingEntrySetV1 {
   readonly root: ReturnType<typeof prepareExecutableSource>['root'];
   readonly pack_dependency: ReturnType<typeof prepareSkillPackSource>['full_pin'];
   readonly leaf_dependencies: readonly ReturnType<typeof prepareLeafResourceSource>['full_pin'][];
+  readonly pack_entries: readonly CompiledBindingEntryV1[];
+  readonly pack_requirement_expressions: readonly {
+    readonly binding_path: `bp1.${string}`;
+    readonly expression: CapabilityRequirementExpressionV1;
+  }[];
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly policy_disabled_binding_paths: readonly `bp1.${string}`[];
 }
@@ -137,6 +146,42 @@ function requireExactPaths(
     notClosed(path);
 }
 
+function unavailablePolicy(
+  operations: readonly CompiledBindingEntryV1['operation_contracts'][number][],
+): ReturnType<typeof EffectiveCapabilityPolicyV1Schema.parse> {
+  const effectRank = { safe: 0, requires_key: 1, unsafe: 2 } as const;
+  const maximumClass = operations.reduce<'safe' | 'requires_key' | 'unsafe'>(
+    (current, operation) =>
+      effectRank[operation.side_effect_class] > effectRank[current]
+        ? operation.side_effect_class
+        : current,
+    'safe',
+  );
+  return EffectiveCapabilityPolicyV1Schema.parse({
+    credential_requirements: [],
+    principal_modes: [],
+    egress: [],
+    readable_data_classification_ceiling: 'public',
+    output_data_classification: 'public',
+    side_effect: {
+      maximum_class: maximumClass,
+      approval: operations.some((operation) => operation.approval_required) ? 'required' : 'none',
+    },
+    operation_contract_hashes: operations.map((operation) => operation.contract_hash),
+    max_calls: 0,
+    max_depth: 0,
+    max_parallelism: 0,
+    budget: {
+      schema_version: 'capability-budget/1',
+      amount_credits: '0',
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      duration_ms: 0,
+    },
+  });
+}
+
 /** Compile every leaf member under every exact Pack mount; graph sealing remains a later step. */
 export function prepareSkillPackLeafBindingEntrySet(
   rootInput: unknown,
@@ -209,6 +254,116 @@ export function prepareSkillPackLeafBindingEntrySet(
   );
   const routedMemberPaths = new Set(routes.routes.map((route) => route.member_binding_path));
   const disabledPaths = new Set<`bp1.${string}`>();
+  const packRequirementExpressions: PreparedSkillPackLeafBindingEntrySetV1['pack_requirement_expressions'][number][] =
+    [];
+  const packEntries = mounted
+    .map((mount) => {
+      const packBinding = rootDocument.capability_bindings.find(
+        (binding) => binding.binding_id === mount.binding_id && binding.kind === 'skill_pack',
+      );
+      const packPolicy = policies.pack_binding_ceilings.find(
+        (item) => item.binding_path === mount.binding_path,
+      );
+      if (
+        packBinding === undefined ||
+        packBinding.kind !== 'skill_pack' ||
+        packPolicy === undefined
+      )
+        notClosed('$.pack_binding');
+      const packRoutes = routes.routes.filter(
+        (route) => route.pack_binding_path === mount.binding_path,
+      );
+      const bindingOperations = routes.binding_operations.find(
+        (item) => item.pack_binding_path === mount.binding_path,
+      );
+      const enabled = packBinding.enabled;
+      if (enabled && (bindingOperations === undefined || packRoutes.length === 0)) {
+        notClosed('$.pack_entry.operation_contracts');
+      }
+      const operations = bindingOperations?.operation_contracts ?? [];
+      const operationRequirements = operations.map((operation) => {
+        const matchingRoutes = packRoutes.filter(
+          (route) => route.member_operation_contract_hash === operation.contract_hash,
+        );
+        if (matchingRoutes.length === 0) notClosed('$.pack_entry.skill_pack_operation_routes');
+        const requirements = matchingRoutes.map((route) => {
+          const leaf = leaves.get(publishedResourcePinKey(route.member_target));
+          if (leaf?.prepared.operation_contract.contract_hash !== operation.contract_hash) {
+            notClosed('$.pack_entry.operation_contracts');
+          }
+          return leaf.prepared.intrinsic_policy;
+        });
+        const first = requirements[0];
+        if (
+          first === undefined ||
+          requirements.some(
+            (requirement) => canonicalSha256(requirement) !== canonicalSha256(first),
+          )
+        )
+          notClosed('$.pack_entry.requirements');
+        return first;
+      });
+      let effectivePolicy = unavailablePolicy(operations);
+      if (enabled) {
+        const children = operationRequirements.map((requirements) => ({
+          schema_version: 'capability-requirement-expression/1' as const,
+          expression_kind: 'leaf' as const,
+          requirements,
+        }));
+        const expression = normalizeCapabilityRequirementExpression(
+          children.length === 1
+            ? children[0]
+            : {
+                schema_version: 'capability-requirement-expression/1',
+                expression_kind: 'alternative',
+                children,
+              },
+        );
+        const requirements = compileCapabilityRequirementEnvelope(expression);
+        effectivePolicy = resolveEffectiveCapabilityPolicy(
+          meetCapabilityPolicyCeilings(sharedCeiling, packPolicy.ceiling),
+          {
+            ...requirements,
+            approval_required:
+              requirements.approval_required || packBinding.side_effect.approval === 'required',
+          },
+        );
+        packRequirementExpressions.push({ binding_path: mount.binding_path, expression });
+      } else {
+        disabledPaths.add(mount.binding_path);
+      }
+      const approval = prepareAgentBindingApprovalGate(
+        rootInput,
+        packBinding.binding_id,
+        operations,
+      );
+      if (
+        effectivePolicy.side_effect.approval === 'required' &&
+        approval.approval_gate_spec === undefined
+      )
+        notClosed('$.pack_entry.approval_gate_spec');
+      const parsed = CompiledBindingEntryV1Schema.safeParse({
+        binding_path_encoding_version: 'binding-path-lp-utf8/1',
+        binding_path: mount.binding_path,
+        binding_path_segments: mount.binding_path_segments,
+        binding_id: packBinding.binding_id,
+        binding_kind: packBinding.kind,
+        target: packBinding.pin,
+        config_schema_version: packBinding.config.schema_version,
+        config_hash: canonicalSha256(packBinding.config),
+        source_contract_hash: pack.full_pin.contract_hash,
+        effective_policy: effectivePolicy,
+        operation_contracts: operations,
+        dependency_node_ids: [canonicalResourceNodeId(pack.full_pin)],
+        skill_pack_operation_routes: packRoutes,
+        ...(approval.approval_gate_spec === undefined
+          ? {}
+          : { approval_gate_spec: approval.approval_gate_spec }),
+      });
+      if (!parsed.success) notClosed('$.pack_entry');
+      return parsed.data;
+    })
+    .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
   const entries = mounted
     .flatMap((mount) => {
       const packBinding = rootDocument.capability_bindings.find(
@@ -294,6 +449,10 @@ export function prepareSkillPackLeafBindingEntrySet(
       .sort((left, right) =>
         compareCanonicalStrings(publishedResourcePinKey(left), publishedResourcePinKey(right)),
       ),
+    pack_entries: packEntries,
+    pack_requirement_expressions: packRequirementExpressions.sort((left, right) =>
+      compareCanonicalStrings(left.binding_path, right.binding_path),
+    ),
     entries,
     policy_disabled_binding_paths: [...disabledPaths].sort(compareCanonicalStrings),
   });

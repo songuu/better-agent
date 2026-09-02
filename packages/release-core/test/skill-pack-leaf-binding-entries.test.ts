@@ -22,10 +22,25 @@ function candidate(document: unknown) {
   return { schema_version: 'executable-source-candidate/1', workspace_id: workspaceId, document };
 }
 
-function fixture(options: { secondMount?: boolean; selectExposure?: boolean } = {}) {
+function fixture(
+  options: {
+    aliasExposure?: boolean;
+    disabledWithExposure?: boolean;
+    secondMount?: boolean;
+    selectExposure?: boolean;
+  } = {},
+) {
   const leafInput = leafCandidate();
   const leaf = prepareLeafResourceSource(leafInput);
   const packInput = skillPackSource();
+  if (options.aliasExposure) {
+    const exposure = packInput.document.exposures[0];
+    if (exposure === undefined) throw new Error('fixture Pack exposure is missing');
+    packInput.document.exposures.push({
+      ...structuredClone(exposure),
+      exposed_operation_id: 'search-alias',
+    });
+  }
   const pack = prepareSkillPackSource(packInput);
   const agent = richAgentSource();
   const packBinding = agent.capability_bindings.find((item) => item.kind === 'skill_pack');
@@ -51,7 +66,7 @@ function fixture(options: { secondMount?: boolean; selectExposure?: boolean } = 
   if (directLeafBinding === undefined || packMember === undefined)
     throw new Error('fixture direct leaf Binding is missing');
   Object.assign(directLeafBinding, structuredClone(packMember), { binding_id: 'plugin' });
-  if (options.selectExposure === false) packBinding.enabled = false;
+  if (options.selectExposure === false || options.disabledWithExposure) packBinding.enabled = false;
   if (options.secondMount) {
     const second = structuredClone(packBinding);
     second.binding_id = 'pack-second';
@@ -177,6 +192,32 @@ describe('Skill Pack leaf Binding entry assembly', () => {
       operation_contracts: [value.leaf.operation_contract],
       dependency_node_ids: [canonicalResourceNodeId(value.leaf.full_pin)],
     });
+    expect(result.pack_entries).toHaveLength(1);
+    expect(result.pack_entries[0]).toMatchObject({
+      binding_path: value.paths.bindings.find((binding) => binding.members.length > 0)
+        ?.binding_path,
+      binding_id: value.packBinding.binding_id,
+      binding_kind: 'skill_pack',
+      target: value.pack.full_pin,
+      source_contract_hash: value.pack.full_pin.contract_hash,
+      operation_contracts: [value.leaf.operation_contract],
+      dependency_node_ids: [canonicalResourceNodeId(value.pack.full_pin)],
+    });
+    expect(result.pack_entries[0]?.skill_pack_operation_routes).toHaveLength(1);
+    expect(result.pack_requirement_expressions).toHaveLength(1);
+  });
+
+  it('deduplicates one member operation exposed through multiple Pack aliases', () => {
+    const value = fixture({ aliasExposure: true });
+    const result = prepareSkillPackLeafBindingEntrySet(
+      value.root,
+      value.packInput,
+      [value.leafInput],
+      value.policies,
+    );
+    expect(result.pack_entries[0]?.skill_pack_operation_routes).toHaveLength(2);
+    expect(result.pack_entries[0]?.operation_contracts).toEqual([value.leaf.operation_contract]);
+    expect(result.pack_requirement_expressions[0]?.expression.expression_kind).toBe('leaf');
   });
 
   it('meets Workspace, root, Pack-mount and member ceilings', () => {
@@ -267,6 +308,20 @@ describe('Skill Pack leaf Binding entry assembly', () => {
     ).toThrow('CLOSURE_POLICY_REQUIREMENT_UNAVAILABLE');
   });
 
+  it('requires the Pack-mount ceiling to carry every exposed operation', () => {
+    const value = fixture();
+    const policies = {
+      ...value.policies,
+      pack_binding_ceilings: value.policies.pack_binding_ceilings.map((item) => ({
+        ...item,
+        ceiling: { ...value.ceiling, operation_contract_hashes: [] },
+      })),
+    };
+    expect(() =>
+      prepareSkillPackLeafBindingEntrySet(value.root, value.packInput, [value.leafInput], policies),
+    ).toThrow('CLOSURE_POLICY_REQUIREMENT_UNAVAILABLE');
+  });
+
   it('marks disabled Pack member paths unavailable without erasing their entries', () => {
     const value = fixture({ selectExposure: false });
     const result = prepareSkillPackLeafBindingEntrySet(
@@ -276,7 +331,37 @@ describe('Skill Pack leaf Binding entry assembly', () => {
       value.policies,
     );
     expect(result.entries).toHaveLength(1);
-    expect(result.policy_disabled_binding_paths).toEqual([result.entries[0]?.binding_path]);
+    expect(result.pack_entries).toHaveLength(1);
+    expect(result.pack_entries[0]?.operation_contracts).toEqual([]);
+    expect(result.pack_entries[0]?.skill_pack_operation_routes).toEqual([]);
+    expect(result.pack_entries[0]?.effective_policy).toMatchObject({
+      principal_modes: [],
+      operation_contract_hashes: [],
+      max_calls: 0,
+    });
+    expect(result.pack_requirement_expressions).toEqual([]);
+    expect(result.policy_disabled_binding_paths).toEqual(
+      [result.entries[0]?.binding_path, result.pack_entries[0]?.binding_path].sort(),
+    );
+  });
+
+  it('retains sealed routes while making a source-disabled Pack impossible to execute', () => {
+    const value = fixture({ disabledWithExposure: true });
+    const result = prepareSkillPackLeafBindingEntrySet(
+      value.root,
+      value.packInput,
+      [value.leafInput],
+      value.policies,
+    );
+    expect(result.pack_entries[0]?.operation_contracts).toEqual([value.leaf.operation_contract]);
+    expect(result.pack_entries[0]?.skill_pack_operation_routes).toHaveLength(1);
+    expect(result.pack_entries[0]?.effective_policy).toMatchObject({
+      principal_modes: [],
+      max_calls: 0,
+      operation_contract_hashes: [value.leaf.operation_contract.contract_hash],
+    });
+    expect(result.pack_requirement_expressions).toEqual([]);
+    expect(result.policy_disabled_binding_paths).toContain(result.pack_entries[0]?.binding_path);
   });
 
   it('returns canonical deeply frozen intermediate evidence without closure authority', () => {
@@ -290,6 +375,7 @@ describe('Skill Pack leaf Binding entry assembly', () => {
     expect(result).not.toHaveProperty('closure_hash');
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.entries[0]?.effective_policy)).toBe(true);
+    expect(Object.isFrozen(result.pack_entries[0]?.skill_pack_operation_routes)).toBe(true);
   });
 
   it('seals Agent to Pack and Pack to every unique leaf in one graph snapshot', () => {
