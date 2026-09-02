@@ -11,4 +11,4 @@
 - 策略交集的两个输入都合法，不代表返回对象仍在字节预算内；host×path 组合会复制长字段。返回前重新验证完整输出，并回归“超限当次拒绝”和“合法结果可以继续组合”。
 - JSON parser 接受键不代表后续 schema parser 会保留键；本次 Zod record 解析会丢弃 own `__proto__`。哈希前比较完整 raw/parsed canonical bytes，Agent 与 Flow 各自保留负例；这不是全局 prototype pollution 的证据。
 - 递归 `z.union` 会在失败分支中重复解析嵌套 body；本次 condition loop 13 层触发数千次 leaf parse。改为按 mode/type 分派，并用可控 schema-only leaf 访问次数回归复杂度，避免以易抖动的毫秒阈值作正确性测试。
-- 不要把 verified child-root `minimum_limits` 直接复制成 parent Flow/SubAgent Binding 的固有需求：父调用本身会增加 calls/depth，并可能叠加 budget；缺少明确组合公式时，这种“看似保守的透传”实际会低估权限需求。安全做法是先传递完整 verified dependency resource node，延后 entry compilation。
+- 不要把 verified child-root `minimum_limits` 直接复制成 parent Flow/SubAgent Binding 的固有需求：父调用本身会增加 calls/depth/budget。应保留完整 requirement expression，用含显式 invocation demand 的 `nested_call` 编译 envelope；直接透传 child minima 会低估权限需求。

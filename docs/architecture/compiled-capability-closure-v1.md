@@ -1,6 +1,6 @@
 # Compiled Capability Closure v1
 
-> **状态：T1 canonical identity 与 T2 policy meet 已实现并本地验证；完整 closure compiler、registry/readback、admission 与应用上线仍待实现**
+> **状态：T1–T2 与 T3.2 的部分 closure kernel 已实现并本地验证；完整 closure compiler、registry/readback、admission 与应用上线仍待实现**
 > **适用范围：** `packages/domain-contracts`、`packages/agent-runtime`、`packages/flow-ir`、`packages/policy`、`packages/release-core`、`apps/worker`  
 > **关联：** [Agent Release v1](./agent-release-v1与能力装配契约.md)、[Flow IR v1](./flow-ir-v1与运行时契约.md)、[Agent Strategy ABI v1](./agent-runtime-strategy-v1.md)、[ADR-003](../adr/003-多租户与凭据模型.md)
 
@@ -197,9 +197,15 @@ interface SkillPackOperationRouteV1 {
 
 interface ClosureResourceNodeBaseV1 {
   node_id: ClosureResourceNodeIdV1;
-  intrinsic_policy: IntrinsicCapabilityPolicyV1;
+  intrinsic_policy: CapabilityRequirementExpressionV1;
   dependency_manifest_hash: string;
 }
+
+type CapabilityRequirementExpressionV1 =
+  | { schema_version: "capability-requirement-expression/1"; expression_kind: "leaf"; requirements: CapabilityRequirementsV1 }
+  | { schema_version: "capability-requirement-expression/1"; expression_kind: "sequence" | "parallel" | "alternative"; children: CapabilityRequirementExpressionV1[] }
+  | { schema_version: "capability-requirement-expression/1"; expression_kind: "repeat"; max_iterations: number; child: CapabilityRequirementExpressionV1 }
+  | { schema_version: "capability-requirement-expression/1"; expression_kind: "nested_call"; invocation: CapabilityRequirementsV1; child: CapabilityRequirementExpressionV1 };
 
 type ClosureResourceNodeV1 = ClosureResourceNodeBaseV1 & (
   | { node_role: "root"; pin: ClosureRootPinV1 }
@@ -343,6 +349,19 @@ Direct Agent→SubAgent expansion 按 target kind 分两条 closed 路径。`int
 `capability-budget/1` 所有维度都必填：`amount_credits` 为 PostgreSQL bigint 范围内规范非负十进制字符串；`input_tokens`、`output_tokens`、`total_tokens`、`duration_ms` 为非负 safe integer。各自取 min，0 代表零额度，不是 unlimited，缺字段/未知字段拒绝。calls/depth/parallelism 同样为非负 safe integer。金额比较只使用 bigint，不转换为 Number。资源的 `minimum_limits` 必须逐维不超过有效上限。
 
 `minimum_limits` 是一次能力执行需要同时满足的最低资源消耗，因此除逐轴校验外，`input_tokens + output_tokens` 的最低消耗之和也不得超过有效 `total_tokens` 上限；用 bigint 做联合可行性比较。ceiling 的 input/output 上限不必相加小于 total 上限，后者可以合法地限制二者的联合使用。
+
+组合资源不得先压平成一组 requirements。`CapabilityRequirementExpressionV1` 是相关性的权威来源，每节点最多 128 个 children，整树最多 1,024 节点、32 层；公共 schema 在递归解析前用迭代式 topology guard 拒绝超限输入。数值 envelope 只为现有 flat effective-policy 边界生成，并使用以下闭合规则：
+
+| expression | calls | depth | parallelism | credits/tokens | duration |
+|---|---:|---:|---:|---:|---:|
+| `leaf` | leaf | leaf | leaf | leaf；`total_tokens >= input + output` | leaf |
+| `sequence` | sum | max | max | sum | sum |
+| `parallel` | sum | max | sum | sum | max |
+| `alternative` | max | max | max | component-wise max；flat envelope 的 total 至少为 max-input + max-output | max |
+| `repeat(n)` | child × n | child | child | child × n | child × n |
+| `nested_call` | invocation + child | max(invocation, child + 1) | max | invocation + child | invocation + child |
+
+`nested_call.invocation` 必须是已验证的完整 `CapabilityRequirementsV1`，不能用隐含零预算替代父调用。任何 safe-integer 或 PostgreSQL bigint 溢出都在编译时失败。`alternative` 的 flat envelope 仅是所有分支可被同一上限承载的最小轴对齐包络；原表达式必须继续保留，不能用 envelope 反推或替代分支语义。
 
 纯内核在返回前对完整规范结果重新执行同一结构/字节预算验证，再深度冻结；两份合法输入的笛卡尔交集可能增加输出大小，必须在本次 meet 拒绝，不能等下一次使用才失败。不访问网络、凭据或数据库；其 meet 结果本身不是可信授权凭证。GateSpec/operation-key 的实际绑定、registry 真实性和 epoch 重验证仍分别由 T3–T5 实现。
 

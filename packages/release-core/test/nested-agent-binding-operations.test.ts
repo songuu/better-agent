@@ -277,7 +277,12 @@ describe('nested Agent Binding operation projection', () => {
       },
     };
     rootNode.intrinsic_policy = intrinsicPolicy;
-    const draft = { ...value.closure, resource_nodes: resourceNodes, closure_hash: hashA };
+    const draft = {
+      ...value.closure,
+      resource_nodes: resourceNodes,
+      aggregate_limits: { ...value.closure.aggregate_limits, max_calls: 1 },
+      closure_hash: hashA,
+    };
     const closure = {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),

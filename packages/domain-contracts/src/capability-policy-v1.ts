@@ -169,6 +169,13 @@ export const CapabilityPolicyCeilingV1Schema = z.strictObject({
   ...PolicyShape,
 });
 
+export const CapabilityMinimumLimitsV1Schema = z.strictObject({
+  calls: Limit,
+  depth: Limit,
+  parallelism: Limit,
+  budget: CapabilityBudgetV1Schema,
+});
+
 export const CapabilityRequirementsV1Schema = z.strictObject({
   schema_version: z.literal('capability-requirements/1'),
   credential_requirements: Requirements,
@@ -179,12 +186,7 @@ export const CapabilityRequirementsV1Schema = z.strictObject({
   side_effect_class: SideEffect,
   approval_required: z.boolean(),
   operation_contract_hashes: OperationHashes,
-  minimum_limits: z.strictObject({
-    calls: Limit,
-    depth: Limit,
-    parallelism: Limit,
-    budget: CapabilityBudgetV1Schema,
-  }),
+  minimum_limits: CapabilityMinimumLimitsV1Schema,
 });
 
 export const EffectiveCapabilityPolicyV1Schema = z.strictObject({
@@ -195,6 +197,7 @@ export const EffectiveCapabilityPolicyV1Schema = z.strictObject({
 export type CanonicalEgressRuleV1 = z.infer<typeof CanonicalEgressRuleV1Schema>;
 export type CapabilityBudgetV1 = z.infer<typeof CapabilityBudgetV1Schema>;
 export type CapabilityPolicyCeilingV1 = z.infer<typeof CapabilityPolicyCeilingV1Schema>;
+export type CapabilityMinimumLimitsV1 = z.infer<typeof CapabilityMinimumLimitsV1Schema>;
 export type CapabilityRequirementsV1 = z.infer<typeof CapabilityRequirementsV1Schema>;
 export type EffectiveCapabilityPolicyV1 = z.infer<typeof EffectiveCapabilityPolicyV1Schema>;
 
@@ -218,6 +221,7 @@ export type CapabilityRequirementExpressionV1 =
   | {
       readonly schema_version: 'capability-requirement-expression/1';
       readonly expression_kind: 'nested_call';
+      readonly invocation: CapabilityRequirementsV1;
       readonly child: CapabilityRequirementExpressionV1;
     };
 
@@ -240,11 +244,19 @@ const CapabilityRequirementExpressionNodeV1Schema: z.ZodType<CapabilityRequireme
         max_iterations: z.number().int().min(1).max(10_000),
         child: CapabilityRequirementExpressionNodeV1Schema,
       }),
-      z.strictObject({
-        schema_version: z.literal('capability-requirement-expression/1'),
-        expression_kind: z.literal('nested_call'),
-        child: CapabilityRequirementExpressionNodeV1Schema,
-      }),
+      z
+        .strictObject({
+          schema_version: z.literal('capability-requirement-expression/1'),
+          expression_kind: z.literal('nested_call'),
+          invocation: CapabilityRequirementsV1Schema,
+          child: CapabilityRequirementExpressionNodeV1Schema,
+        })
+        .refine(
+          (value) =>
+            value.invocation.minimum_limits.calls >= 1 &&
+            value.invocation.minimum_limits.parallelism >= 1,
+          'nested invocation must account for at least one call and one execution slot',
+        ),
     ]),
   );
 

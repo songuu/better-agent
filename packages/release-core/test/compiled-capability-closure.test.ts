@@ -108,6 +108,37 @@ describe('compiled capability closure verification', () => {
     );
   });
 
+  it('rejects a root demand envelope that exceeds its self-consistently hashed aggregate limits', () => {
+    const valid = closureInput();
+    const candidate = {
+      ...valid,
+      resource_nodes: [
+        {
+          ...valid.resource_nodes[0],
+          intrinsic_policy: {
+            ...emptyCapabilityRequirementExpression,
+            requirements: {
+              ...emptyCapabilityRequirementExpression.requirements,
+              minimum_limits: {
+                ...emptyCapabilityRequirementExpression.requirements.minimum_limits,
+                calls: 1,
+              },
+            },
+          },
+        },
+      ],
+      closure_hash: hashA,
+    };
+    expectCode(
+      () =>
+        prepareCompiledCapabilityClosure({
+          ...candidate,
+          closure_hash: canonicalSha256ExcludingRootKeys(candidate, ['closure_hash']),
+        }),
+      'CLOSURE_POLICY_REQUIREMENT_UNAVAILABLE',
+    );
+  });
+
   it('rejects unknown fields and future schema versions', () => {
     expectCode(
       () => prepareCompiledCapabilityClosure({ ...closureInput(), trusted: true }),

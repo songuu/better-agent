@@ -72,6 +72,11 @@ const intrinsicExpression = {
   requirements: intrinsicRequirements,
 } as const;
 
+const invocationRequirements = {
+  ...intrinsicRequirements,
+  minimum_limits: { ...intrinsicRequirements.minimum_limits, calls: 1, parallelism: 1 },
+} as const;
+
 function actionNode(nodeId: string, key: string, type: 'output' | 'start' | 'text') {
   return {
     node_id: nodeId,
@@ -262,6 +267,7 @@ describe('Compiled closure reference integrity', () => {
       tooDeep = {
         schema_version: 'capability-requirement-expression/1',
         expression_kind: 'nested_call',
+        invocation: invocationRequirements,
         child: tooDeep,
       };
     }
@@ -272,11 +278,20 @@ describe('Compiled closure reference integrity', () => {
       hostileDepth = {
         schema_version: 'capability-requirement-expression/1',
         expression_kind: 'nested_call',
+        invocation: invocationRequirements,
         child: hostileDepth,
       };
     }
     expect(() => CapabilityRequirementExpressionV1Schema.safeParse(hostileDepth)).not.toThrow();
     expect(CapabilityRequirementExpressionV1Schema.safeParse(hostileDepth).success).toBe(false);
+    expect(
+      CapabilityRequirementExpressionV1Schema.safeParse({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'nested_call',
+        invocation: intrinsicRequirements,
+        child: intrinsicExpression,
+      }).success,
+    ).toBe(false);
   });
 
   const binding = {

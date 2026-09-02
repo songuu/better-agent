@@ -131,6 +131,7 @@ describe('requirement expression normalization', () => {
       expression = {
         schema_version: 'capability-requirement-expression/1',
         expression_kind: 'nested_call',
+        invocation: requirements(),
         child: expression,
       };
     }
@@ -139,6 +140,7 @@ describe('requirement expression normalization', () => {
       normalizeExpression({
         schema_version: 'capability-requirement-expression/1',
         expression_kind: 'nested_call',
+        invocation: requirements(),
         child: expression,
       }),
     ).toThrow('CLOSURE_POLICY_INPUT_INVALID');

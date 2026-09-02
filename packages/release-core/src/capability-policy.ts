@@ -1,6 +1,8 @@
 import {
   type CanonicalEgressRuleV1,
   type CapabilityBudgetV1,
+  type CapabilityMinimumLimitsV1,
+  CapabilityMinimumLimitsV1Schema,
   type CapabilityPolicyCeilingV1,
   CapabilityPolicyCeilingV1Schema,
   type CapabilityRequirementExpressionV1,
@@ -250,6 +252,7 @@ function normalizeRequirementExpressionNode(
     return {
       schema_version: value.schema_version,
       expression_kind: value.expression_kind,
+      invocation: normalizeCapabilityRequirements(value.invocation),
       child: normalizeRequirementExpressionNode(value.child),
     };
   }
@@ -280,6 +283,228 @@ export function normalizeCapabilityRequirementExpression(
   );
   if (!normalized.success) invalid('$');
   return deepFreezeJson(normalized.data);
+}
+
+const maximumSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
+const maximumCredits = 9_223_372_036_854_775_807n;
+
+function numericLimitExceeded(path: string): never {
+  throw new ReleaseCoreError(
+    'CLOSURE_POLICY_LIMIT_EXCEEDED',
+    path,
+    'composite capability requirement exceeds its numeric contract',
+  );
+}
+
+function checkedNumber(value: bigint, path: string): number {
+  if (value > maximumSafeInteger) numericLimitExceeded(path);
+  return Number(value);
+}
+
+function addNumber(left: number, right: number, path: string): number {
+  return checkedNumber(BigInt(left) + BigInt(right), path);
+}
+
+function multiplyNumber(value: number, multiplier: number, path: string): number {
+  return checkedNumber(BigInt(value) * BigInt(multiplier), path);
+}
+
+function addCredits(left: string, right: string, path: string): string {
+  const result = BigInt(left) + BigInt(right);
+  if (result > maximumCredits) numericLimitExceeded(path);
+  return result.toString();
+}
+
+function multiplyCredits(value: string, multiplier: number, path: string): string {
+  const result = BigInt(value) * BigInt(multiplier);
+  if (result > maximumCredits) numericLimitExceeded(path);
+  return result.toString();
+}
+
+function leafLimits(requirements: CapabilityRequirementsV1): CapabilityMinimumLimitsV1 {
+  const limits = requirements.minimum_limits;
+  return {
+    ...limits,
+    budget: {
+      ...limits.budget,
+      total_tokens: Math.max(
+        limits.budget.total_tokens,
+        addNumber(
+          limits.budget.input_tokens,
+          limits.budget.output_tokens,
+          '$.minimum_limits.budget.total_tokens',
+        ),
+      ),
+    },
+  };
+}
+
+function sumBudgets(
+  left: CapabilityBudgetV1,
+  right: CapabilityBudgetV1,
+  duration: 'sum' | 'maximum',
+): CapabilityBudgetV1 {
+  return {
+    schema_version: 'capability-budget/1',
+    amount_credits: addCredits(
+      left.amount_credits,
+      right.amount_credits,
+      '$.minimum_limits.budget.amount_credits',
+    ),
+    input_tokens: addNumber(
+      left.input_tokens,
+      right.input_tokens,
+      '$.minimum_limits.budget.input_tokens',
+    ),
+    output_tokens: addNumber(
+      left.output_tokens,
+      right.output_tokens,
+      '$.minimum_limits.budget.output_tokens',
+    ),
+    total_tokens: addNumber(
+      left.total_tokens,
+      right.total_tokens,
+      '$.minimum_limits.budget.total_tokens',
+    ),
+    duration_ms:
+      duration === 'sum'
+        ? addNumber(left.duration_ms, right.duration_ms, '$.minimum_limits.budget.duration_ms')
+        : Math.max(left.duration_ms, right.duration_ms),
+  };
+}
+
+function sumLimits(
+  left: CapabilityMinimumLimitsV1,
+  right: CapabilityMinimumLimitsV1,
+  parallel: boolean,
+): CapabilityMinimumLimitsV1 {
+  return {
+    calls: addNumber(left.calls, right.calls, '$.minimum_limits.calls'),
+    depth: Math.max(left.depth, right.depth),
+    parallelism: parallel
+      ? addNumber(left.parallelism, right.parallelism, '$.minimum_limits.parallelism')
+      : Math.max(left.parallelism, right.parallelism),
+    budget: sumBudgets(left.budget, right.budget, parallel ? 'maximum' : 'sum'),
+  };
+}
+
+function alternativeEnvelope(
+  children: readonly CapabilityMinimumLimitsV1[],
+): CapabilityMinimumLimitsV1 {
+  const result = children.reduce((left, right) => ({
+    calls: Math.max(left.calls, right.calls),
+    depth: Math.max(left.depth, right.depth),
+    parallelism: Math.max(left.parallelism, right.parallelism),
+    budget: {
+      schema_version: 'capability-budget/1' as const,
+      amount_credits:
+        BigInt(left.budget.amount_credits) >= BigInt(right.budget.amount_credits)
+          ? left.budget.amount_credits
+          : right.budget.amount_credits,
+      input_tokens: Math.max(left.budget.input_tokens, right.budget.input_tokens),
+      output_tokens: Math.max(left.budget.output_tokens, right.budget.output_tokens),
+      total_tokens: Math.max(left.budget.total_tokens, right.budget.total_tokens),
+      duration_ms: Math.max(left.budget.duration_ms, right.budget.duration_ms),
+    },
+  }));
+  result.budget.total_tokens = Math.max(
+    result.budget.total_tokens,
+    addNumber(
+      result.budget.input_tokens,
+      result.budget.output_tokens,
+      '$.minimum_limits.budget.total_tokens',
+    ),
+  );
+  return result;
+}
+
+function foldRequirementLimits(
+  expression: CapabilityRequirementExpressionV1,
+): CapabilityMinimumLimitsV1 {
+  if (expression.expression_kind === 'leaf') return leafLimits(expression.requirements);
+  if (expression.expression_kind === 'repeat') {
+    const child = foldRequirementLimits(expression.child);
+    return {
+      calls: multiplyNumber(child.calls, expression.max_iterations, '$.minimum_limits.calls'),
+      depth: child.depth,
+      parallelism: child.parallelism,
+      budget: {
+        schema_version: 'capability-budget/1',
+        amount_credits: multiplyCredits(
+          child.budget.amount_credits,
+          expression.max_iterations,
+          '$.minimum_limits.budget.amount_credits',
+        ),
+        input_tokens: multiplyNumber(
+          child.budget.input_tokens,
+          expression.max_iterations,
+          '$.minimum_limits.budget.input_tokens',
+        ),
+        output_tokens: multiplyNumber(
+          child.budget.output_tokens,
+          expression.max_iterations,
+          '$.minimum_limits.budget.output_tokens',
+        ),
+        total_tokens: multiplyNumber(
+          child.budget.total_tokens,
+          expression.max_iterations,
+          '$.minimum_limits.budget.total_tokens',
+        ),
+        duration_ms: multiplyNumber(
+          child.budget.duration_ms,
+          expression.max_iterations,
+          '$.minimum_limits.budget.duration_ms',
+        ),
+      },
+    };
+  }
+  if (expression.expression_kind === 'nested_call') {
+    const invocation = leafLimits(expression.invocation);
+    const child = foldRequirementLimits(expression.child);
+    const result = sumLimits(invocation, child, false);
+    result.depth = Math.max(invocation.depth, addNumber(child.depth, 1, '$.minimum_limits.depth'));
+    return result;
+  }
+  const children = expression.children.map(foldRequirementLimits);
+  if (expression.expression_kind === 'alternative') return alternativeEnvelope(children);
+  return children.reduce((left, right) =>
+    sumLimits(left, right, expression.expression_kind === 'parallel'),
+  );
+}
+
+/** Smallest flat axis-aligned envelope; the normalized expression remains correlation authority. */
+export function compileCapabilityRequirementLimitEnvelope(
+  input: unknown,
+): Readonly<CapabilityMinimumLimitsV1> {
+  const expression = normalizeCapabilityRequirementExpression(input);
+  const result = CapabilityMinimumLimitsV1Schema.safeParse(foldRequirementLimits(expression));
+  if (!result.success) invalid('$.minimum_limits');
+  return deepFreezeJson(result.data);
+}
+
+/** Prove that a flat effective policy can carry the complete root expression envelope. */
+export function verifyCapabilityRequirementLimitEnvelope(
+  expressionInput: unknown,
+  policyInput: unknown,
+): Readonly<CapabilityMinimumLimitsV1> {
+  const envelope = compileCapabilityRequirementLimitEnvelope(expressionInput);
+  const policy = parse(policyInput, EffectiveCapabilityPolicyV1Schema);
+  for (const [demand, bound] of [
+    ['calls', 'max_calls'],
+    ['depth', 'max_depth'],
+    ['parallelism', 'max_parallelism'],
+  ] as const) {
+    if (envelope[demand] > policy[bound]) unavailable(`$.minimum_limits.${demand}`);
+  }
+  if (BigInt(envelope.budget.amount_credits) > BigInt(policy.budget.amount_credits)) {
+    unavailable('$.minimum_limits.budget.amount_credits');
+  }
+  for (const field of budgetNumbers) {
+    if (envelope.budget[field] > policy.budget[field]) {
+      unavailable(`$.minimum_limits.budget.${field}`);
+    }
+  }
+  return envelope;
 }
 
 function sealCeiling(value: Ceiling): Readonly<Ceiling> {

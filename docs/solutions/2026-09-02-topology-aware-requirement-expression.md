@@ -18,7 +18,7 @@ aliases: ["CapabilityRequirementExpressionV1", "组合能力最小需求表达�
 
 ## Solution
 
-- 引入闭合递归语法：`leaf`、`sequence`、`parallel`、`alternative`、`repeat`、`nested_call`。
+- 引入闭合递归语法：`leaf`、`sequence`、`parallel`、`alternative`、`repeat`、`nested_call`；nested call 另带已验证 invocation requirements。
 - 每个 leaf 继续使用完整 `CapabilityRequirementsV1`；每节点最多 128 个子项，整树最多 1,024 节点、32 层。
 - `sequence` 保留业务顺序；`parallel` 与 `alternative` 按 canonical JSON 排序并拒绝重复分支。
 - closure 校验逐节点重算规范表达式；即使攻击者同步重算 closure hash，非规范分支顺序仍失败关闭。
@@ -26,7 +26,7 @@ aliases: ["CapabilityRequirementExpressionV1", "组合能力最小需求表达�
 
 ## Prevention
 
-在定义 leaf、alternative、sequence、parallel、repeat 与 nested-call 的数值组合规则之前，不生成 root/composite Binding entry。测试必须同时覆盖顺序敏感、无序置换稳定、重复拒绝，以及 32/33 层边界。
+数值组合使用 [[2026-09-02-capability-requirement-limit-envelope]]；root/composite Binding entry 必须调用该编译器，不能复制 child minima。测试必须同时覆盖顺序敏感、无序置换稳定、重复拒绝，以及 32/33 层边界。
 
 ## Related
 
