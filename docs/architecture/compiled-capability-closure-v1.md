@@ -465,6 +465,31 @@ parent delegable closure
 
 **集成边界：** Binding 可以增加 required scopes、审批/key、提高 output taint、减少 principal modes/limits；helper 返回的仍是 **source intrinsic artifact**，不是合并 Binding 后的 effective path policy。最终 compiler 必须单独纳入 Binding 的更严要求与限制。此处不解析/执行 SQL，不做 JSON Schema 元/实例校验，不验证真实索引、连接器、二进制、远程 tool discovery 或 A2A 官方协议符合性；也不验证 network approval、DNS/IP runtime enforcement、sealed registry/readback、Workspace 内容归属或 nested closure。可信 catalog/artifact readback、完整 closure 与 T5/T6 admission 才能把这些内容用于发布执行。四种纯 source adapter 不构成完整应用、上线或新的 host-attested Acceptance；现有 G0 publisher 不变。
 
+#### 7.1.3 Agent Strategy source and assembly profile
+
+`agent-strategy-source-candidate/1` 固定同 Workspace 与 `agent-strategy-source/1` 正文。正文包含 Strategy/release UUID、`agent-strategy-abi/1`、implementation digest、真实 config/config schema、input/state/decision/observation 四个 ABI schema、sandbox profile、allowed model policy、允许的 capability/gate ID 集合及 iterations/model attempts/tool calls 上限。调用方不能提交 component hashes 代替这些正文。
+
+`strategy-sandbox-profile/1` 是闭集声明：profile ID、固定 host ABI、network/filesystem/database/secrets 四项均为 deny、memory 上限 1–1,073,741,824 bytes、instruction count 1–1,000,000,000。`strategy-model-policy/1` 包含最多 128 个唯一 descriptor ID 的完整 `(descriptor_id, provider_id, model_id, model_revision, model_contract_hash)`，拒绝 latest/floating_latest revision；input/output token cap 分别为 0–1,000,000。这是本项目的固定模型声明格式，不是厂商模型目录或当前账号授权证明。允许 ID 集合各最多 128 项，iterations 为 1–1,000,000，model/tool 次数为 0–1,000,000。
+
+`prepareAgentStrategySource` 应用 source 有界快照与无损解析，ID 集合按字典序、模型集合按完整 JCS bytes 排序，业务 JSON 数组保序。`agent-strategy-source-preimage/1` 精确含 schema/compiler/canonicalizer versions、Workspace、`AGENT_STRATEGY_RELEASE` kind 与完整 document；完整 pin hash 为 SHA-256/JCS(preimage)。八个 component hashes 为 config、config_schema、四个 ABI schema、sandbox_profile、allowed_model_policy。另导出与 `AgentStrategyPinV1` 完整对应的 strategy_pin 及空直接依赖 manifest；输出再次有界并深冻结。verify 分别限制 expected/candidate，重算比较完整 artifact。
+
+`verifyAgentStrategyAssembly` 先通过真实 Agent executable source 语义校验，再核同 Workspace、完整 strategy_pin 相等；Agent 自身的 model policy 每个完整描述必须属于 Strategy 模型集合，两个 token cap 只能收窄，空模型/零 cap 合法。Agent 不存在的 Binding/Gate ID 不能通过。这不验证 config/schema 实例、二进制实现、实际 sandbox enforcement、模型 registry、发布或 ResolvedPlan；这些仍由后续集成完成，不修改 G0 Strategy 发布摘要。
+
+#### 7.1.4 Skill Pack source projection profile
+
+`skill-pack-source-candidate/1` 固定同 Workspace 与 `skill-pack-source/1` 正文。正文为 resource/release UUID、manual、真实 input/可选 output envelope schema、1–128 个唯一 `binding_id` 的完整 typed member Bindings，以及 1–128 个唯一 `exposed_operation_id` 的曝光声明。每个曝光包含 exposed ID、member Binding ID、member operation ID 与完整 `operation-contract-source/1`。拒绝自报 projection/hash、动态 discovery 或未定型成员。
+
+`prepareCapabilityBindingSource` 复用 executable source 的闭集、同 Workspace full-pin、hash 与显式集合规范化，不修改原输入；声明 `requires_key` 必须给出 operation key source。`prepareSkillPackSource` 对所有成员执行此边界，成员按 binding ID、曝光按 exposed ID 排序。禁用/未曝光成员仍完整保留并进入直接依赖 manifest；同版本冲突 hash 和自身 pack version 依赖均失败。每个曝光必须指向已启用的存在成员：非 pack 成员通过单 operation 声明核对并匹配 operation ID；嵌套 pack 必须在成员 config 找到 exact exposed ID/hash，并满足已知 operation 的 effect/key/approval 最低要求，不按名称发现。
+
+`skill-pack-source-preimage/1` 精确含 schema/compiler/canonicalizer versions、Workspace、`SKILL_PACK_RELEASE` kind 和完整 document。完整 pin hash 为 SHA-256/JCS(preimage)。输出 `prepared-skill-pack-source/1` 包含 document、preimage、full_pin、全部直接依赖 manifest、manual/input/可选 output component hashes，以及：
+
+- `exposed_operations`：每项固定 exposed ID/hash、member Binding/operation ID、完整 member target pin 与重算 operation pin。
+- `member_projection`：`schema_version="skill-pack-member-projection/1"`、完整规范 member Bindings 和上述 exposed_operations；`member_projection_hash=SHA-256(JCS(member_projection))`。
+
+整个输出再次应用 source 预算并深冻结；verify 独立限制 expected/candidate 并比较全部 artifact。`verifySkillPackBinding` 核对 typed full target pin、manual 文本/hash、完整 envelope schemas/缺失状态、projection hash 与 exact exposed ID/hash 子集。enabled Binding 的子集不能为空；disabled Binding 可为空，但不删除源成员/依赖。外层 effect class 不得低于所选成员与已知 operation；operation/member 要求 key 或审批时必须保留，output classification 不得低于所选成员。
+
+**证明范围：** 这里固定的是源声明与局部曝光映射，不是 `SkillPackOperationRoute` 的 canonical path seal。子 pack 正文、所有成员（含曝光/未曝光成员）目标的实际来源、递归循环/closure、最终路径策略交集、凭证/egress/budget 收窄、GateSpec coverage 与 registry readback 仍由 T3/T4/T5/T6 完成。envelope schema 在此仅绑定内容，不做 JSON Schema 验证或输入转换执行。不得以此投影替代已发布资源、运行时路由授权或完整应用验收。
+
 ### 7.2 Final closure integration
 
 `closure_hash = SHA-256(JCS(closure_without_closure_hash))`。JCS 指 RFC 8785 JSON Canonicalization Scheme。root 必须按以下两阶段顺序生成，不得把 final `compiled_hash` 又放回 closure 形成循环：

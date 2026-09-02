@@ -66,6 +66,8 @@ No task is marked `[P]`: the kernel is L4, tasks share contracts and each consum
 
 ## 5. Verification
 
+Current T3.2 source increment (still partial): Strategy and Skill Pack source adapters now bind full bodies, exact model/operation identities and member restrictions. Strategy has 49 regressions; Skill Pack has 40; eight new domain cases cover the closed profiles. Package totals are release-core **542/542** and domain-contracts **143/143**. See `.handoff/g1-a1-composite-source-review.md` for final gates and independent review. Instruction Skill remains the next unimplemented typed source adapter; all earlier statements listing Strategy/Skill Pack as pending describe their historical increments. Final closure compilation, JSON Schema validation, canonical routes, registry/admission integration and application delivery remain open. No new PostgreSQL, upload, host-attested or production acceptance is claimed.
+
 - Baseline observed this session: release-core has 33 passing tests. This is baseline evidence only, not G1 implementation coverage.
 - The current working-tree `pnpm check` also completed successfully on 2026-09-02 (format, lint, workspace, contracts, typecheck, tests and build; Turbo cache reuse was enabled, with existing non-fatal lint warnings). It does not run the PostgreSQL suites or establish a fresh host attestation.
 - Unit/contract tests: independent canonical vectors; unknown fields/kinds; Unicode and size boundaries; nested repeated IDs; permutation stability for sets and order sensitivity for paths; cycles; duplicate/colliding identities; missing or mixed deployment profiles; mutable latest rejection.

@@ -1,6 +1,7 @@
 export * from './agent-release-v1.js';
 export * from './agent-deployment-v1.js';
 export * from './agent-strategy-release-v1.js';
+export * from './agent-strategy-source-v1.js';
 export * from './agent-strategy-v1.js';
 export * from './auth-v1.js';
 export * from './billing-v1.js';
@@ -18,6 +19,7 @@ export * from './leaf-resource-source-v1.js';
 export * from './operation-contract-source-v1.js';
 export * from './primitives.js';
 export * from './retention-v1.js';
+export * from './skill-pack-source-v1.js';
 export * from './registry.js';
 export * from './run-event-outbox-v1.js';
 export * from './run-execution-v1.js';

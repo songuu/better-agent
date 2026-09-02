@@ -1,6 +1,10 @@
 import type { z } from 'zod';
 import { OperationContractSourceV1Schema } from './operation-contract-source-v1.js';
 import {
+  SkillPackSourceV1Schema,
+  SkillPackSourceCandidateV1Schema,
+} from './skill-pack-source-v1.js';
+import {
   A2aAgentSourceV1Schema,
   DatabaseOperationSourceV1Schema,
   KnowledgeIndexGenerationSourceV1Schema,
@@ -34,6 +38,10 @@ import {
   SubagentContextProjectionV1Schema,
 } from './agent-release-v1.js';
 import { AgentStrategyReleaseV1Schema } from './agent-strategy-release-v1.js';
+import {
+  AgentStrategySourceV1Schema,
+  AgentStrategySourceCandidateV1Schema,
+} from './agent-strategy-source-v1.js';
 import {
   StrategyCheckpointV1Schema,
   StrategyGateRequestV1Schema,
@@ -250,6 +258,8 @@ export const domainContractSchemaEntries = [
   { schemaVersion: 'agent-release/1', schema: AgentReleaseV1Schema },
   { schemaVersion: 'agent-executable-source/1', schema: AgentExecutableSourceV1Schema },
   { schemaVersion: 'operation-contract-source/1', schema: OperationContractSourceV1Schema },
+  { schemaVersion: 'skill-pack-source/1', schema: SkillPackSourceV1Schema },
+  { schemaVersion: 'skill-pack-source-candidate/1', schema: SkillPackSourceCandidateV1Schema },
   {
     schemaVersion: 'knowledge-index-generation-source/1',
     schema: KnowledgeIndexGenerationSourceV1Schema,
@@ -262,6 +272,11 @@ export const domainContractSchemaEntries = [
     schema: LeafResourceSourceCandidateV1Schema,
   },
   { schemaVersion: 'agent-strategy-release/1', schema: AgentStrategyReleaseV1Schema },
+  { schemaVersion: 'agent-strategy-source/1', schema: AgentStrategySourceV1Schema },
+  {
+    schemaVersion: 'agent-strategy-source-candidate/1',
+    schema: AgentStrategySourceCandidateV1Schema,
+  },
   { schemaVersion: 'experience-release/1', schema: ExperienceReleaseV1Schema },
   { schemaVersion: 'deployment-policy-pin/1', schema: ImmutableDeploymentPolicyPinV1Schema },
   { schemaVersion: 'agent-deployment-stable/1', schema: AgentDeploymentV1Schema },

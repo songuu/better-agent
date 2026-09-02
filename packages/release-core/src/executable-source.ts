@@ -1,4 +1,5 @@
 import {
+  CapabilityBindingV1Schema,
   AgentExecutableSourceV1Schema,
   FlowIrV1Schema,
   UuidV1Schema,
@@ -182,6 +183,26 @@ function normalizeBinding(binding: CapabilityBindingV1, workspace: string): void
     case 'flow':
       break;
   }
+}
+
+/** Reuse the executable source's exact typed Binding canonicalization for composite resources. */
+export function prepareCapabilityBindingSource(
+  workspaceInput: unknown,
+  bindingInput: unknown,
+): CapabilityBindingV1 {
+  const [workspace, input] = bounded([workspaceInput, bindingInput]) as unknown[];
+  uuid(workspace);
+  const parsed = CapabilityBindingV1Schema.safeParse(input);
+  if (!parsed.success || !canonicalJsonBytes(input).equals(canonicalJsonBytes(parsed.data)))
+    invalid();
+  if (
+    parsed.data.side_effect.class === 'requires_key' &&
+    parsed.data.side_effect.operation_key_source === undefined
+  )
+    invalid();
+  normalizeBinding(parsed.data, workspace);
+  bounded(parsed.data);
+  return deepFreezeJson(parsed.data);
 }
 
 function normalizeAgent(source: AgentExecutableSourceV1, workspace: string) {

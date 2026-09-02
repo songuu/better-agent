@@ -13,3 +13,5 @@ export * from './pinned-dependency-graph.js';
 export * from './executable-source.js';
 export * from './operation-contract-source.js';
 export * from './leaf-resource-source.js';
+export * from './agent-strategy-source.js';
+export * from './skill-pack-source.js';

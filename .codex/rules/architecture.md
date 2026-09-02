@@ -47,3 +47,8 @@
 - Database read scope includes selected, predicate, ordering and additional-filter columns; membership/order are implicit information flows. User columns need the Binding allowlist, all reads need intrinsic read/output classification. Fixed tenant/principal guards are mandatory and cannot be replaced by user filters.
 - Source adapters bind typed content to complete pins but do not attest referenced implementations, catalog ownership or registry seals. Their returned intrinsic artifact deliberately excludes Binding-added narrowing; the final path compiler must incorporate that narrowing separately.
 - A successful bounded prepare must remain verifiable. Independently bound artifact and source operands when their combined size is not part of the declared artifact contract; test large legal round trips alongside input-fit/output-overflow rejection.
+
+## Composite source declarations
+
+- Exact nested operation alias/hash equality does not prove that the intermediate Binding covers the known operation's effect/key/approval floor. Check each declared layer, including requires_key having a key source; final path-policy and registry verification remain separate obligations.
+- Strategy model narrowing compares every complete descriptor identity, not only provider or contract hash. Source sandbox deny-all declarations are immutable content, not proof of actual runtime isolation.
