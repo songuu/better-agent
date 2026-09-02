@@ -13,3 +13,4 @@
 {"date":"2026-09-02","skill":"compound","result":"completed","context":"bounded compiled and nested capability closure verification"}
 {"date":"2026-09-02","skill":"compound","result":"completed","context":"canonical ordering and uniqueness for compiled closure sets"}
 {"date":"2026-09-02","skill":"compound","result":"completed","context":"verified nested Agent operation projection into parent-prefixed Binding paths"}
+{"date":"2026-09-02","skill":"compound","result":"completed","context":"source-aware nested Flow operation projection into parent-prefixed node paths"}

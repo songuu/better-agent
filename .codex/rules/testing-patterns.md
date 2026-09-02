@@ -32,3 +32,4 @@
 - Compiled closure verifier 必须覆盖：完整 hash 重算、unknown/future fields、accessor/proxy、collection budget、resource node/path identity 重算，以及 nested Agent/Flow 的 version tuple/hash 双重 join。必须保留“published pin hash 与 semantic seed hash 可以不同”的正例，防止误把两个 hash 层级合并。
 - Closure canonical-set 测试必须先为乱序/重复 candidate 重算一个自洽 `closure_hash`，再断言 verifier 仍拒绝；否则测试只证明 hash mismatch，不能证明 canonical order enforcement。
 - Nested Agent operation projection 测试需要故意让 parent/child 复用同一 Binding ID，并覆盖同一 child 的两个 mount、重封后的 child path 缺失、重封后的 target 漂移以及 graph/closure hash 不一致；这样才能区分 exact path/target join 与错误的 local-ID/position join。
+- Nested Flow operation projection 除多 mount/path/freeze 外，还必须用重封后的非 Flow-node canonical path、缺失 source dependency 的 graph manifest 和缺失 assembly pin 的 closure 分别测试；只测 nested closure hash 会漏掉 source→graph→closure 三方装配漂移。
