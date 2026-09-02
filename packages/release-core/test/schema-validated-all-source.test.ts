@@ -223,7 +223,7 @@ describe('Schema validation across every typed source location', () => {
       to: { node_id: node.node_id, port: 'in' },
     }));
     record(document).entry_graph = {
-      graph_id: 'large-graph',
+      graph_id: 'root',
       entry_node_id: nodes[0]?.node_id ?? '',
       exit_node_ids: [nodes.at(-1)?.node_id ?? ''],
       nodes,

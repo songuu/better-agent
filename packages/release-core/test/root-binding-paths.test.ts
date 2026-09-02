@@ -6,8 +6,13 @@ import {
   prepareExecutableSource,
   ReleaseCoreError,
 } from '../src/index.js';
-import { compileRootBindingPathsFromPreparedSource } from '../src/root-binding-paths.js';
-import { nestedFlowSource, richAgentSource } from './executable-source-fixtures.js';
+import { prepareFlowNodePaths, prepareRootBindingPaths } from '../src/root-binding-paths.js';
+import {
+  deeplyNestedFlowSource,
+  maximumNodeFlowSource,
+  nestedFlowSource,
+  richAgentSource,
+} from './executable-source-fixtures.js';
 import { workspaceId } from './fixtures.js';
 
 function candidate(document: unknown = richAgentSource()) {
@@ -21,14 +26,14 @@ function requiredBinding(source: ReturnType<typeof richAgentSource>, index: numb
 }
 
 function compile(document: unknown = richAgentSource()) {
-  return compileRootBindingPathsFromPreparedSource(prepareExecutableSource(candidate(document)));
+  return prepareRootBindingPaths(candidate(document));
 }
 
 describe('root Binding path compilation', () => {
   it('compiles every Agent capability Binding into a canonical typed path', () => {
     const source = richAgentSource();
     const prepared = prepareExecutableSource(candidate(source));
-    const result = compileRootBindingPathsFromPreparedSource(prepared);
+    const result = prepareRootBindingPaths(candidate(source));
     expect(result.bindings).toHaveLength(richAgentSource().capability_bindings.length);
     for (const binding of result.bindings) {
       const declared = source.capability_bindings.find(
@@ -157,5 +162,165 @@ describe('root Binding path compilation', () => {
     const source = richAgentSource();
     source.capability_bindings.push(structuredClone(requiredBinding(source, 0)));
     expect(() => compile(source)).toThrow('CLOSURE_SOURCE_INVALID');
+  });
+});
+
+function compileFlow(document: unknown = nestedFlowSource()) {
+  return prepareFlowNodePaths(candidate(document));
+}
+
+describe('recursive Flow node path compilation', () => {
+  it('compiles every node across root, branch, else and loop-body graphs', () => {
+    const result = compileFlow();
+    expect(result.nodes).toHaveLength(12);
+    expect(new Set(result.nodes.map((node) => node.graph_id))).toEqual(
+      new Set(['root', 'z', 'a', 'loop-graph', 'body']),
+    );
+  });
+
+  it('constructs an independent canonical path for a root graph node', () => {
+    const prepared = prepareExecutableSource(candidate(nestedFlowSource()));
+    const result = prepareFlowNodePaths(candidate(nestedFlowSource()));
+    const node = result.nodes.find(
+      (item) => item.graph_id === 'root' && item.node_id === 'start-1',
+    );
+    const segments = [
+      { segment_kind: 'root' as const, pin: prepared.root.pin },
+      {
+        segment_kind: 'flow_node' as const,
+        owner: { owner_kind: 'root' as const, pin: prepared.root.pin },
+        graph_id: 'root',
+        node_id: 'start-1',
+      },
+    ];
+    expect(node?.source_path_segments).toEqual(segments);
+    expect(node?.source_path).toBe(canonicalBindingPath(segments));
+  });
+
+  it('retains parent Flow node ancestry for nested graphs', () => {
+    const nested = compileFlow().nodes.find(
+      (node) => node.graph_id === 'z' && node.node_id === 'prelude',
+    );
+    expect(nested?.source_path_segments.map((segment) => segment.segment_kind)).toEqual([
+      'root',
+      'flow_node',
+      'flow_node',
+    ]);
+    expect(nested?.source_path_segments[1]).toMatchObject({
+      graph_id: 'root',
+      node_id: 'output-1',
+    });
+  });
+
+  it('separates sibling graph nodes that reuse the same local node ID', () => {
+    const result = compileFlow();
+    const first = result.nodes.find((node) => node.graph_id === 'z' && node.node_id === 'middle');
+    const second = result.nodes.find((node) => node.graph_id === 'a' && node.node_id === 'middle');
+    expect(first?.source_path).not.toBe(second?.source_path);
+  });
+
+  it('retains both loop node and loop-body node ancestry', () => {
+    const nested = compileFlow().nodes.find(
+      (node) => node.graph_id === 'body' && node.node_id === 'leaf',
+    );
+    expect(nested?.source_path_segments.slice(1)).toMatchObject([
+      { graph_id: 'root', node_id: 'output-1' },
+      { graph_id: 'loop-graph', node_id: 'loop' },
+      { graph_id: 'body', node_id: 'leaf' },
+    ]);
+  });
+
+  it('retains the complete deep ancestry without shallow truncation', () => {
+    const source = deeplyNestedFlowSource();
+    const prepared = prepareExecutableSource(candidate(source));
+    const result = prepareFlowNodePaths(candidate(source));
+    const leaf = result.nodes.find((node) => node.graph_id === 'deep-8');
+    const nodeSegments = leaf?.source_path_segments.slice(1);
+    expect(
+      nodeSegments?.map((segment) =>
+        segment.segment_kind === 'flow_node' ? `${segment.graph_id}/${segment.node_id}` : 'invalid',
+      ),
+    ).toEqual([
+      'root/outer-loop',
+      'deep-0/loop-0',
+      'deep-1/loop-1',
+      'deep-2/loop-2',
+      'deep-3/loop-3',
+      'deep-4/loop-4',
+      'deep-5/loop-5',
+      'deep-6/loop-6',
+      'deep-7/loop-7',
+      'deep-8/leaf',
+    ]);
+    expect(leaf?.source_path).toBe(
+      canonicalBindingPath([
+        { segment_kind: 'root', pin: prepared.root.pin },
+        ...(nodeSegments ?? []),
+      ]),
+    );
+  });
+
+  it('emits globally unique source paths', () => {
+    const paths = compileFlow().nodes.map((node) => node.source_path);
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it('sorts the semantic node set by canonical opaque path', () => {
+    const paths = compileFlow().nodes.map((node) => node.source_path);
+    expect(paths).toEqual([...paths].sort(compareCanonicalStrings));
+  });
+
+  it('is stable when node declaration sets are permuted', () => {
+    const source = nestedFlowSource();
+    source.entry_graph.nodes.reverse();
+    expect(compileFlow(source)).toEqual(compileFlow());
+  });
+
+  it('returns a deeply immutable non-authoritative intermediate result', () => {
+    const result = compileFlow();
+    expect(result).not.toHaveProperty('closure_hash');
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.nodes)).toBe(true);
+    expect(Object.isFrozen(result.nodes[0]?.source_path_segments[0])).toBe(true);
+  });
+
+  it('rejects Agent roots at the Flow-only compiler boundary', () => {
+    expect(() => prepareFlowNodePaths(candidate(richAgentSource()))).toThrow(
+      'CLOSURE_SOURCE_INVALID',
+    );
+  });
+
+  it('accepts the exact 4096-node source boundary without exhausting identity entries', () => {
+    expect(prepareFlowNodePaths(candidate(maximumNodeFlowSource())).nodes).toHaveLength(4096);
+  });
+
+  it.each([
+    [
+      'empty nodes',
+      () => ({
+        ...nestedFlowSource(),
+        entry_graph: { ...nestedFlowSource().entry_graph, nodes: [] },
+      }),
+      'CLOSURE_SOURCE_INVALID',
+    ],
+    [
+      'empty graph id',
+      () => ({
+        ...nestedFlowSource(),
+        entry_graph: { ...nestedFlowSource().entry_graph, graph_id: '' },
+      }),
+      'CLOSURE_SOURCE_INVALID',
+    ],
+    ['extra field', () => ({ ...nestedFlowSource(), extra: true }), 'CLOSURE_SOURCE_INVALID'],
+    ['4097 nodes', () => maximumNodeFlowSource(true), 'CLOSURE_SOURCE_LIMIT_EXCEEDED'],
+  ])('revalidates raw Flow input and rejects %s', (_name, makeSource, code) => {
+    let thrown: unknown;
+    try {
+      prepareFlowNodePaths(candidate(makeSource()));
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ReleaseCoreError);
+    expect(thrown).toMatchObject({ code, path: '$.document' });
   });
 });

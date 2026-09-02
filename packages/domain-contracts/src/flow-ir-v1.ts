@@ -340,6 +340,9 @@ export const FlowIrV1Schema = z
     ui: JsonValueSchema.optional(),
   })
   .superRefine((flow, ctx) => {
+    if (flow.entry_graph.graph_id !== 'root') {
+      addCustomIssue(ctx, ['entry_graph', 'graph_id'], 'root graph id must be root');
+    }
     const rootStarts = flow.entry_graph.nodes.filter((node) => node.type === 'start');
     if (rootStarts.length !== 1 || rootStarts[0]?.node_id !== flow.entry_graph.entry_node_id) {
       addCustomIssue(
@@ -360,6 +363,28 @@ export const FlowIrV1Schema = z
     }
     if (!hasUniqueBy(flow.credential_requirements, (requirement) => requirement.requirement_id)) {
       addCustomIssue(ctx, ['credential_requirements'], 'credential requirement ids must be unique');
+    }
+
+    const graphIds = new Set<string>();
+    const pending = [flow.entry_graph];
+    while (pending.length > 0) {
+      const graph = pending.pop();
+      if (graph === undefined) continue;
+      if (graphIds.has(graph.graph_id)) {
+        addCustomIssue(ctx, ['entry_graph'], `graph id ${graph.graph_id} is not globally unique`);
+        break;
+      }
+      graphIds.add(graph.graph_id);
+      for (const node of graph.nodes) {
+        if (node.type === 'loop') pending.push((node.config as { body: FlowGraphV1 }).body);
+        if (node.type === 'branch') {
+          const config = node.config as {
+            cases: { graph: FlowGraphV1 }[];
+            else_case: { graph: FlowGraphV1 };
+          };
+          pending.push(config.else_case.graph, ...config.cases.map((item) => item.graph));
+        }
+      }
     }
   });
 

@@ -83,6 +83,7 @@ export const BindingPathSegmentV1Schema = z.union([
   z.strictObject({
     segment_kind: z.literal('flow_node'),
     owner: FlowOwnerIdentityV1Schema,
+    graph_id: NonEmptyStringSchema,
     node_id: NonEmptyStringSchema,
   }),
   z.strictObject({

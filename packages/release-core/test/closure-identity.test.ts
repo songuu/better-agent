@@ -40,6 +40,7 @@ const flowNode = {
     owner_kind: 'published_dependency',
     pin: { ...pin, published_resource_kind: 'FLOW_VERSION', resource_id: 'f' },
   },
+  graph_id: 'graph/root',
   node_id: 'n',
 } as const;
 const packMember = {
@@ -70,7 +71,7 @@ describe('closure identity byte profile v1', () => {
   it.each([
     [[root], 'bp1.-Gnvvgfh1D_HeBYADWBUUXfy7NyGnxZyxKVwWTxG3TU'],
     [[root, binding], 'bp1.FtX6VgF4AA17aTbyIjcjrizShHYUJT17UM6eV_p_C3U'],
-    [[root, flowNode], 'bp1.nosraYm5GGs9khiQptfmUjVL7sK0KotFc2WMl2PCVYM'],
+    [[root, flowNode], 'bp1.w4zT3q7n6jFzMbHMebXCE3N4Bd1Ji53qxSd7IWs4eCQ'],
     [[root, packMember], 'bp1.NH_zVFNhz5wy0DuNjfjJAlkiYuaIgOHtxZC60LgOdWY'],
     [[root, subagent], 'bp1.J6PlDTXRAvklhCBdNW0Muo_MI0Y4JEXosN3HJsAsWKg'],
   ])('matches independent digest vector %#', (segments, expected) => {
@@ -140,6 +141,12 @@ describe('closure identity byte profile v1', () => {
     expect(canonicalBindingPath([root, first])).not.toBe(canonicalBindingPath([root, second]));
   });
 
+  it('isolates equal Flow node IDs in distinct nested graph namespaces', () => {
+    expect(canonicalBindingPath([root, flowNode])).not.toBe(
+      canonicalBindingPath([root, { ...flowNode, graph_id: 'graph/other' }]),
+    );
+  });
+
   it.each(
     [
       [],
@@ -148,6 +155,8 @@ describe('closure identity byte profile v1', () => {
       [{ ...root, pin: { ...pin, published_resource_kind: 'PLUGIN_TOOL_RELEASE' } }],
       [root, { ...binding, owner: { owner_kind: 'root', pin: { ...pin, resource_id: 'wrong' } } }],
       [root, { ...flowNode, owner: { owner_kind: 'root', pin } }],
+      [root, { ...flowNode, graph_id: '' }],
+      [root, { ...flowNode, graph_id: undefined }],
       [root, { ...packMember, owner_pin: pin }],
       [root, { ...subagent, target_pin: { ...pin, published_resource_kind: 'FLOW_VERSION' } }],
       [root, { ...binding, binding_kind: 'future' }],
@@ -342,7 +351,7 @@ describe('closure identity byte profile v1', () => {
   it('bounds registry entries while preserving existing nodes after overflow', () => {
     const registry = createClosureIdentityRegistry();
     let first: string | undefined;
-    for (let index = 0; index < 4096; index += 1) {
+    for (let index = 0; index < 8192; index += 1) {
       const id = registry.registerResourceNode({ ...pin, resource_id: String(index) });
       if (index === 0) first = id;
     }

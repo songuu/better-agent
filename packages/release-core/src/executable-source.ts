@@ -258,8 +258,10 @@ function normalizeAgent(source: AgentExecutableSourceV1, workspace: string) {
 function normalizeFlowGraph(
   graph: FlowGraphV1,
   resources: readonly PublishedResourcePinV1[],
-  budget: { nodes: number },
+  budget: { nodes: number; graphIds: Set<string> },
 ): void {
+  if (budget.graphIds.has(graph.graph_id)) invalid();
+  budget.graphIds.add(graph.graph_id);
   budget.nodes += graph.nodes.length;
   if (budget.nodes > 4096)
     throw new ReleaseCoreError(
@@ -343,7 +345,7 @@ export function prepareExecutableSource(input: unknown): PreparedExecutableSourc
     );
     for (const requirement of parsed.data.credential_requirements)
       normalizeRequirement(requirement);
-    normalizeFlowGraph(parsed.data.entry_graph, dependencies, { nodes: 0 });
+    normalizeFlowGraph(parsed.data.entry_graph, dependencies, { nodes: 0, graphIds: new Set() });
     const { title: _title, ui: _ui, ...semanticDocument } = parsed.data;
     document = semanticDocument as unknown as JsonObject;
   } else invalid();

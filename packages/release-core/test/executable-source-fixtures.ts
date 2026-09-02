@@ -313,3 +313,131 @@ export function nestedFlowSource() {
     },
   };
 }
+
+export function maximumNodeFlowSource(extraNode = false) {
+  const flow = makeFlowIr();
+  const bodies = [1023, 1023, 1023, extraNode ? 1023 : 1022].map((count, bodyIndex) => {
+    const nodes = Array.from({ length: count }, (_, index) => ({
+      node_id: `n${index}`,
+      key: `n${index}`,
+      type: 'output',
+      config: {},
+      inputs: {},
+      output_schema: {},
+    }));
+    return {
+      graph_id: `body-${bodyIndex}`,
+      entry_node_id: 'n0',
+      exit_node_ids: [`n${count - 1}`],
+      nodes,
+      edges: Array.from({ length: count - 1 }, (_, index) => ({
+        edge_id: `e${index}`,
+        kind: 'control',
+        from: { node_id: `n${index}`, port: 'next' },
+        to: { node_id: `n${index + 1}`, port: 'in' },
+      })),
+    } satisfies FlowGraphV1;
+  });
+  return {
+    ...flow,
+    entry_graph: {
+      graph_id: 'root',
+      entry_node_id: 'start-1',
+      exit_node_ids: ['loop3'],
+      nodes: [
+        flow.entry_graph.nodes[0],
+        ...bodies.map((body, index) => ({
+          node_id: `loop${index}`,
+          key: `loop${index}`,
+          type: 'loop',
+          inputs: {},
+          output_schema: {},
+          config: {
+            mode: 'condition',
+            continue_when: 'true',
+            max_iterations: 1,
+            body,
+            exports: {},
+          },
+        })),
+      ],
+      edges: bodies.map((_, index) => ({
+        edge_id: `root${index}`,
+        kind: 'control',
+        from: { node_id: index === 0 ? 'start-1' : `loop${index - 1}`, port: 'next' },
+        to: { node_id: `loop${index}`, port: 'in' },
+      })),
+    } satisfies FlowGraphV1,
+  };
+}
+
+export function deeplyNestedFlowSource(depth = 8) {
+  const flow = makeFlowIr();
+  let body: FlowGraphV1 = {
+    graph_id: `deep-${depth}`,
+    entry_node_id: 'leaf',
+    exit_node_ids: ['leaf'],
+    nodes: [
+      { node_id: 'leaf', key: 'leaf', type: 'output', config: {}, inputs: {}, output_schema: {} },
+    ],
+    edges: [],
+  };
+  for (let index = depth - 1; index >= 0; index -= 1) {
+    const nodeId = `loop-${index}`;
+    body = {
+      graph_id: `deep-${index}`,
+      entry_node_id: nodeId,
+      exit_node_ids: [nodeId],
+      nodes: [
+        {
+          node_id: nodeId,
+          key: `loop_${index}`,
+          type: 'loop',
+          inputs: {},
+          output_schema: {},
+          config: {
+            mode: 'condition',
+            continue_when: 'true',
+            max_iterations: 1,
+            body,
+            exports: {},
+          },
+        },
+      ],
+      edges: [],
+    };
+  }
+  return {
+    ...flow,
+    entry_graph: {
+      graph_id: 'root',
+      entry_node_id: 'start-1',
+      exit_node_ids: ['outer-loop'],
+      nodes: [
+        flow.entry_graph.nodes[0],
+        {
+          node_id: 'outer-loop',
+          key: 'outer_loop',
+          type: 'loop',
+          inputs: {},
+          output_schema: {},
+          config: {
+            mode: 'condition',
+            continue_when: 'true',
+            max_iterations: 1,
+            body,
+            exports: {},
+          },
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'outer-edge',
+          kind: 'control',
+          from: { node_id: 'start-1', port: 'next' },
+          to: { node_id: 'outer-loop', port: 'in' },
+        },
+      ],
+    } satisfies FlowGraphV1,
+  };
+}

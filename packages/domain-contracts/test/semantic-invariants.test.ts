@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BindingPathSegmentV1Schema,
   CompiledBindingEntryV1Schema,
   CompiledCapabilityClosureV1Schema,
   FlowGraphV1Schema,
+  FlowIrV1Schema,
   ProductionPromotionGateDecisionV1Schema,
 } from '../src/index.js';
 
@@ -99,6 +101,83 @@ describe('Flow graph semantic invariants', () => {
     expect(cyclic.success).toBe(false);
     if (!cyclic.success) expect(cyclic.error.message).toContain('acyclic');
   });
+
+  it('rejects duplicate graph IDs across the complete Flow document', () => {
+    const body = {
+      graph_id: 'root',
+      entry_node_id: 'body-output',
+      exit_node_ids: ['body-output'],
+      nodes: [actionNode('body-output', 'body_output', 'output')],
+      edges: [],
+    };
+    const result = FlowIrV1Schema.safeParse({
+      schema_version: 'flow-ir/1',
+      flow_id: 'flow',
+      flow_version_id: 'version',
+      title: 'Flow',
+      entry_graph: {
+        graph_id: 'root',
+        entry_node_id: 'start',
+        exit_node_ids: ['loop'],
+        nodes: [
+          actionNode('start', 'start', 'start'),
+          {
+            node_id: 'loop',
+            key: 'loop',
+            type: 'loop',
+            inputs: {},
+            output_schema: {},
+            config: {
+              mode: 'condition',
+              continue_when: 'true',
+              max_iterations: 1,
+              body,
+              exports: {},
+            },
+          },
+        ],
+        edges: [
+          {
+            edge_id: 'edge',
+            from: { node_id: 'start', port: 'control' },
+            to: { node_id: 'loop', port: 'control' },
+            kind: 'control',
+          },
+        ],
+      },
+      input_schema: {},
+      output_schema: {},
+      resources: [],
+      credential_requirements: [],
+      execution_defaults: {},
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.message).toContain('globally unique');
+  });
+
+  it('requires the canonical root graph namespace', () => {
+    const graph = {
+      graph_id: 'not-root',
+      entry_node_id: 'start',
+      exit_node_ids: ['start'],
+      nodes: [actionNode('start', 'start', 'start')],
+      edges: [],
+    };
+    const result = FlowIrV1Schema.safeParse({
+      schema_version: 'flow-ir/1',
+      flow_id: 'flow',
+      flow_version_id: 'version',
+      title: 'Flow',
+      entry_graph: graph,
+      input_schema: {},
+      output_schema: {},
+      resources: [],
+      credential_requirements: [],
+      execution_defaults: {},
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.message).toContain('root graph id must be root');
+  });
 });
 
 describe('Compiled closure reference integrity', () => {
@@ -175,6 +254,24 @@ describe('Compiled closure reference integrity', () => {
       expect(result.error.message).toContain('unknown dependency node');
       expect(result.error.message).toContain('unknown source node');
     }
+  });
+});
+
+describe('Flow node path namespace', () => {
+  const flowPin = { ...rootPin, published_resource_kind: 'FLOW_VERSION' as const };
+  const segment = {
+    segment_kind: 'flow_node',
+    owner: { owner_kind: 'root', pin: flowPin },
+    graph_id: 'nested-graph',
+    node_id: 'shared-node',
+  } as const;
+
+  it('requires both graph and node identity in a closed Flow node segment', () => {
+    expect(BindingPathSegmentV1Schema.safeParse(segment).success).toBe(true);
+    const { graph_id: _graphId, ...withoutGraph } = segment;
+    expect(BindingPathSegmentV1Schema.safeParse(withoutGraph).success).toBe(false);
+    expect(BindingPathSegmentV1Schema.safeParse({ ...segment, graph_id: '' }).success).toBe(false);
+    expect(BindingPathSegmentV1Schema.safeParse({ ...segment, extra: true }).success).toBe(false);
   });
 });
 

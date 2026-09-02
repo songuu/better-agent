@@ -127,6 +127,7 @@ type BindingPathSegmentV1 =
   | {
       segment_kind: "flow_node";
       owner: FlowOwnerIdentityV1;
+      graph_id: string;
       node_id: string;
     }
   | {
@@ -255,6 +256,8 @@ interface OperationContractPinV1 {
 
 `binding_id` 只在其定义 Release 内唯一，不是 closure 级身份。`binding_path_segments` 必须以 `root` 开始，随后按实际嵌套顺序追加类型化 `binding/flow_node/skill_pack_member/subagent_target` segment；每个 owner/target 都携带完整 pin，局部 ID 只存在于声明它的 owner segment。`binding-path-lp-utf8/1` 将每个 segment 编码为固定 tag，再将该 variant 的字段按协议固定顺序编码为 `field_tag:uint8 + utf8_length:uint32be + utf8_bytes`，整个序列以 segment count 和每段 byte length 前缀连接；`binding_path` 是这些 canonical bytes 的 SHA-256，以无 padding 的 `bp1.<base64url(digest)>` 表示。值中的 `/`、`:`、Unicode、空串或类似前缀因此不能造成边界歧义，且公开 path 不可逆地暴露内部 pin；禁止自行拼接 `agent:<id>/binding:<id>`、JSON pointer、显示名或对 digest 做第二次编码。publisher/closure loader 必须从 closed `binding_path_segments` 重算 path 并逐字相等，拒绝非法 UTF-8、非最短 length、未知 tag、重复 path 或同 path 不同 segments（后者以 `BINDING_PATH_DIGEST_COLLISION` 失败）。`disabled_binding_paths`、Resolved Plan membership、Skill Pack route 与运行时 Call 都只使用这个 canonical opaque path；嵌套 Flow、Skill Pack 或 SubAgent 中重复的局部 `binding_id` 不得互相覆盖。
 
+Flow 的 `node_id` 只在所属 graph 内唯一，因此 `flow_node` segment 必须同时编码 `graph_id`。一个 Flow source 内的 `graph_id` 必须全局唯一；branch/loop 的 sibling graph 可以复用同一 node ID，但仍因 graph namespace 不同得到不同 canonical path。不得依赖遍历序号或 branch 显示文本消歧。
+
 `resource_nodes` 必须包含恰好一个与 `ClosureRootV1.pin` 逐字相等的 root node，以及所有依赖 node。`ClosureResourceNodeV1.node_id` 必须逐字等于 `rn1.<base64url(SHA-256(JCS(pin)))>`；JCS 输入是完整五元 pin（`workspace_id + published_resource_kind + resource_id + resource_version_id + contract_hash`）连同 `binding_mode="pinned"`，不能只用 kind/version UUID。相同 node ID 若解出/关联到不同 canonical pin 必须以 `RESOURCE_NODE_ID_COLLISION` 拒绝发布，不能做跨 Workspace 或跨 catalog 去重。
 
 `gate_specs` 是发布期 Gate 权限边界，不是 UI 元数据。Agent Release 的 `AgentGateSpecV1` 和 Flow node 的 `GateSpecV1` 都必须以 source resource node、canonical Flow source path（如适用）、ID/hash、kind、decision schema hash、approver policy ref/hash、notification hash、disposition 和 protected operation allow-set 写入 `CompiledGateSpecEntryV1`；Agent root spec 不得携带 Flow-only source 字段。`approval_gate_spec` 必须精确命中同 closure 的一条 `kind="approval"` spec，且覆盖该 Binding 的 operation contract；Agent Strategy 只能请求已发布 allow-set 内的 ID/hash。缺失、重复、hash 不符、错 source/kind 或运行时自报策略都 fail closed；运行时只能按当前 epoch 收窄 pinned approver policy，不能替换。
@@ -265,6 +268,8 @@ interface OperationContractPinV1 {
 
 G1 的 identity 实现使用以下固定字节语法；这是第 3 节 length-prefixed 编码的具体化，不接受额外 tag/字段或可替代序列化。路径 API 消费 closed typed segments，不提供接收任意二进制编码的入口。
 
+**未发布基线重置（2026-09-02）：** T1 的本地 `/1` golden baseline 在任何 registry/publisher 持久化前补入 `flow_node.graph_id`，用于消除合法 sibling graph 复用 node ID 时的身份碰撞。仓库级 `rg "binding-path-lp-utf8/1|bp1\\."` 只命中 source、测试和未完成计划，T6 publisher/registry 仍为 open；因此不存在需要双读的历史持久化 `/1` artifact。此次 reset 必须随 T3.2 提交及 review evidence 留档；从首次持久化开始，任何改变字段/tag/digest 的修改都必须发布新 identity/closure 版本，不得再次原位改写 `/1`。
+
 - 整体：`segment_count:uint32be`，随后每段为 `segment_byte_length:uint32be + segment_bytes`；无 BOM、分隔符、padding 或隐式终止字符。
 - 每段：`segment_tag:uint8`，随后按下表字段顺序编码。第一个字段 tag 为 1，依次递增；每字段为 `field_tag:uint8 + utf8_byte_length:uint32be + utf8_bytes`。所有字段值是字符串，保留 Unicode 原始标量序列，不进行 NFC/NFD、大小写或空白归一化。
 - 完整 pin 的字段顺序固定为 `workspace_id, published_resource_kind, resource_id, resource_version_id, contract_hash, binding_mode`。owner pin/target pin 采用同一展开顺序。
@@ -274,13 +279,13 @@ G1 的 identity 实现使用以下固定字节语法；这是第 3 节 length-pr
 |---|---|---|
 | root | 1 | full pin (fields 1–6) |
 | binding | 2 | owner_kind, full owner pin, binding_kind, local_binding_id (fields 1–9) |
-| flow_node | 3 | owner_kind, full owner pin, node_id (fields 1–8) |
+| flow_node | 3 | owner_kind, full owner pin, graph_id, node_id (fields 1–9) |
 | skill_pack_member | 4 | full owner_pin, local_member_binding_id (fields 1–7) |
 | subagent_target | 5 | full target_pin (fields 1–6) |
 
 路径必须恰好以一个 root 开始；后续不得再有 root，`owner_kind=root` 的 pin 必须逐字等于起始 root pin。每路径最多 128 segments；每字符串最多 4,096 UTF-8 bytes；最终编码最多 1,048,576 bytes。这些是当前 publisher/loader 的绝对拒绝上限，不做截断或降级。输入仅接受普通数据对象、连续数组和字符串；拒绝 getter、symbol、额外属性、非法 Unicode、NUL 和超过结构预算的输入。资源 node pin 使用同一输入边界，再经既有 RFC 8785 JCS 编码。
 
-`bp1.` / `rn1.` 后只能是 SHA-256 的 32 字节摘要的 canonical base64url（43 个字符，最后字符的未使用位必须为 0），不允许 `=`、标准 base64 别名、换行、前后空白或再次编码。loader 从原始 segments/pin 重算并精确比较，不把仅通过格式 Schema 当作身份验证。编译器在单个 closure 内登记 canonical bytes：binding path 重复拒绝，resource node 相同完整 pin 可去重，相同 digest 对应不同 canonical bytes 分别以 `BINDING_PATH_DIGEST_COLLISION` / `RESOURCE_NODE_ID_COLLISION` 失败。该内存登记器只服务有界编译过程，不作为跨请求的全局缓存；两类身份合计最多 4,096 entries、16,777,216 retained bytes，超限登记不得修改已存状态。
+`bp1.` / `rn1.` 后只能是 SHA-256 的 32 字节摘要的 canonical base64url（43 个字符，最后字符的未使用位必须为 0），不允许 `=`、标准 base64 别名、换行、前后空白或再次编码。loader 从原始 segments/pin 重算并精确比较，不把仅通过格式 Schema 当作身份验证。编译器在单个 closure 内登记 canonical bytes：binding path 重复拒绝，resource node 相同完整 pin 可去重，相同 digest 对应不同 canonical bytes 分别以 `BINDING_PATH_DIGEST_COLLISION` / `RESOURCE_NODE_ID_COLLISION` 失败。该内存登记器只服务有界编译过程，不作为跨请求的全局缓存；两类身份合计最多 8,192 entries、16,777,216 retained bytes，超限登记不得修改已存状态。8,192 的 entry ceiling 必须容纳合法的 4,096-node Flow、root resource identity 和后续有界依赖身份；retained-byte ceiling 仍独立生效。
 
 ### 4.1 发布时展开
 

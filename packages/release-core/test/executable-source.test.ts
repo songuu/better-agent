@@ -6,7 +6,11 @@ import {
   type FlowGraphV1,
 } from '@better-agent/domain-contracts';
 import { boundedDataSnapshot } from '../src/bounded-data-snapshot.js';
-import { nestedFlowSource, richAgentSource } from './executable-source-fixtures.js';
+import {
+  maximumNodeFlowSource,
+  nestedFlowSource,
+  richAgentSource,
+} from './executable-source-fixtures.js';
 import {
   canonicalSha256,
   deriveExecutableCompiledHash,
@@ -333,6 +337,35 @@ describe('source semantic sets and fixed resource references', () => {
       'CLOSURE_SOURCE_INVALID',
     );
   });
+
+  it('rejects duplicate graph IDs across sibling branch namespaces', () => {
+    const source = nestedFlowSource();
+    const branch = source.entry_graph.nodes.find((node) => node.type === 'branch');
+    if (branch === undefined || !('cases' in branch.config)) throw new Error('missing branch');
+    const first = branch.config.cases[0];
+    const second = branch.config.cases[1];
+    if (first === undefined || second === undefined) throw new Error('missing branch cases');
+    second.graph.graph_id = first.graph.graph_id;
+    expect(() => prepareExecutableSource(candidate(source))).toThrow('CLOSURE_SOURCE_INVALID');
+  });
+
+  it.each(['root-to-case', 'case-to-else', 'else-to-loop-body'] as const)(
+    'shares the global graph identity set across %s recursion',
+    (axis) => {
+      const source = nestedFlowSource();
+      const branch = source.entry_graph.nodes.find((node) => node.type === 'branch');
+      if (branch === undefined || !('cases' in branch.config)) throw new Error('missing branch');
+      const first = branch.config.cases[0];
+      if (first === undefined) throw new Error('missing first case');
+      const elseGraph = branch.config.else_case.graph;
+      const loop = elseGraph.nodes.find((node) => node.type === 'loop');
+      if (loop === undefined || !('body' in loop.config)) throw new Error('missing loop');
+      if (axis === 'root-to-case') first.graph.graph_id = source.entry_graph.graph_id;
+      if (axis === 'case-to-else') elseGraph.graph_id = first.graph.graph_id;
+      if (axis === 'else-to-loop-body') loop.config.body.graph_id = elseGraph.graph_id;
+      expect(() => prepareExecutableSource(candidate(source))).toThrow('CLOSURE_SOURCE_INVALID');
+    },
+  );
   it.each(['second_case', 'loop_body', 'else_direct'])(
     'checks isolated subflow drift in %s while sibling references remain valid',
     (location) => {
@@ -533,65 +566,10 @@ describe('source semantic sets and fixed resource references', () => {
 
 describe('executable source absolute budgets', () => {
   it('enforces 4096 aggregate Flow nodes across sibling loop bodies, not just each local graph', () => {
-    function source(extra: boolean) {
-      const flow = makeFlowIr();
-      const bodies = [1023, 1023, 1023, extra ? 1023 : 1022].map((count, bodyIndex) => {
-        const nodes = Array.from({ length: count }, (_, index) => ({
-          node_id: `n${index}`,
-          key: `n${index}`,
-          type: 'output',
-          config: {},
-          inputs: {},
-          output_schema: {},
-        }));
-        return {
-          graph_id: `body-${bodyIndex}`,
-          entry_node_id: 'n0',
-          exit_node_ids: [`n${count - 1}`],
-          nodes,
-          edges: Array.from({ length: count - 1 }, (_, index) => ({
-            edge_id: `e${index}`,
-            kind: 'control',
-            from: { node_id: `n${index}`, port: 'next' },
-            to: { node_id: `n${index + 1}`, port: 'in' },
-          })),
-        };
-      });
-      const nodes = [
-        flow.entry_graph.nodes[0],
-        ...bodies.map((body, index) => ({
-          node_id: `loop${index}`,
-          key: `loop${index}`,
-          type: 'loop',
-          inputs: {},
-          output_schema: {},
-          config: {
-            mode: 'condition',
-            continue_when: 'true',
-            max_iterations: 1,
-            body,
-            exports: {},
-          },
-        })),
-      ];
-      return candidate({
-        ...flow,
-        entry_graph: {
-          graph_id: 'root',
-          entry_node_id: 'start-1',
-          exit_node_ids: ['loop3'],
-          nodes,
-          edges: bodies.map((_, index) => ({
-            edge_id: `root${index}`,
-            kind: 'control',
-            from: { node_id: index === 0 ? 'start-1' : `loop${index - 1}`, port: 'next' },
-            to: { node_id: `loop${index}`, port: 'in' },
-          })),
-        },
-      });
-    }
-    expect(() => prepareExecutableSource(source(false))).not.toThrow();
-    expect(() => prepareExecutableSource(source(true))).toThrow('CLOSURE_SOURCE_LIMIT_EXCEEDED');
+    expect(() => prepareExecutableSource(candidate(maximumNodeFlowSource()))).not.toThrow();
+    expect(() => prepareExecutableSource(candidate(maximumNodeFlowSource(true)))).toThrow(
+      'CLOSURE_SOURCE_LIMIT_EXCEEDED',
+    );
   });
   it('supports full JSON scalars and exact field/key UTF-8 limits', () => {
     const value = {

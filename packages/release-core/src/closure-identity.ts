@@ -17,7 +17,7 @@ type Segment = ReturnType<typeof BindingPathSegmentV1Schema.parse>;
 type Pin = ReturnType<typeof PublishedResourcePinV1Schema.parse>;
 
 const maximumPathBytes = 1_048_576;
-const maximumRegistryEntries = 4_096;
+const maximumRegistryEntries = 8_192;
 const maximumRegistryBytes = 16_777_216;
 
 function invalid(path: string, reason: string): never {
@@ -63,7 +63,12 @@ function segmentFields(segment: Segment): { tag: number; fields: string[] } {
     case 'flow_node':
       return {
         tag: 3,
-        fields: [segment.owner.owner_kind, ...pinFields(segment.owner.pin), segment.node_id],
+        fields: [
+          segment.owner.owner_kind,
+          ...pinFields(segment.owner.pin),
+          segment.graph_id,
+          segment.node_id,
+        ],
       };
     case 'skill_pack_member':
       return { tag: 4, fields: [...pinFields(segment.owner_pin), segment.local_member_binding_id] };

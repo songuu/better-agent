@@ -16,3 +16,5 @@
 - 编码/分块负例应保持实际 decoded bytes、长度、hash 和签名不变，只破坏目标表示规则，避免被内容漂移校验遮蔽。冻结的第三方密码学接口用单独 mock-boundary 套件测试 guard 顺序/选项，真实签名与异常公钥回归仍必须直接跑真实库。
 - 校验器返回父线程原快照会遮蔽 worker 内的数据变更：禁止默认值需用 required+default 且缺字段必拒绝的负例，而不只断言返回值未变。生命周期 fake 必须能延迟 exit/拒绝 terminate，以四槽满载证明仅实际退出释放额度，并用连续 stop 事件证明幂等。独立 schema-node 与完整返回 artifact 预算各有 exact/+1 或输入可用/输出溢出的成对回归。
 - 批量 typed collector 同时需要三类变异：异构第二项证明不截断/不复用首项，独立 output 轴证明不误取 input，真实 1024/1025 结果证明证据分批。deadline 配置值本身不够，fake timer 必须在 4999ms 不终止、5000ms 终止，并证明 exit 前槽位仍占用。
+- 局部 ID 的路径身份要用“相同 ID、不同命名空间”成对回归，并覆盖命名空间重复拒绝。递归路径不仅测叶子存在，还要断言深层 case/else/loop 的完整祖先段序列，才能杀死浅层截断实现。
+- 上游 source 上限与下游 identity registry 上限必须用同一个 exact-max fixture 贯通验证；分别测试两个模块的边界，无法发现合法输入在组合后因额外 root/ancestor 条目而失败。
