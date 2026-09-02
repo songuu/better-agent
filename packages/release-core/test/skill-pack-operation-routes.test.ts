@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { canonicalSha256, prepareExecutableSource, prepareSkillPackSource } from '../src/index.js';
-import { prepareSkillPackOperationRoutes } from '../src/skill-pack-operation-routes.js';
+import {
+  canonicalSha256,
+  deriveDependencyManifest,
+  prepareExecutableSource,
+  preparePinnedDependencyGraph,
+  prepareSkillPackSource,
+} from '../src/index.js';
+import {
+  prepareGraphBoundSkillPackOperationRoutes,
+  prepareSkillPackOperationRoutes,
+} from '../src/skill-pack-operation-routes.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import { workspaceId } from './fixtures.js';
 import { skillPackSource } from './skill-pack-source-fixtures.js';
@@ -29,6 +38,31 @@ function matchingSources() {
     })),
   };
   return { agent, packInput, pack, binding };
+}
+
+function graphFixture() {
+  const sources = matchingSources();
+  const prepared = prepareSkillPackOperationRoutes(candidate(sources.agent), sources.packInput);
+  const rootDependencies = [prepared.dependency];
+  const { contract_hash: _hash, binding_mode: _mode, ...owner } = prepared.dependency;
+  const graphCandidate = {
+    schema_version: 'pinned-dependency-graph-candidate/1',
+    root: prepared.root,
+    root_dependencies: rootDependencies,
+    resources: [
+      {
+        schema_version: 'pinned-dependency-record/1',
+        pin: prepared.dependency,
+        publication_state: 'sealed',
+        dependency_manifest: deriveDependencyManifest(owner, []),
+      },
+    ],
+  };
+  return {
+    ...sources,
+    graphCandidate,
+    graph: preparePinnedDependencyGraph(graphCandidate),
+  };
 }
 
 describe('Skill Pack operation route preparation', () => {
@@ -116,5 +150,35 @@ describe('Skill Pack operation route preparation', () => {
     const prepared = prepareExecutableSource(candidate(agent));
     const result = prepareSkillPackOperationRoutes(candidate(agent), packInput);
     expect(result.root.pin.contract_hash).toBe(prepared.root.pin.contract_hash);
+  });
+
+  it('binds the prepared route slice to the exact recomputed direct graph edge', () => {
+    const value = graphFixture();
+    const result = prepareGraphBoundSkillPackOperationRoutes(
+      value.graph,
+      value.graphCandidate,
+      candidate(value.agent),
+      value.packInput,
+    );
+    expect(result.graph_binding.graph_hash).toBe(value.graph.graph_hash);
+    expect(result.graph_binding.dependency_node.pin).toEqual(result.prepared_routes.dependency);
+    expect(result.prepared_routes.routes).toHaveLength(1);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('rejects route preparation when the Pack is not a direct graph dependency', () => {
+    const value = graphFixture();
+    const changed = structuredClone(value.graphCandidate);
+    changed.root_dependencies = [];
+    changed.resources = [];
+    const changedGraph = preparePinnedDependencyGraph(changed);
+    expect(() =>
+      prepareGraphBoundSkillPackOperationRoutes(
+        changedGraph,
+        changed,
+        candidate(value.agent),
+        value.packInput,
+      ),
+    ).toThrow('CAPABILITY_DEPENDENCY_UNRESOLVED');
   });
 });

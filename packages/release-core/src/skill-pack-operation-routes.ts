@@ -3,6 +3,7 @@ import { SkillPackOperationRouteV1Schema } from '@better-agent/domain-contracts'
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { canonicalSha256 } from './hash.js';
+import { prepareGraphBoundDirectDependency } from './pinned-graph-slice.js';
 import { prepareAgentSkillPackDependencyPaths } from './root-binding-paths.js';
 
 type SkillPackOperationRouteV1 = ReturnType<typeof SkillPackOperationRouteV1Schema.parse>;
@@ -12,6 +13,12 @@ interface PreparedSkillPackOperationRoutesV1 {
   readonly root: ReturnType<typeof prepareAgentSkillPackDependencyPaths>['root'];
   readonly dependency: ReturnType<typeof prepareAgentSkillPackDependencyPaths>['dependency'];
   readonly routes: readonly SkillPackOperationRouteV1[];
+}
+
+interface PreparedGraphBoundSkillPackOperationRoutesV1 {
+  readonly schema_version: 'graph-bound-skill-pack-operation-routes/1';
+  readonly graph_binding: ReturnType<typeof prepareGraphBoundDirectDependency>;
+  readonly prepared_routes: PreparedSkillPackOperationRoutesV1;
 }
 
 function unresolved(): never {
@@ -78,5 +85,26 @@ export function prepareSkillPackOperationRoutes(
     root: paths.root,
     dependency: paths.dependency,
     routes,
+  });
+}
+
+/** Require the prepared Pack route slice to be the root's exact direct graph dependency. */
+export function prepareGraphBoundSkillPackOperationRoutes(
+  expectedGraph: unknown,
+  graphCandidate: unknown,
+  rootInput: unknown,
+  dependencyInput: unknown,
+): PreparedGraphBoundSkillPackOperationRoutesV1 {
+  const preparedRoutes = prepareSkillPackOperationRoutes(rootInput, dependencyInput);
+  const graphBinding = prepareGraphBoundDirectDependency(
+    expectedGraph,
+    graphCandidate,
+    preparedRoutes.root.pin,
+    preparedRoutes.dependency,
+  );
+  return deepFreezeJson({
+    schema_version: 'graph-bound-skill-pack-operation-routes/1',
+    graph_binding: graphBinding,
+    prepared_routes: preparedRoutes,
   });
 }

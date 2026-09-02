@@ -22,3 +22,4 @@
 - 批量 Binding verifier 要用两个不同 ID 的合法输入，再破坏非首项并单独拒绝重复/空集合；下游 Pack path 还需用 128-member exact max 贯通，且验证 disabled+unexposed member 仍有地址但不会被误造为 sealed route。
 - SubAgent 路径要成对覆盖 internal 与 external：internal 断言 target 后还有 dependency-owned Binding、same-version 自环拒绝和禁用目标地址；external 断言完整 leaf evidence 后终止于 target，且没有伪造 nested bindings/closure seal。不要为测试方便复制具有同 credential requirement ID 的 root Bindings而放宽全局唯一性。
 - Pack route 回归要独立重算 versioned route preimage hash，并用同一 Pack 在不同 root Binding/root release 下证明 Pack path、member path 与 route hash 全部隔离；disabled route 只证明 source fact 保留，不能断言其 runtime 可用。
+- Graph-bound direct slice 回归必须区分“节点存在”和“root 有直接边”：用一个真实 transitive 节点证明不能冒充 direct dependency，并分别破坏 expected graph bytes、candidate record 与 requested root，避免只查 node membership。
