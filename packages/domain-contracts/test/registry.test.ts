@@ -79,6 +79,24 @@ const aggregateLimits = {
   },
 } as const;
 
+const intrinsicRequirements = {
+  schema_version: 'capability-requirements/1',
+  credential_requirements: [],
+  principal_modes: ['none'],
+  egress: [],
+  readable_data_classification: 'public',
+  output_data_classification: 'public',
+  side_effect_class: 'safe',
+  approval_required: false,
+  operation_contract_hashes: [],
+  minimum_limits: {
+    calls: 0,
+    depth: 0,
+    parallelism: 0,
+    budget: aggregateLimits.budget,
+  },
+} as const;
+
 describe('domain contract registry', () => {
   it('registers the four architecture roots under unique immutable versions', () => {
     expect(domainContractSchemaVersions).toEqual(
@@ -174,7 +192,7 @@ describe('domain contract registry', () => {
         resource_nodes: [
           {
             node_id: resourceNodeId,
-            intrinsic_policy: {},
+            intrinsic_policy: intrinsicRequirements,
             dependency_manifest_hash: hash,
             node_role: 'root',
             pin: rootPin,

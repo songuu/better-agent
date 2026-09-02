@@ -7,6 +7,7 @@ import {
 } from '../src/compiled-capability-closure.js';
 import { ReleaseCoreError } from '../src/errors.js';
 import { canonicalSha256ExcludingRootKeys } from '../src/hash.js';
+import { emptyCapabilityRequirements } from './fixtures.js';
 
 const hashA = `sha256:${'a'.repeat(64)}` as const;
 const hashB = `sha256:${'b'.repeat(64)}` as const;
@@ -53,7 +54,7 @@ function closureInput(
     resource_nodes: [
       {
         node_id: canonicalResourceNodeId(pin),
-        intrinsic_policy: {},
+        intrinsic_policy: emptyCapabilityRequirements,
         dependency_manifest_hash: hashA,
         node_role: 'root',
         pin,
@@ -74,9 +75,7 @@ function dependencyNode(closure: ReturnType<typeof closureInput>, contractHash =
   const pin = { ...closure.root.pin, contract_hash: contractHash };
   return {
     node_id: canonicalResourceNodeId(pin),
-    intrinsic_policy: { enabled: true, maximum_calls: 1, note: null },
     dependency_manifest_hash: hashA,
-    node_role: 'dependency',
     pin,
     nested_closure_hash: closure.closure_hash,
   } as const;
@@ -181,7 +180,7 @@ describe('compiled capability closure verification', () => {
         ...valid.resource_nodes,
         {
           node_id: dependencyNodeId,
-          intrinsic_policy: {},
+          intrinsic_policy: emptyCapabilityRequirements,
           dependency_manifest_hash: hashA,
           node_role: 'dependency',
           pin: target,

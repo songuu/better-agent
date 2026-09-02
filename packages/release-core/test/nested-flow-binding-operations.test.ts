@@ -15,7 +15,14 @@ import { prepareOperationContractSource } from '../src/operation-contract-source
 import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js';
 import { prepareFlowNodePaths } from '../src/root-binding-paths.js';
 import { richAgentSource } from './executable-source-fixtures.js';
-import { hashA, hashB, makeFlowIr, makePluginPin, workspaceId } from './fixtures.js';
+import {
+  emptyCapabilityRequirements,
+  hashA,
+  hashB,
+  makeFlowIr,
+  makePluginPin,
+  workspaceId,
+} from './fixtures.js';
 
 function executable(document: unknown) {
   return { schema_version: 'executable-source-candidate/1', workspace_id: workspaceId, document };
@@ -95,14 +102,14 @@ function compiledClosure(flow: ReturnType<typeof sources>['flow']) {
   const resourceNodes = [
     {
       node_id: canonicalResourceNodeId(paths.root.pin),
-      intrinsic_policy: {},
+      intrinsic_policy: emptyCapabilityRequirements,
       dependency_manifest_hash: prepared.dependency_manifest.manifest_hash,
       node_role: 'root' as const,
       pin: paths.root.pin,
     },
     {
       node_id: canonicalResourceNodeId(target),
-      intrinsic_policy: {},
+      intrinsic_policy: emptyCapabilityRequirements,
       dependency_manifest_hash: hashA,
       node_role: 'dependency' as const,
       pin: target,

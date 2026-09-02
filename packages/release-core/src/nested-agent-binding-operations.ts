@@ -43,11 +43,7 @@ export function prepareGraphBoundNestedAgentBindingOperations(
     dependencyInput,
   );
   const nestedClosure = prepareNestedCapabilityClosure(
-    {
-      ...graphBound.graph_binding.dependency_node,
-      intrinsic_policy: {},
-      node_role: 'dependency',
-    },
+    graphBound.graph_binding.dependency_node,
     nestedClosureInput,
   );
   const childSource = prepareExecutableSource(dependencyInput);

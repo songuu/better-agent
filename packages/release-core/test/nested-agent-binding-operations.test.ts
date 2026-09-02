@@ -11,7 +11,7 @@ import { prepareOperationContractSource } from '../src/operation-contract-source
 import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js';
 import { prepareRootBindingPaths } from '../src/root-binding-paths.js';
 import { richAgentSource } from './executable-source-fixtures.js';
-import { hashA, hashB, workspaceId } from './fixtures.js';
+import { emptyCapabilityRequirements, hashA, hashB, workspaceId } from './fixtures.js';
 
 function candidate(document: unknown) {
   return { schema_version: 'executable-source-candidate/1', workspace_id: workspaceId, document };
@@ -81,14 +81,14 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
   const resourceNodes = [
     {
       node_id: canonicalResourceNodeId(paths.root.pin),
-      intrinsic_policy: {},
+      intrinsic_policy: emptyCapabilityRequirements,
       dependency_manifest_hash: prepared.dependency_manifest.manifest_hash,
       node_role: 'root' as const,
       pin: paths.root.pin,
     },
     ...assemblyPins.map((pin) => ({
       node_id: canonicalResourceNodeId(pin),
-      intrinsic_policy: {},
+      intrinsic_policy: emptyCapabilityRequirements,
       dependency_manifest_hash: hashA,
       node_role: 'dependency' as const,
       pin,

@@ -4,6 +4,7 @@ import {
   BindingPathSegmentV1Schema,
   CompiledBindingEntryV1Schema,
   CompiledCapabilityClosureV1Schema,
+  ClosureResourceNodeV1Schema,
   FlowGraphV1Schema,
   FlowIrV1Schema,
   ProductionPromotionGateDecisionV1Schema,
@@ -43,6 +44,24 @@ const effectivePolicy = {
     output_tokens: 0,
     total_tokens: 0,
     duration_ms: 0,
+  },
+} as const;
+
+const intrinsicRequirements = {
+  schema_version: 'capability-requirements/1',
+  credential_requirements: [],
+  principal_modes: ['none'],
+  egress: [],
+  readable_data_classification: 'public',
+  output_data_classification: 'public',
+  side_effect_class: 'safe',
+  approval_required: false,
+  operation_contract_hashes: [],
+  minimum_limits: {
+    calls: 0,
+    depth: 0,
+    parallelism: 0,
+    budget: effectivePolicy.budget,
   },
 } as const;
 
@@ -183,6 +202,26 @@ describe('Flow graph semantic invariants', () => {
 });
 
 describe('Compiled closure reference integrity', () => {
+  it('requires every resource node to carry typed intrinsic capability requirements', () => {
+    const node = {
+      node_id: rootNodeId,
+      intrinsic_policy: intrinsicRequirements,
+      dependency_manifest_hash: hash,
+      node_role: 'root',
+      pin: rootPin,
+    } as const;
+    expect(ClosureResourceNodeV1Schema.safeParse(node).success).toBe(true);
+    expect(ClosureResourceNodeV1Schema.safeParse({ ...node, intrinsic_policy: {} }).success).toBe(
+      false,
+    );
+    expect(
+      ClosureResourceNodeV1Schema.safeParse({
+        ...node,
+        intrinsic_policy: { ...intrinsicRequirements, trusted: true },
+      }).success,
+    ).toBe(false);
+  });
+
   const binding = {
     binding_path_encoding_version: 'binding-path-lp-utf8/1',
     binding_path: bindingPath,
@@ -408,7 +447,7 @@ describe('Compiled closure reference integrity', () => {
       resource_nodes: [
         {
           node_id: rootNodeId,
-          intrinsic_policy: {},
+          intrinsic_policy: intrinsicRequirements,
           dependency_manifest_hash: hash,
           node_role: 'root',
           pin: rootPin,

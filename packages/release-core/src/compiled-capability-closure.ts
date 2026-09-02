@@ -1,6 +1,8 @@
 import {
-  ClosureResourceNodeV1Schema,
+  ClosureResourceNodeIdV1Schema,
   CompiledCapabilityClosureV1Schema,
+  ContractHashSchema,
+  PublishedResourcePinV1Schema,
 } from '@better-agent/domain-contracts';
 
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
@@ -11,7 +13,12 @@ import { ReleaseCoreError } from './errors.js';
 import { canonicalSha256ExcludingRootKeys } from './hash.js';
 
 type CompiledClosureV1 = ReturnType<typeof CompiledCapabilityClosureV1Schema.parse>;
-type ClosureResourceNodeV1 = ReturnType<typeof ClosureResourceNodeV1Schema.parse>;
+interface NestedDependencyCommitmentV1 {
+  readonly node_id: string;
+  readonly pin: ReturnType<typeof PublishedResourcePinV1Schema.parse>;
+  readonly dependency_manifest_hash: string;
+  readonly nested_closure_hash: string;
+}
 
 function invalid(path: string, reason: string): never {
   throw new ReleaseCoreError('COMPILED_CAPABILITY_CLOSURE_INVALID', path, reason);
@@ -76,7 +83,7 @@ export function prepareCompiledCapabilityClosure(input: unknown): Readonly<Compi
 }
 
 function sameVersionIdentity(
-  node: Extract<ClosureResourceNodeV1, { node_role: 'dependency' }>,
+  node: NestedDependencyCommitmentV1,
   closure: CompiledClosureV1,
 ): boolean {
   const left = node.pin;
@@ -90,6 +97,42 @@ function sameVersionIdentity(
   );
 }
 
+function parseNestedDependencyCommitment(input: unknown): NestedDependencyCommitmentV1 {
+  const snapshot = boundedDataSnapshot(input, 'closure');
+  if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
+    invalid('$.dependency_node', 'nested dependency commitment must be an object');
+  }
+  const record = snapshot as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const expectedKeys = ['dependency_manifest_hash', 'nested_closure_hash', 'node_id', 'pin'];
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    invalid('$.dependency_node', 'nested dependency commitment has an incomplete or unknown field');
+  }
+  const nodeId = ClosureResourceNodeIdV1Schema.safeParse(record.node_id);
+  const pin = PublishedResourcePinV1Schema.safeParse(record.pin);
+  const manifestHash = ContractHashSchema.safeParse(record.dependency_manifest_hash);
+  const nestedClosureHash = ContractHashSchema.safeParse(record.nested_closure_hash);
+  if (
+    !nodeId.success ||
+    !pin.success ||
+    !manifestHash.success ||
+    !nestedClosureHash.success ||
+    (pin.data.published_resource_kind !== 'AGENT_RELEASE' &&
+      pin.data.published_resource_kind !== 'FLOW_VERSION')
+  ) {
+    invalid('$.dependency_node', 'nested closure requires an Agent or Flow dependency commitment');
+  }
+  return {
+    node_id: nodeId.data,
+    pin: pin.data,
+    dependency_manifest_hash: manifestHash.data,
+    nested_closure_hash: nestedClosureHash.data,
+  };
+}
+
 /**
  * A registry pin may use the final published hash while the nested root carries its semantic seed.
  * Identity therefore joins on the immutable version tuple and the separately committed closure hash.
@@ -98,26 +141,17 @@ export function prepareNestedCapabilityClosure(
   dependencyNodeInput: unknown,
   closureInput: unknown,
 ): Readonly<CompiledClosureV1> {
-  const nodeSnapshot = boundedDataSnapshot(dependencyNodeInput, 'closure');
-  const node = ClosureResourceNodeV1Schema.safeParse(nodeSnapshot);
-  if (
-    !node.success ||
-    node.data.node_role !== 'dependency' ||
-    (node.data.pin.published_resource_kind !== 'AGENT_RELEASE' &&
-      node.data.pin.published_resource_kind !== 'FLOW_VERSION')
-  ) {
-    invalid('$.dependency_node', 'nested closure requires an Agent or Flow dependency node');
-  }
-  verifyCanonicalResourceNodeId(node.data.node_id, node.data.pin);
+  const node = parseNestedDependencyCommitment(dependencyNodeInput);
+  verifyCanonicalResourceNodeId(node.node_id, node.pin);
   const closure = prepareCompiledCapabilityClosure(closureInput);
-  if (!sameVersionIdentity(node.data, closure)) {
+  if (!sameVersionIdentity(node, closure)) {
     throw new ReleaseCoreError(
       'NESTED_CAPABILITY_CLOSURE_MISMATCH',
       '$.root.pin',
       'nested closure root does not match the dependency version identity',
     );
   }
-  if (node.data.nested_closure_hash !== closure.closure_hash) {
+  if (node.nested_closure_hash !== closure.closure_hash) {
     throw new ReleaseCoreError(
       'NESTED_CAPABILITY_CLOSURE_MISMATCH',
       '$.closure_hash',
