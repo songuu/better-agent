@@ -6,6 +6,10 @@ import { leafCandidate, record } from './leaf-resource-source-fixtures.js';
 export function skillPackSource() {
   const target = leafCandidate();
   const leaf = prepareLeafResourceSource(target);
+  const credentialRequirements = record(target.document.requirements).credential_requirements;
+  if (!Array.isArray(credentialRequirements) || credentialRequirements.length !== 1) {
+    throw new Error('fixture expected exactly one credential requirement');
+  }
   const template = richAgentSource().capability_bindings.find((item) => item.kind === 'plugin');
   const member = record(structuredClone(template));
   member.binding_id = 'lookup-member';
@@ -13,6 +17,8 @@ export function skillPackSource() {
   member.manual = { ...record(target.document.manual), hash: leaf.component_hashes.manual };
   member.input_schema = record(target.document.operation).input_schema;
   member.output_schema = record(target.document.operation).output_schema;
+  member.data_classification = 'internal';
+  member.credential_requirement = structuredClone(record(credentialRequirements[0]));
   member.config = {
     ...record(member.config),
     provider_tool_name: 'lookup',
