@@ -248,7 +248,8 @@ const loopConfigCommonShape = {
   exports: z.record(z.string(), JsonObjectSchema),
 };
 
-const LoopConfigV1Schema = z.union([
+// Select the mode before touching recursive bodies; trial unions repeat nested work exponentially.
+const LoopConfigV1Schema = z.discriminatedUnion('mode', [
   z.strictObject({
     ...loopConfigCommonShape,
     mode: z.literal('collection'),
@@ -294,7 +295,7 @@ const HumanGateNodeConfigV1Schema = z
   });
 
 export const FlowNodeV1Schema: z.ZodType<FlowNodeV1> = z.lazy(() =>
-  z.union([
+  z.discriminatedUnion('type', [
     z.strictObject({
       ...flowNodeCommonShape,
       type: actionNodeTypeSchema,

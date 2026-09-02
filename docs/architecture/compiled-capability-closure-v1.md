@@ -418,6 +418,22 @@ parent delegable closure
 
 ## 7. Canonicalization 与 hash
 
+### 7.1 G1 executable source preimage profile
+
+`prepareExecutableSource` 接受闭集 `executable-source-candidate/1`：`workspace_id` 加 `document`。Agent 使用独立 `agent-executable-source/1`（复用 Agent Release 的字段和跨引用约束，但禁止 `compiled_hash`/`capability_closure_hash`）；Flow 使用 `flow-ir/1`。不接受以 placeholder hash 冒充未编译的 Agent Release。
+
+`executable-semantic-preimage/1` 的完整字段为 `schema_version`、`compiler_version="capability-compiler/1"`、`canonicalizer_version="rfc8785/1"`、`workspace_id`、`published_resource_kind`、`document`。语义 seed 是该对象的 SHA-256/JCS。`document` 只删除 Agent 顶层 `release_number`/`source_draft_revision_id` 或 Flow 顶层 `title`/`ui`；不得递归删除同名业务字段、JSON Schema title、角色提示或数组内容。
+
+规范集合：Agent bindings/instruction skills 按 binding ID、Gate 按 spec ID、public handles 按 handle 排序；Strategy allow IDs、credential scopes/principal modes、instruction capability IDs、database table revision IDs、Skill Pack exposed operation IDs 和 SubAgent typed allow-sets 按契约排序。Flow 递归规范 graph nodes/edges/exit IDs、resource pins 和 credential requirements；branch cases 的 first-match 顺序、任务模板顺序、普通 JSON/opaque 子合同内数组保持原顺序，不能凭同名字段猜其集合语义。仅 source profile 显式声明的集合在这里规范化；更深 action/policy 子合同由对应版本 adapter 验证。
+
+所有根/依赖完整 pin 使用严格小写 UUID 和 71 字符 SHA-256；Agent 直接依赖由 Strategy、Instruction Skill 和全部 Capability Binding（包括 disabled）派生，Flow 由固定 `resources` 派生。普通图/branch/loop 内 subflow 必须解析到其中的精确 Flow ID/version pin；根版本自依赖拒绝。typed hash 字段在此校验规范拼写，**不是**对相应远端或 opaque 内容的真实性证明。
+
+解析前 snapshot 和输出复验均限制：8 MiB 字符串与 key UTF-8 数据、8 MiB JCS bytes、131,072 values、depth 64、数组 1,024 entries、对象 128 properties、字符串 65,536 UTF-8 bytes、key 256 UTF-8 bytes，Flow 全部子图合计最多 4,096 nodes。仅允许 plain JSON 数据，无 Proxy/accessor/cycle/稀疏数组。Schema parse 前后 JCS 必须逐字一致；例如 Zod record 会丢弃的 own `__proto__` 数据键必须拒绝，不能生成忽略该输入的 hash。语义规范化只发生在无损 schema parse 之后。
+
+`deriveExecutableCompiledHash` 仅把该 preimage 的 `schema_version` 换为 `executable-compiled-preimage/1`，追加严格 `capability_closure_hash`，再 SHA-256/JCS；`verifyExecutableCompiledHash` 同时核对完整 final pin。该纯 hash-binding primitive 不验证 closure 正文、registry seal 或准入。T3.2 剩余 compiler 必须从 source adapter 重建 Binding/policy/operation 和嵌套闭包，再允许把此摘要用于 T6 原子发布；本步骤不解封现有 publisher，也不更换历史 G0 Flow registry hash。
+
+### 7.2 Final closure integration
+
 `closure_hash = SHA-256(JCS(closure_without_closure_hash))`。JCS 指 RFC 8785 JSON Canonicalization Scheme。root 必须按以下两阶段顺序生成，不得把 final `compiled_hash` 又放回 closure 形成循环：
 
 ```text

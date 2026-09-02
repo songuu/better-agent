@@ -9,3 +9,5 @@
 - Docker 恢复期间若日志出现外部 GUI reset 等状态变更，暂停运行时操作并协调；VHDX 文件仍在只能证明文件存在，不能证明容器/卷/数据库内容完整。仅凭 runtime 目录名称不能重命名整个目录，必须核对内容不含持久化数据并保存可恢复备份。
 - 数字形状的属性名不一定是数组索引（如 `4294967295`）：闭集数组必须同时校验安全整数、`index < length` 与无空洞。结构反射前拒绝 Proxy，避免 trap 执行、伪造 length 和重入污染；只有 getter 测试不足以证明“校验无副作用”。
 - 策略交集的两个输入都合法，不代表返回对象仍在字节预算内；host×path 组合会复制长字段。返回前重新验证完整输出，并回归“超限当次拒绝”和“合法结果可以继续组合”。
+- JSON parser 接受键不代表后续 schema parser 会保留键；本次 Zod record 解析会丢弃 own `__proto__`。哈希前比较完整 raw/parsed canonical bytes，Agent 与 Flow 各自保留负例；这不是全局 prototype pollution 的证据。
+- 递归 `z.union` 会在失败分支中重复解析嵌套 body；本次 condition loop 13 层触发数千次 leaf parse。改为按 mode/type 分派，并用可控 schema-only leaf 访问次数回归复杂度，避免以易抖动的毫秒阈值作正确性测试。

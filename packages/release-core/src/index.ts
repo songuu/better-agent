@@ -10,3 +10,4 @@ export * from './experience.js';
 export * from './hash.js';
 export * from './publishable-resource.js';
 export * from './pinned-dependency-graph.js';
+export * from './executable-source.js';

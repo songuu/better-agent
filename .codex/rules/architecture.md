@@ -30,3 +30,9 @@
 
 - A verified manifest graph is an intermediate deterministic artifact, not a compiled capability closure or proof that a resource was authoritatively sealed. Source preimages, nested closure bodies, effective path policies and registry provenance must be verified before publisher/admission integration; never promote candidate `sealed` text to authority.
 - Graph traversal must enforce the longest root-to-leaf path, not first-visit depth. Memoized shared subtrees retain their full height; exact full pins and version-cycle identity serve distinct purposes, especially when a root semantic seed differs from its eventual compiled hash.
+
+## Executable source preimages
+
+- Agent executable source and released Agent share fields and cross-reference refinements, but source rejects final compiled/closure hashes. A semantic seed, a closure-hash-bound compiled hash and authoritative registry provenance are three different facts; intermediate helpers must not unpause publication.
+- Before applying explicitly documented metadata exclusions or set ordering, compare complete canonical input and parsed output. A schema parser silently dropping a business JSON key must fail closed, not collapse distinct source documents into one hash.
+- Recursive tagged schema variants dispatch on their discriminator before parsing their body. Depth and byte budgets do not prevent exponential work caused by trial-union reparsing inside those budgets.

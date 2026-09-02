@@ -10,6 +10,7 @@ import {
   AgentDeploymentV1Schema,
 } from './agent-deployment-v1.js';
 import {
+  AgentExecutableSourceV1Schema,
   AgentGateSpecV1Schema,
   AgentReleaseV1Schema,
   AsyncChildPolicyV1Schema,
@@ -239,6 +240,7 @@ export const domainContractSchemaEntries = [
     schema: CredentialOperationPolicyV1Schema,
   },
   { schemaVersion: 'agent-release/1', schema: AgentReleaseV1Schema },
+  { schemaVersion: 'agent-executable-source/1', schema: AgentExecutableSourceV1Schema },
   { schemaVersion: 'agent-strategy-release/1', schema: AgentStrategyReleaseV1Schema },
   { schemaVersion: 'experience-release/1', schema: ExperienceReleaseV1Schema },
   { schemaVersion: 'deployment-policy-pin/1', schema: ImmutableDeploymentPolicyPinV1Schema },
