@@ -442,6 +442,29 @@ parent delegable closure
 
 **边界：** 这里证明的是完整 JSON 内容到 operation pin 的绑定，不执行 JSON Schema meta-validation/实例校验，不验证 provider/SQL/索引实现或 registry provenance，也不证明 GateSpec coverage。Flow/SubAgent Binding 没有本地 operation ID/hash 槽，该 helper 只核对共有声明；固定 target 与对应 operation source 的关系必须由后续 kind-specific release adapter 和 closure compiler 验证。最终编译仍须把真实 leaf/operation 资源源、schema validator、typed policy、嵌套 closure 与 registry 证据一起连接；不能把任意自洽 source/pin 当作目标已发布事实。G0 publisher 与历史摘要不受本 profile 更改。
 
+#### 7.1.2 Typed leaf resource sources
+
+`leaf-resource-source-candidate/1` 固定 `workspace_id` 与一个闭集 typed `document`，只接受下列四类；资源 ID/version ID 与 Workspace 都是 canonical 小写 UUID。公共正文包含 manual 文本、完整 `operation-contract-source/1` 与 `leaf-capability-requirements/1`。requirements 只声明凭证、principal modes、egress、read/output classification、minimum limits；禁止自报 operation hash、effect 或 approval，这三项从正文 operation 重算。
+
+| Source / resource kind | 哈希覆盖的真实 typed 正文 | 当前语义校验 |
+|---|---|---|
+| `knowledge-index-generation-source/1` / `KNOWLEDGE_INDEX_GENERATION` | source manifest、ingestion/parser digest/chunks、embedding provider/model/revision/dimensions/metric、retrieval、rerank、metadata filter policy、index shard manifest | safe knowledge query；强制 Workspace/文档 ACL；chunk overlap 小于 size；暴露 metadata 字段须有声明；rerank top_n 不超过 top_k |
+| `database-operation-source/1` / `DATABASE_OPERATION_RELEASE` | PostgreSQL16 connector identity/hash、带分类/类型的 table revision、typed SELECT、强制 Workspace row policy | safe database operation；同一 table revision；所有列存在；tenant 为 non-null UUID；principal filter 列为 UUID；参数名在 object input properties 中声明；所有读取列满足 read clearance 和 output taint |
+| `plugin-tool-source/1` / `PLUGIN_TOOL_RELEASE` | provider/tool identity、transport、implementation digest、sandbox profile、完整 tool-list operation 正文 | http_json 或 mcp_streamable_http；选择的 tool name 对应唯一 operation；该 operation 的完整正文必须相等 |
+| `a2a-agent-source/1` / `A2A_AGENT_RELEASE` | provider/skill identity、transport、内部 agent-card projection 的 revision 和全部 skill/operation 正文 | a2a_jsonrpc；唯一 skill ID 与完整 operation 正文相等；所有 skill operation 均为 subagent_call |
+
+网络 transport 是闭集 `capability-network-transport/1`：一个 exact DNS host/exact path/单 HTTP method、已命名的 network policy pin、deny redirects、timeout、response byte cap、remote identity/revision/hash 与 none/credential authentication。其规范 egress 必须等于 source requirements 中的完整 egress。credential 模式恰好一个同 requirement ID/provider/audience 的需求，provider 也必须等于资源 provider；所有 source principal modes 与凭证允许模式相等，无 none fallback；none 模式没有凭证且 principal modes 固定 `[none]`。不包含 token、任意 auth header 或 secret 引用。拒绝 `latest`/`floating_latest`（不区分大小写）revision；其它 revision/digest 仍需可信发布源确认不可变性，字符串格式本身不是确认。
+
+数据库查询只允许 select columns、AND predicates（eq/ne/lt/lte/gt/gte/in）、ordered order_by、1–500 max_rows 和 1–300,000 ms timeout，不接受 raw SQL、函数或任意表达式。SQL identifier 限小写 ASCII identifier、最长 63；无 predicates 时允许不含 properties 的空 object input schema。SELECT、predicate、order、系统 tenant/principal filter 列都属于读取集合，其最高分类同时约束 read 与 output，防止结果成员/排序泄露。`database-additional-filter/1` 只能追加 AND predicates，不能替换强制租户策略。
+
+规范集合由完整 entry 的 JCS bytes 排序：knowledge sources/metadata fields、DB columns/principal filters、plugin operations、A2A skills、credential requirements；内部字符串集合排序，egress 复用 policy kernel 的规范化。查询 select_columns（结果列次序）、predicates、order_by 以及业务 JSON Schema 数组保序。重复 source ID、列名、metadata 字段名、tool operation ID、skill ID、shard digest 等拒绝。绝对结构/编码预算沿用 §7.1；每个 tool-list/card 最多 128 成员，knowledge source/shard 最多 1,024，列/过滤字段最多 128；网络 response cap 最多 8 MiB。其余明确数值闭区间以 `leaf-resource-source-v1.ts` 的版本化 Schema 为准。
+
+`prepareLeafResourceSource` 先 bounded snapshot + 无损 schema parse，再验证/规范上述正文。`leaf-resource-preimage/1` 精确包含 `schema_version`、`compiler_version="capability-compiler/1"`、`canonicalizer_version="rfc8785/1"`、`workspace_id`、`published_resource_kind`、完整规范 `document`；完整 pin 的 contract hash 为 SHA-256/JCS(preimage)。结果 `prepared-leaf-resource-source/1` 包含 document、preimage、full_pin、重算 operation_contract、intrinsic_policy、component_hashes 与空直接依赖 manifest，应用输出预算后深冻结。component hashes 对应表中 named 子合同（另含公共 manual）；implementation digest 绑定在完整 preimage 中。叶资源的这些 inline 子合同不是另一个可执行 PublishedResourcePin，故直接依赖为空，不能用于隐匿嵌套 executable dependency。
+
+`verifyLeafResourceSource` 分别按 8 MiB/source profile 限制 expected 与 candidate，重算并比较全部 artifact 字段，不额外施加一个破坏 prepare→verify 往返的共享 8 MiB。`verifyLeafResourceBinding` 对 Binding+candidate 施加合并 source 预算，核对完整 target pin、manual 文本/hash、operation 声明、output classification、凭证所有 required scopes 与 ID/provider/audience，以及非空更窄 principal modes。knowledge filter hash 和 plugin transport hash 必须相等；external A2A target kind 必须匹配；网络 Binding timeout 不能超过 transport。DB 的唯一 table version、max_rows/timeout 不能扩大，allowlist 必须覆盖 SELECT/predicate/order 和附加 filter 的全部用户列；固定 tenant/principal 安全过滤列不要求加入用户列 allowlist，但仍受 source 分类约束。附加 filter 也不能读取高于 source read/output 分类的列。
+
+**集成边界：** Binding 可以增加 required scopes、审批/key、提高 output taint、减少 principal modes/limits；helper 返回的仍是 **source intrinsic artifact**，不是合并 Binding 后的 effective path policy。最终 compiler 必须单独纳入 Binding 的更严要求与限制。此处不解析/执行 SQL，不做 JSON Schema 元/实例校验，不验证真实索引、连接器、二进制、远程 tool discovery 或 A2A 官方协议符合性；也不验证 network approval、DNS/IP runtime enforcement、sealed registry/readback、Workspace 内容归属或 nested closure。可信 catalog/artifact readback、完整 closure 与 T5/T6 admission 才能把这些内容用于发布执行。四种纯 source adapter 不构成完整应用、上线或新的 host-attested Acceptance；现有 G0 publisher 不变。
+
 ### 7.2 Final closure integration
 
 `closure_hash = SHA-256(JCS(closure_without_closure_hash))`。JCS 指 RFC 8785 JSON Canonicalization Scheme。root 必须按以下两阶段顺序生成，不得把 final `compiled_hash` 又放回 closure 形成循环：

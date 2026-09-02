@@ -11,3 +11,4 @@
 - 递归图测试分别变异 second case、loop body、else，保持其他路径有效；规范集合排序和 first-match case 保序分开断言。复杂度回归在 schema 层计数 leaf parse，公网 source API 仍必须拒绝 getter/Proxy。
 - 两份声明“一致”不代表组合允许：G1 DB 即使 Binding 与 operation 双方都声明 unsafe、hash 都正确，read_only mode 也不能使它通过。单独构造双侧一致但违反平台约束的回归，不能只测两侧漂移。
 - operation 固有要求与 Binding 额外加严要求分开测试：operation 不要求 key、DB config 要求 key 时仍必须提供 key source。输出预算也需独立回归：整个输入 JCS 合法但封装后的 artifact 超限，应当次拒绝，并保留缩小输入可 prepare/verify 的正例。
+- 多 guard 负例必须排除遮蔽：测试附加 filter 分类时先让列 allowlist、Binding output 与另一分类轴满足，再分别变异 read/output guard。凭证身份须在实际 Binding 入口逐字段错配；source→intrinsic 传递须包含非默认 effect/approval，不能全部只用 safe/false。

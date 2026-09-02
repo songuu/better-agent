@@ -201,6 +201,31 @@ export function normalizeCapabilityPolicyCeiling(input: unknown): Readonly<Ceili
   return sealCeiling(parse(input, CapabilityPolicyCeilingV1Schema));
 }
 
+/** Canonicalize full demands without intersecting away any required credential scope or mode. */
+export function normalizeCapabilityRequirements(
+  input: unknown,
+): Readonly<CapabilityRequirementsV1> {
+  const value = parse(input, CapabilityRequirementsV1Schema);
+  return deepFreezeJson(
+    parse(
+      {
+        ...value,
+        principal_modes: value.principal_modes.sort(),
+        credential_requirements: canonicalSort(
+          value.credential_requirements.map((requirement) => ({
+            ...requirement,
+            required_scopes: requirement.required_scopes.sort(),
+            allowed_principal_modes: requirement.allowed_principal_modes.sort(),
+          })),
+        ),
+        egress: normalizeRules(value.egress),
+        operation_contract_hashes: value.operation_contract_hashes.sort(),
+      },
+      CapabilityRequirementsV1Schema,
+    ),
+  );
+}
+
 function sealCeiling(value: Ceiling): Readonly<Ceiling> {
   // Intersection can multiply host/path regions: legal inputs do not imply bounded output.
   return deepFreezeJson(parse(canonicalCeiling(value), CapabilityPolicyCeilingV1Schema));

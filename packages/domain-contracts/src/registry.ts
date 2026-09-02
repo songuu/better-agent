@@ -1,5 +1,12 @@
 import type { z } from 'zod';
 import { OperationContractSourceV1Schema } from './operation-contract-source-v1.js';
+import {
+  A2aAgentSourceV1Schema,
+  DatabaseOperationSourceV1Schema,
+  KnowledgeIndexGenerationSourceV1Schema,
+  PluginToolSourceV1Schema,
+  LeafResourceSourceCandidateV1Schema,
+} from './leaf-resource-source-v1.js';
 
 import {
   AgentDeploymentActivePointerV1Schema,
@@ -243,6 +250,17 @@ export const domainContractSchemaEntries = [
   { schemaVersion: 'agent-release/1', schema: AgentReleaseV1Schema },
   { schemaVersion: 'agent-executable-source/1', schema: AgentExecutableSourceV1Schema },
   { schemaVersion: 'operation-contract-source/1', schema: OperationContractSourceV1Schema },
+  {
+    schemaVersion: 'knowledge-index-generation-source/1',
+    schema: KnowledgeIndexGenerationSourceV1Schema,
+  },
+  { schemaVersion: 'database-operation-source/1', schema: DatabaseOperationSourceV1Schema },
+  { schemaVersion: 'plugin-tool-source/1', schema: PluginToolSourceV1Schema },
+  { schemaVersion: 'a2a-agent-source/1', schema: A2aAgentSourceV1Schema },
+  {
+    schemaVersion: 'leaf-resource-source-candidate/1',
+    schema: LeafResourceSourceCandidateV1Schema,
+  },
   { schemaVersion: 'agent-strategy-release/1', schema: AgentStrategyReleaseV1Schema },
   { schemaVersion: 'experience-release/1', schema: ExperienceReleaseV1Schema },
   { schemaVersion: 'deployment-policy-pin/1', schema: ImmutableDeploymentPolicyPinV1Schema },

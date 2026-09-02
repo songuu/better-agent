@@ -41,3 +41,9 @@
 
 - Operation source binds full input/output JSON to a versioned preimage and complete operation pin. Keep this distinct from schema meta-validation, provider/SQL/index implementation verification, target registry provenance and GateSpec authorization; none follows from a self-consistent digest.
 - A concrete Binding may add approval or operation-key requirements but cannot remove intrinsic requirements. G1 database operation verification independently checks read-only mode, safe effect and the Binding config's own stronger key declaration. Skill Pack exposure must use exact sealed member routes, never the single-operation checker as a generic fallback.
+
+## Typed leaf source boundaries
+
+- Database read scope includes selected, predicate, ordering and additional-filter columns; membership/order are implicit information flows. User columns need the Binding allowlist, all reads need intrinsic read/output classification. Fixed tenant/principal guards are mandatory and cannot be replaced by user filters.
+- Source adapters bind typed content to complete pins but do not attest referenced implementations, catalog ownership or registry seals. Their returned intrinsic artifact deliberately excludes Binding-added narrowing; the final path compiler must incorporate that narrowing separately.
+- A successful bounded prepare must remain verifiable. Independently bound artifact and source operands when their combined size is not part of the declared artifact contract; test large legal round trips alongside input-fit/output-overflow rejection.
