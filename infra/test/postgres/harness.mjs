@@ -175,55 +175,68 @@ function waitForDelay(delayMs) {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
+export function runPostgresCommand(command, arguments_, options = {}) {
+  const { allowFailure = false, input, scanFor = [] } = options;
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, arguments_, {
+      cwd: harnessDirectory,
+      env: process.env,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const output = createBoundedOutputCapture();
+    let stdinError;
+    const capture = (channel, chunk) => {
+      if (!output.append(channel, chunk)) child.kill('SIGKILL');
+    };
+    child.stdout.on('data', (chunk) => capture('stdout', chunk));
+    child.stderr.on('data', (chunk) => capture('stderr', chunk));
+    // psql can reject a large SQL batch before reading the rest. Wait for close
+    // so its exit status and diagnostics survive EPIPE (EOF on Windows).
+    child.stdin.on('error', (error) => {
+      stdinError = error;
+    });
+    child.on('error', (error) => reject(error));
+    child.on('close', (exitCode) => {
+      if (output.exceeded) {
+        reject(new Error('PostgreSQL harness child exceeded the 16 MiB output boundary'));
+        return;
+      }
+      const rawStdout = output.buffer('stdout');
+      const rawStderr = output.buffer('stderr');
+      const result = {
+        exitCode,
+        rawScan: scanRawBuffers(rawStdout, rawStderr, scanFor),
+        stderr: redact(rawStderr.toString('utf8')),
+        stdout: redact(rawStdout.toString('utf8')),
+      };
+      if (exitCode === 0 && stdinError !== undefined) {
+        reject(
+          new Error(`PostgreSQL harness stdin delivery failed: ${redact(stdinError.message)}`),
+        );
+        return;
+      }
+      if (exitCode === 0 || allowFailure) {
+        resolve(result);
+        return;
+      }
+      reject(
+        new Error(
+          `${redact(command)} ${redact(arguments_.join(' '))} failed (${String(exitCode)}): ${result.stderr}`,
+        ),
+      );
+    });
+    child.stdin.end(input ?? '');
+  });
+}
+
 export function createPostgresHarness(suiteName) {
   const runId = `${process.pid}-${randomBytes(4).toString('hex')}`;
   const projectName = `better-agent-${suiteName}-${runId}`.toLowerCase();
   const projectRegistry = registerPostgresProject(projectName);
   const composeArguments = ['compose', '--file', composeFile, '--project-name', projectName];
+  const run = runPostgresCommand;
   let stopPromise;
-
-  function run(command, arguments_, options = {}) {
-    const { allowFailure = false, input, scanFor = [] } = options;
-    return new Promise((resolve, reject) => {
-      const child = spawn(command, arguments_, {
-        cwd: harnessDirectory,
-        env: process.env,
-        shell: false,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      const output = createBoundedOutputCapture();
-      const capture = (channel, chunk) => {
-        if (!output.append(channel, chunk)) child.kill('SIGKILL');
-      };
-      child.stdout.on('data', (chunk) => capture('stdout', chunk));
-      child.stderr.on('data', (chunk) => capture('stderr', chunk));
-      child.on('error', (error) => reject(error));
-      child.on('close', (exitCode) => {
-        if (output.exceeded) {
-          reject(new Error('PostgreSQL harness child exceeded the 16 MiB output boundary'));
-          return;
-        }
-        const rawStdout = output.buffer('stdout');
-        const rawStderr = output.buffer('stderr');
-        const result = {
-          exitCode,
-          rawScan: scanRawBuffers(rawStdout, rawStderr, scanFor),
-          stderr: redact(rawStderr.toString('utf8')),
-          stdout: redact(rawStdout.toString('utf8')),
-        };
-        if (exitCode === 0 || allowFailure) {
-          resolve(result);
-          return;
-        }
-        reject(
-          new Error(
-            `${redact(command)} ${redact(arguments_.join(' '))} failed (${String(exitCode)}): ${result.stderr}`,
-          ),
-        );
-      });
-      child.stdin.end(input ?? '');
-    });
-  }
 
   function compose(...arguments_) {
     return run('docker', [...composeArguments, ...arguments_]);

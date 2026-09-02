@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   createBoundedOutputCapture,
   installPostgresSignalCleanup,
+  runPostgresCommand,
 } from '../../infra/test/postgres/harness.mjs';
 import {
   architectureMutationTestArguments,
@@ -41,6 +42,61 @@ import {
 } from '../../scripts/architecture-gate-core.mjs';
 
 const manifest = JSON.parse(await readFile(new URL('./manifest.json', import.meta.url), 'utf8'));
+
+test('preserves an expected PostgreSQL rejection when the child closes stdin early', async () => {
+  const result = await runPostgresCommand(
+    process.execPath,
+    ['-e', 'process.stderr.write("expected PostgreSQL rejection\\n"); process.exitCode = 7;'],
+    { allowFailure: true, input: 'x'.repeat(8 * 1024 * 1024) },
+  );
+  assert.equal(result.exitCode, 7);
+  assert.match(result.stderr, /expected PostgreSQL rejection/u);
+});
+
+test('reports child diagnostics for a failed command with an early stdin close', async () => {
+  await assert.rejects(
+    runPostgresCommand(
+      process.execPath,
+      ['-e', 'process.stderr.write("database connection refused\\n"); process.exitCode = 8;'],
+      { input: 'x'.repeat(8 * 1024 * 1024) },
+    ),
+    /failed \(8\): database connection refused/u,
+  );
+});
+
+test('rejects incomplete stdin delivery even when the child exits zero', async () => {
+  await assert.rejects(
+    runPostgresCommand(process.execPath, ['-e', 'process.exitCode = 0;'], {
+      allowFailure: true,
+      input: 'x'.repeat(8 * 1024 * 1024),
+    }),
+    /stdin delivery failed/u,
+  );
+});
+
+test('accepts a child that consumes its full stdin and exits zero', async () => {
+  const input = 'postgres-batch-字\n'.repeat(512 * 1024);
+  const result = await runPostgresCommand(
+    process.execPath,
+    [
+      '-e',
+      'const hash = require("node:crypto").createHash("sha256"); let bytes = 0; process.stdin.on("data", (chunk) => { bytes += chunk.length; hash.update(chunk); }); process.stdin.on("end", () => process.stdout.write(JSON.stringify({ bytes, digest: "sha256:" + hash.digest("hex") })));',
+    ],
+    { input },
+  );
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    bytes: Buffer.byteLength(input),
+    digest: sha256Bytes(Buffer.from(input)),
+  });
+});
+
+test('rejects a missing PostgreSQL command without an unhandled stdin error', async () => {
+  await assert.rejects(
+    runPostgresCommand('better-agent-missing-command-for-test', [], { input: 'unconsumed input' }),
+    /ENOENT/u,
+  );
+});
 
 function clone(value) {
   return structuredClone(value);
@@ -336,8 +392,8 @@ test('requires the mutation gate to report its exact pass count with zero skip a
   const prefixedMutationResult = prefixedCounts.find(({ id }) => id === 'mutation');
   assert.ok(prefixedMutationResult);
   prefixedMutationResult.output = prefixedMutationResult.output
-    .replace('# tests 26', '# tests 260')
-    .replace('# pass 26', '# pass 260')
+    .replace('# tests 31', '# tests 310')
+    .replace('# pass 31', '# pass 310')
     .replace('# fail 0', '# fail 01')
     .replace('# skipped 0', '# skipped 00')
     .replace('# todo 0', '# todo 00');

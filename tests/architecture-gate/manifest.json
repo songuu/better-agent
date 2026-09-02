@@ -110,7 +110,7 @@
     },
     {
       "file": "infra/test/postgres/harness.mjs",
-      "sha256": "0e990a55ce4f752959ec28a31ba3ea8b3cf6570506f1d9bd2a80e5cd37aec832"
+      "sha256": "eda327cc5f693b22e9fda3b4380b8b707204ef8701f31e510a86768770591f44"
     }
   ],
   "workspaceTests": [
@@ -182,7 +182,7 @@
       "command": "node",
       "args": ["--test", "tests/architecture-gate/architecture-gate.test.mjs"],
       "mode": "real",
-      "successMarkers": ["# tests 26", "# pass 26", "# fail 0", "# skipped 0", "# todo 0"],
+      "successMarkers": ["# tests 31", "# pass 31", "# fail 0", "# skipped 0", "# todo 0"],
       "forbidSkippedOutput": true,
       "timeoutMs": 120000
     },
