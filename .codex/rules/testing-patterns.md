@@ -24,3 +24,4 @@
 - Pack route 回归要独立重算 versioned route preimage hash，并用同一 Pack 在不同 root Binding/root release 下证明 Pack path、member path 与 route hash 全部隔离；disabled route 只证明 source fact 保留，不能断言其 runtime 可用。
 - Graph-bound direct slice 回归必须区分“节点存在”和“root 有直接边”：用一个真实 transitive 节点证明不能冒充 direct dependency，并分别破坏 expected graph bytes、candidate record 与 requested root，避免只查 node membership。
 - 同一个 graph-bound wrapper 形态仍要为 Flow/internal Agent/external A2A 各跑真实 source adapter：前两者断言 nested seal 保留，A2A 断言 terminal node 没有该字段，防止泛型组合抹平 target-kind 语义。
+- Agent GateSpec projection 测试必须独立规范 protected operation hash 集合，并断言 root gate 不含 Flow-only source path/node；直接拿未规范化 source 数组比较会把合法 canonical sorting 误判为漂移。
