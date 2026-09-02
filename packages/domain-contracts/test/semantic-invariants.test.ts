@@ -10,6 +10,8 @@ import {
 } from '../src/index.js';
 
 const hash = 'sha256:semantic-invariant';
+const operationHashA = `sha256:${'a'.repeat(64)}`;
+const operationHashB = `sha256:${'b'.repeat(64)}`;
 const bindingPath = `bp1.${'a'.repeat(43)}`;
 const rootNodeId = `rn1.${'b'.repeat(43)}`;
 const missingNodeId = `rn1.${'c'.repeat(43)}`;
@@ -208,6 +210,175 @@ describe('Compiled closure reference integrity', () => {
       CompiledBindingEntryV1Schema.safeParse({
         ...binding,
         config_schema_version: 'future-binding/1',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('binds config version and operation kind to the Binding discriminator', () => {
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...binding,
+        config_schema_version: 'plugin-binding/1',
+      }).success,
+    ).toBe(false);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...binding,
+        operation_contracts: [
+          {
+            operation_kind: 'plugin_tool',
+            operation_id: 'wrong-kind',
+            input_schema_hash: hash,
+            side_effect_class: 'safe',
+            operation_key_required: false,
+            approval_required: false,
+            contract_hash: operationHashA,
+          },
+        ],
+        effective_policy: { ...effectivePolicy, operation_contract_hashes: [operationHashA] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('requires canonical unique operation/dependency sets and exact policy hash coverage', () => {
+    const operation = (contractHash: string) => ({
+      operation_kind: 'knowledge_query' as const,
+      operation_id: contractHash,
+      input_schema_hash: hash,
+      side_effect_class: 'safe' as const,
+      operation_key_required: false,
+      approval_required: false,
+      contract_hash: contractHash,
+    });
+    const operations = [operation(operationHashA), operation(operationHashB)];
+    const complete = {
+      ...binding,
+      operation_contracts: operations,
+      dependency_node_ids: [rootNodeId, missingNodeId],
+      effective_policy: {
+        ...effectivePolicy,
+        operation_contract_hashes: operations.map((item) => item.contract_hash),
+      },
+    };
+    expect(CompiledBindingEntryV1Schema.safeParse(complete).success).toBe(true);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...complete,
+        operation_contracts: [...operations].reverse(),
+      }).success,
+    ).toBe(false);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...complete,
+        operation_contracts: [operations[0], operations[0]],
+      }).success,
+    ).toBe(false);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...complete,
+        dependency_node_ids: [missingNodeId, rootNodeId],
+      }).success,
+    ).toBe(false);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...complete,
+        effective_policy: {
+          ...effectivePolicy,
+          operation_contract_hashes: [operationHashA],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...complete,
+        operation_contracts: [{ ...operations[0], side_effect_class: 'unsafe' }, operations[1]],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('binds approval evidence and async child hashes to their exact semantics', () => {
+    const required = {
+      ...binding,
+      effective_policy: {
+        ...effectivePolicy,
+        side_effect: { maximum_class: 'safe', approval: 'required' },
+      },
+    } as const;
+    expect(CompiledBindingEntryV1Schema.safeParse(required).success).toBe(false);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...required,
+        approval_gate_spec: { gate_spec_id: 'approval', gate_spec_hash: hash },
+      }).success,
+    ).toBe(true);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...binding,
+        approval_gate_spec: { gate_spec_id: 'approval', gate_spec_hash: hash },
+      }).success,
+    ).toBe(false);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...binding,
+        async_child_policy_hash: hash,
+      }).success,
+    ).toBe(false);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...binding,
+        binding_kind: 'flow',
+        target: { ...binding.target, published_resource_kind: 'FLOW_VERSION' },
+        config_schema_version: 'flow-binding/1',
+        async_child_policy_hash: hash,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('binds every Skill Pack operation route to this path and one compiled operation', () => {
+    const operation = {
+      operation_kind: 'knowledge_query' as const,
+      operation_id: 'query',
+      input_schema_hash: hash,
+      side_effect_class: 'safe' as const,
+      operation_key_required: false,
+      approval_required: false,
+      contract_hash: operationHashA,
+    };
+    const pack = {
+      ...binding,
+      binding_kind: 'skill_pack',
+      target: { ...binding.target, published_resource_kind: 'SKILL_PACK_RELEASE' },
+      config_schema_version: 'skill-pack-binding/1',
+      operation_contracts: [operation],
+      effective_policy: {
+        ...effectivePolicy,
+        operation_contract_hashes: [operationHashA],
+      },
+      skill_pack_operation_routes: [
+        {
+          pack_binding_path: bindingPath,
+          exposed_operation_id: 'query',
+          exposed_operation_contract_hash: operationHashA,
+          member_binding_path: `bp1.${'d'.repeat(43)}`,
+          member_target: binding.target,
+          member_operation_contract_hash: operationHashA,
+          route_hash: hash,
+        },
+      ],
+    } as const;
+    expect(CompiledBindingEntryV1Schema.safeParse(pack).success).toBe(true);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...pack,
+        skill_pack_operation_routes: [
+          { ...pack.skill_pack_operation_routes[0], pack_binding_path: `bp1.${'e'.repeat(43)}` },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      CompiledBindingEntryV1Schema.safeParse({
+        ...pack,
+        skill_pack_operation_routes: [],
       }).success,
     ).toBe(false);
   });

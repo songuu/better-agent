@@ -586,8 +586,19 @@ describe('policy compilation composition', () => {
       config_hash: hashA,
       source_contract_hash: hashA,
       effective_policy: resolve(meet(ceiling(), ceiling()), requirements()),
-      operation_contracts: [],
+      operation_contracts: [
+        {
+          operation_kind: 'plugin_tool',
+          operation_id: 'tool',
+          input_schema_hash: hashA,
+          side_effect_class: 'requires_key',
+          operation_key_required: true,
+          approval_required: true,
+          contract_hash: hashA,
+        },
+      ],
       dependency_node_ids: [],
+      approval_gate_spec: { gate_spec_id: 'approval', gate_spec_hash: hashA },
     };
     expect(CompiledBindingEntryV1Schema.safeParse(binding).success).toBe(true);
     expect(
