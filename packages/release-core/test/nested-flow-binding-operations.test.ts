@@ -1,6 +1,7 @@
 import type { PublishedResourcePinV1 } from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
 import { prepareGraphBoundAgentFlowCallOperations } from '../src/agent-child-call-operations.js';
+import { prepareAgentFlowBindingEntries } from '../src/agent-composite-binding-entries.js';
 import { canonicalResourceNodeId, createClosureIdentityRegistry } from '../src/closure-identity.js';
 import {
   compareCanonicalStrings,
@@ -12,7 +13,7 @@ import { canonicalSha256, canonicalSha256ExcludingRootKeys } from '../src/hash.j
 import { prepareGraphBoundNestedFlowBindingOperations } from '../src/nested-flow-binding-operations.js';
 import { prepareOperationContractSource } from '../src/operation-contract-source.js';
 import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js';
-import { prepareFlowNodePaths } from '../src/root-binding-paths.js';
+import { prepareFlowNodePaths, prepareRootBindingPaths } from '../src/root-binding-paths.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import {
   callCapabilityRequirements,
@@ -23,6 +24,7 @@ import {
   makePluginPin,
   workspaceId,
 } from './fixtures.js';
+import { ceiling } from './policy-fixtures.js';
 
 function executable(document: unknown) {
   return { schema_version: 'executable-source-candidate/1', workspace_id: workspaceId, document };
@@ -200,6 +202,22 @@ function flowCall(agent: ReturnType<typeof richAgentSource>, bindingId = 'flow')
       operation_key_required: binding.side_effect.operation_key_source !== undefined,
       approval_required: binding.side_effect.approval === 'required',
     },
+  };
+}
+
+function compositePolicy(agent: ReturnType<typeof richAgentSource>, bindingId = 'flow') {
+  const declaration = flowCall(agent, bindingId);
+  const operation = prepareOperationContractSource(declaration.operation).pin;
+  const path = prepareRootBindingPaths(executable(agent)).bindings.find(
+    (item) => item.binding_id === bindingId,
+  );
+  if (path === undefined) throw new Error('fixture Flow path is missing');
+  const allowed = { ...ceiling(), operation_contract_hashes: [operation.contract_hash] };
+  return {
+    schema_version: 'agent-composite-binding-policy-input/1',
+    workspace_ceiling: allowed,
+    root_ceiling: allowed,
+    binding_ceilings: [{ binding_path: path.binding_path, ceiling: allowed }],
   };
 }
 
@@ -448,5 +466,30 @@ describe('nested Flow Binding operation projection', () => {
         ),
       ).toThrow('CAPABILITY_OPERATION_CONTRACT_MISMATCH');
     }
+  });
+
+  it('compiles a Flow parent entry without copying child operations onto the mount', () => {
+    const value = prepared();
+    const declaration = flowCall(value.agent);
+    const result = prepareAgentFlowBindingEntries(
+      value.expectedGraph,
+      value.candidateGraph,
+      executable(value.agent),
+      executable(value.flow),
+      value.closure,
+      [declaration],
+      compositePolicy(value.agent),
+    );
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]).toMatchObject({
+      binding_kind: 'flow',
+      operation_contracts: [prepareOperationContractSource(declaration.operation).pin],
+      effective_policy: {
+        operation_contract_hashes: [
+          prepareOperationContractSource(declaration.operation).pin.contract_hash,
+        ],
+      },
+    });
+    expect(result.requirement_expressions[0]?.expression.expression_kind).toBe('nested_call');
   });
 });

@@ -472,6 +472,91 @@ function foldRequirementLimits(
   );
 }
 
+function unionStrings<T extends string>(left: readonly T[], right: readonly T[]): T[] {
+  return [...new Set([...left, ...right])].sort();
+}
+
+function mergeRequirementEnvelopes(
+  left: CapabilityRequirementsV1,
+  right: CapabilityRequirementsV1,
+  alternative: boolean,
+): CapabilityRequirementsV1 {
+  const credentials = new Map(
+    left.credential_requirements.map((credential) => [credential.requirement_id, credential]),
+  );
+  for (const credential of right.credential_requirements) {
+    const current = credentials.get(credential.requirement_id);
+    if (current === undefined) {
+      credentials.set(credential.requirement_id, credential);
+      continue;
+    }
+    if (
+      current.provider_id !== credential.provider_id ||
+      current.audience !== credential.audience
+    ) {
+      invalid('$.credential_requirements');
+    }
+    const modes = alternative
+      ? unionStrings(current.allowed_principal_modes, credential.allowed_principal_modes)
+      : intersection(current.allowed_principal_modes, credential.allowed_principal_modes);
+    if (modes.length === 0) unavailable('$.credential_requirements');
+    credentials.set(credential.requirement_id, {
+      ...current,
+      required_scopes: unionStrings(current.required_scopes, credential.required_scopes),
+      allowed_principal_modes: modes,
+    });
+  }
+  const modes = alternative
+    ? unionStrings(left.principal_modes, right.principal_modes)
+    : intersection(left.principal_modes, right.principal_modes);
+  if (modes.length === 0) unavailable('$.principal_modes');
+  const egressByBytes = new Map<string, CanonicalEgressRuleV1>();
+  for (const rule of [...left.egress, ...right.egress]) {
+    egressByBytes.set(canonicalJsonBytes(rule).toString('base64url'), rule);
+  }
+  return {
+    schema_version: 'capability-requirements/1',
+    credential_requirements: canonicalSort([...credentials.values()]),
+    principal_modes: modes,
+    egress: canonicalSort([...egressByBytes.values()]),
+    readable_data_classification: higher(
+      left.readable_data_classification,
+      right.readable_data_classification,
+      classificationRank,
+    ),
+    output_data_classification: higher(
+      left.output_data_classification,
+      right.output_data_classification,
+      classificationRank,
+    ),
+    side_effect_class: higher(left.side_effect_class, right.side_effect_class, effectRank),
+    approval_required: left.approval_required || right.approval_required,
+    operation_contract_hashes: unionStrings(
+      left.operation_contract_hashes,
+      right.operation_contract_hashes,
+    ),
+    minimum_limits: left.minimum_limits,
+  };
+}
+
+function foldRequirementEnvelope(
+  expression: CapabilityRequirementExpressionV1,
+): CapabilityRequirementsV1 {
+  if (expression.expression_kind === 'leaf') return expression.requirements;
+  if (expression.expression_kind === 'repeat') return foldRequirementEnvelope(expression.child);
+  if (expression.expression_kind === 'nested_call') {
+    return mergeRequirementEnvelopes(
+      expression.invocation,
+      foldRequirementEnvelope(expression.child),
+      false,
+    );
+  }
+  const children = expression.children.map(foldRequirementEnvelope);
+  return children.reduce((left, right) =>
+    mergeRequirementEnvelopes(left, right, expression.expression_kind === 'alternative'),
+  );
+}
+
 /** Smallest flat axis-aligned envelope; the normalized expression remains correlation authority. */
 export function compileCapabilityRequirementLimitEnvelope(
   input: unknown,
@@ -480,6 +565,18 @@ export function compileCapabilityRequirementLimitEnvelope(
   const result = CapabilityMinimumLimitsV1Schema.safeParse(foldRequirementLimits(expression));
   if (!result.success) invalid('$.minimum_limits');
   return deepFreezeJson(result.data);
+}
+
+/** Conservative flat authority envelope; the expression retains branch correlation. */
+export function compileCapabilityRequirementEnvelope(
+  input: unknown,
+): Readonly<CapabilityRequirementsV1> {
+  const expression = normalizeCapabilityRequirementExpression(input);
+  const requirements = foldRequirementEnvelope(expression);
+  return normalizeCapabilityRequirements({
+    ...requirements,
+    minimum_limits: foldRequirementLimits(expression),
+  });
 }
 
 /** Prove that a flat effective policy can carry the complete root expression envelope. */

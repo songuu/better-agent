@@ -5,10 +5,10 @@ import {
 
 import { prepareAgentLeafBindingOperations } from './agent-leaf-binding-operations.js';
 import { prepareAgentBindingApprovalGate } from './agent-gate-specs.js';
+import { parseAgentBindingPolicyInput } from './agent-binding-policy.js';
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
 import {
   meetCapabilityPolicyCeilings,
-  normalizeCapabilityPolicyCeiling,
   resolveEffectiveCapabilityPolicy,
 } from './capability-policy.js';
 import { canonicalResourceNodeId } from './closure-identity.js';
@@ -46,63 +46,12 @@ interface GraphBoundAgentLeafBindingEntrySetV1 {
   readonly prepared_entries: PreparedAgentLeafBindingEntrySetV1;
 }
 
-interface PolicyInput {
-  readonly workspace_ceiling: unknown;
-  readonly root_ceiling: unknown;
-  readonly binding_ceilings: readonly {
-    readonly binding_path: string;
-    readonly ceiling: unknown;
-  }[];
-}
-
 function notClosed(path = '$.policy'): never {
   throw new ReleaseCoreError(
     'CLOSURE_BINDING_ENTRY_NOT_CLOSED',
     path,
     'leaf Binding entry inputs do not form one exact closed path projection',
   );
-}
-
-function plainRecord(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function parsePolicyInput(input: unknown): PolicyInput {
-  const snapshot = boundedDataSnapshot(input, 'policy');
-  if (
-    !plainRecord(snapshot) ||
-    !exactKeys(snapshot, [
-      'schema_version',
-      'workspace_ceiling',
-      'root_ceiling',
-      'binding_ceilings',
-    ]) ||
-    snapshot.schema_version !== 'agent-leaf-binding-policy-input/1' ||
-    !Array.isArray(snapshot.binding_ceilings)
-  )
-    notClosed();
-  const bindingCeilings = snapshot.binding_ceilings.map((item, index) => {
-    if (
-      !plainRecord(item) ||
-      !exactKeys(item, ['binding_path', 'ceiling']) ||
-      typeof item.binding_path !== 'string'
-    )
-      notClosed(`$.policy.binding_ceilings[${index}]`);
-    return { binding_path: item.binding_path, ceiling: item.ceiling };
-  });
-  return {
-    workspace_ceiling: normalizeCapabilityPolicyCeiling(snapshot.workspace_ceiling),
-    root_ceiling: normalizeCapabilityPolicyCeiling(snapshot.root_ceiling),
-    binding_ceilings: bindingCeilings,
-  };
 }
 
 /**
@@ -118,7 +67,7 @@ export function prepareAgentLeafBindingEntries(
   if (source.root.pin.published_resource_kind !== 'AGENT_RELEASE') notClosed('$.root');
   const projection = prepareAgentLeafBindingOperations(rootInput, dependencyInput);
   const rootPaths = prepareRootBindingPaths(rootInput);
-  const policies = parsePolicyInput(policyInput);
+  const policies = parseAgentBindingPolicyInput(policyInput, 'agent-leaf-binding-policy-input/1');
   const document = source.preimage.document as unknown as {
     capability_bindings: readonly CapabilityBindingV1[];
   };
@@ -228,7 +177,7 @@ export function prepareAgentLeafBindingEntrySet(
     if (path === undefined) notClosed('$.binding_path');
     return { path: path.binding_path, target_key: publishedResourcePinKey(binding.pin) };
   });
-  const policies = parsePolicyInput(policyInput);
+  const policies = parseAgentBindingPolicyInput(policyInput, 'agent-leaf-binding-policy-input/1');
   const expectedPaths = new Set<string>(expected.map((item) => item.path));
   if (
     policies.binding_ceilings.length !== expectedPaths.size ||

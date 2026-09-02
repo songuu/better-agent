@@ -1,6 +1,10 @@
-import type { PublishedResourcePinV1 } from '@better-agent/domain-contracts';
+import {
+  CompiledBindingEntryV1Schema,
+  type PublishedResourcePinV1,
+} from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
 import { prepareGraphBoundAgentSubagentCallOperations } from '../src/agent-child-call-operations.js';
+import { prepareAgentSubagentBindingEntries } from '../src/agent-composite-binding-entries.js';
 import { canonicalResourceNodeId } from '../src/closure-identity.js';
 import { compareCanonicalStrings, deriveDependencyManifest } from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
@@ -18,6 +22,7 @@ import {
   hashB,
   workspaceId,
 } from './fixtures.js';
+import { ceiling } from './policy-fixtures.js';
 
 function candidate(document: unknown) {
   return { schema_version: 'executable-source-candidate/1', workspace_id: workspaceId, document };
@@ -215,6 +220,22 @@ function subagentCall(agent: ReturnType<typeof richAgentSource>) {
       operation_key_required: binding.side_effect.operation_key_source !== undefined,
       approval_required: binding.side_effect.approval === 'required',
     },
+  };
+}
+
+function compositePolicy(agent: ReturnType<typeof richAgentSource>) {
+  const declaration = subagentCall(agent);
+  const operation = prepareOperationContractSource(declaration.operation).pin;
+  const path = prepareRootBindingPaths(candidate(agent)).bindings.find(
+    (item) => item.binding_id === declaration.binding_id,
+  );
+  if (path === undefined) throw new Error('fixture SubAgent path is missing');
+  const allowed = { ...ceiling(), operation_contract_hashes: [operation.contract_hash] };
+  return {
+    schema_version: 'agent-composite-binding-policy-input/1',
+    workspace_ceiling: allowed,
+    root_ceiling: allowed,
+    binding_ceilings: [{ binding_path: path.binding_path, ceiling: allowed }],
   };
 }
 
@@ -555,5 +576,132 @@ describe('nested Agent Binding operation projection', () => {
         ),
       ).toThrow('CAPABILITY_OPERATION_CONTRACT_MISMATCH');
     }
+  });
+
+  it('compiles a closed SubAgent parent entry from verified invocation and child policy', () => {
+    const value = prepared();
+    const result = prepareAgentSubagentBindingEntries(
+      value.expectedGraph,
+      value.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      value.closure,
+      [subagentCall(value.agent)],
+      compositePolicy(value.agent),
+    );
+    expect(result.entries).toHaveLength(1);
+    const entry = result.entries[0];
+    expect(CompiledBindingEntryV1Schema.safeParse(entry).success).toBe(true);
+    expect(entry).toMatchObject({
+      binding_kind: 'subagent',
+      source_contract_hash: value.targetPin.contract_hash,
+      dependency_node_ids: [canonicalResourceNodeId(result.dependency_resource_node.pin)],
+      effective_policy: {
+        operation_contract_hashes: [entry?.operation_contracts[0]?.contract_hash],
+        max_calls: 10,
+      },
+    });
+    expect(result.requirement_expressions[0]?.expression).toMatchObject({
+      expression_kind: 'nested_call',
+      invocation: { minimum_limits: { calls: 1, parallelism: 1 } },
+      child: emptyCapabilityRequirementExpression,
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.requirement_expressions[0]?.expression)).toBe(true);
+  });
+
+  it('requires the exact composite path ceiling set and sufficient aggregate limits', () => {
+    const value = prepared();
+    const validPolicy = compositePolicy(value.agent);
+    const missing = { ...validPolicy, binding_ceilings: [] };
+    const duplicate = {
+      ...validPolicy,
+      binding_ceilings: [...validPolicy.binding_ceilings, ...validPolicy.binding_ceilings],
+    };
+    const underProvisioned = {
+      ...validPolicy,
+      binding_ceilings: validPolicy.binding_ceilings.map((item) => ({
+        ...item,
+        ceiling: { ...item.ceiling, max_depth: 0 },
+      })),
+    };
+    for (const policy of [missing, duplicate, underProvisioned]) {
+      expect(() =>
+        prepareAgentSubagentBindingEntries(
+          value.expectedGraph,
+          value.candidateGraph,
+          candidate(value.agent),
+          candidate(value.target),
+          value.closure,
+          [subagentCall(value.agent)],
+          policy,
+        ),
+      ).toThrow();
+    }
+  });
+
+  it('proves child operations against the ceiling without copying them onto the parent entry', () => {
+    const value = prepared();
+    const resourceNodes = structuredClone(value.closure.resource_nodes) as unknown as Array<
+      Record<string, unknown>
+    >;
+    const rootNode = resourceNodes.find((node) => node.node_role === 'root');
+    if (rootNode === undefined) throw new Error('fixture closure root node is missing');
+    rootNode.intrinsic_policy = {
+      schema_version: 'capability-requirement-expression/1',
+      expression_kind: 'leaf',
+      requirements: { ...emptyCapabilityRequirements, operation_contract_hashes: [hashB] },
+    };
+    const draft = { ...value.closure, resource_nodes: resourceNodes, closure_hash: hashA };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(candidate(value.agent)).root,
+      value.targetPin,
+      closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+    );
+    const declaration = subagentCall(value.agent);
+    const policy = compositePolicy(value.agent);
+    expect(() =>
+      prepareAgentSubagentBindingEntries(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        candidate(value.agent),
+        candidate(value.target),
+        closure,
+        [declaration],
+        policy,
+      ),
+    ).toThrow('CLOSURE_POLICY_REQUIREMENT_UNAVAILABLE');
+    const allowChild = (candidatePolicy: (typeof policy)['root_ceiling']) => ({
+      ...candidatePolicy,
+      operation_contract_hashes: [...candidatePolicy.operation_contract_hashes, hashB].sort(),
+    });
+    const result = prepareAgentSubagentBindingEntries(
+      evidence.expectedGraph,
+      evidence.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      closure,
+      [declaration],
+      {
+        ...policy,
+        workspace_ceiling: allowChild(policy.workspace_ceiling),
+        root_ceiling: allowChild(policy.root_ceiling),
+        binding_ceilings: policy.binding_ceilings.map((item) => ({
+          ...item,
+          ceiling: allowChild(item.ceiling),
+        })),
+      },
+    );
+    expect(result.entries[0]?.effective_policy.operation_contract_hashes).toEqual([
+      result.entries[0]?.operation_contracts[0]?.contract_hash,
+    ]);
+    expect(result.requirement_expressions[0]?.expression).toMatchObject({
+      child: { requirements: { operation_contract_hashes: [hashB] } },
+    });
   });
 });

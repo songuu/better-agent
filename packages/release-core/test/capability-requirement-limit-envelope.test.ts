@@ -1,6 +1,8 @@
+import type { CapabilityRequirementsV1 } from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  compileCapabilityRequirementEnvelope as compileRequirements,
   compileCapabilityRequirementLimitEnvelope as compile,
   resolveEffectiveCapabilityPolicy,
   verifyCapabilityRequirementLimitEnvelope as verify,
@@ -18,7 +20,13 @@ interface LimitOverrides {
   readonly durationMs?: number;
 }
 
-function demand(overrides: LimitOverrides = {}) {
+function firstItem<T>(items: readonly T[]): T {
+  const item = items[0];
+  if (item === undefined) throw new Error('fixture requires a non-empty array');
+  return item;
+}
+
+function demand(overrides: LimitOverrides = {}): CapabilityRequirementsV1 {
   const value = requirements();
   value.minimum_limits = {
     calls: overrides.calls ?? 1,
@@ -41,6 +49,14 @@ function leaf(overrides: LimitOverrides = {}) {
     schema_version: 'capability-requirement-expression/1',
     expression_kind: 'leaf',
     requirements: demand(overrides),
+  };
+}
+
+function leafFrom(requirements: ReturnType<typeof demand>) {
+  return {
+    schema_version: 'capability-requirement-expression/1',
+    expression_kind: 'leaf',
+    requirements,
   };
 }
 
@@ -291,5 +307,95 @@ describe('capability requirement limit envelope', () => {
     expect(() => verify(expression, underProvision(policy))).toThrow(
       'CLOSURE_POLICY_REQUIREMENT_UNAVAILABLE',
     );
+  });
+
+  it('merges conjunctive credentials/scopes and strongest classifications/effects', () => {
+    const left = demand();
+    const right = demand();
+    left.principal_modes = ['caller_delegated', 'service_principal'];
+    firstItem(left.credential_requirements).allowed_principal_modes = [
+      'caller_delegated',
+      'service_principal',
+    ];
+    left.credential_requirements[0]?.required_scopes.push('write');
+    firstItem(left.egress).path = { match: 'exact', value: '/v1/left' };
+    left.side_effect_class = 'safe';
+    left.approval_required = false;
+    firstItem(right.egress).path = { match: 'exact', value: '/v1/right' };
+    right.readable_data_classification = 'restricted';
+    right.output_data_classification = 'restricted';
+    right.side_effect_class = 'unsafe';
+    right.approval_required = true;
+    right.operation_contract_hashes = [`sha256:${'b'.repeat(64)}`];
+    const result = compileRequirements(group('sequence', [leafFrom(left), leafFrom(right)]));
+    expect(result.credential_requirements[0]?.required_scopes).toEqual(['read', 'write']);
+    expect(result.credential_requirements[0]?.allowed_principal_modes).toEqual([
+      'service_principal',
+    ]);
+    expect(result.principal_modes).toEqual(['service_principal']);
+    expect(result.egress).toHaveLength(2);
+    expect(result).toMatchObject({
+      readable_data_classification: 'restricted',
+      output_data_classification: 'restricted',
+      side_effect_class: 'unsafe',
+      approval_required: true,
+    });
+    expect(result.operation_contract_hashes).toHaveLength(2);
+  });
+
+  it('unions alternative principal modes while conjunctive modes must overlap', () => {
+    const service = demand();
+    const caller = demand();
+    caller.principal_modes = ['caller_delegated'];
+    firstItem(caller.credential_requirements).allowed_principal_modes = ['caller_delegated'];
+    expect(
+      compileRequirements(group('alternative', [leafFrom(service), leafFrom(caller)]))
+        .principal_modes,
+    ).toEqual(['caller_delegated', 'service_principal']);
+    expect(() =>
+      compileRequirements(group('parallel', [leafFrom(service), leafFrom(caller)])),
+    ).toThrow('CLOSURE_POLICY_REQUIREMENT_UNAVAILABLE');
+  });
+
+  it('rejects one requirement ID that aliases different credential authorities', () => {
+    const left = demand();
+    const right = demand();
+    firstItem(right.credential_requirements).provider_id = 'different-provider';
+    expect(() => compileRequirements(group('sequence', [leafFrom(left), leafFrom(right)]))).toThrow(
+      'CLOSURE_POLICY_INPUT_INVALID',
+    );
+  });
+
+  it('uses the numeric compiler for repeat and nested-call requirements envelopes', () => {
+    const repeated = compileRequirements({
+      schema_version: 'capability-requirement-expression/1',
+      expression_kind: 'repeat',
+      max_iterations: 3,
+      child: first,
+    });
+    expect(repeated.minimum_limits).toEqual(
+      compile({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'repeat',
+        max_iterations: 3,
+        child: first,
+      }),
+    );
+    const invocation = demand({ calls: 1, parallelism: 1 });
+    const nested = {
+      schema_version: 'capability-requirement-expression/1',
+      expression_kind: 'nested_call',
+      invocation,
+      child: second,
+    } as const;
+    expect(compileRequirements(nested).minimum_limits).toEqual(compile(nested));
+  });
+
+  it('returns a canonical, permutation-stable, deeply frozen full envelope', () => {
+    const result = compileRequirements(group('alternative', [first, second]));
+    expect(result).toEqual(compileRequirements(group('alternative', [second, first])));
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.credential_requirements)).toBe(true);
+    expect(Object.isFrozen(result.minimum_limits.budget)).toBe(true);
   });
 });

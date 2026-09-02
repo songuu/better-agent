@@ -365,6 +365,10 @@ Direct Agent→SubAgent expansion 按 target kind 分两条 closed 路径。`int
 
 Flow/SubAgent call source 使用 `capability-invocation-requirements/1` 声明凭证、principal、egress、数据分类与非零最小 limits；它不得自报 operation hashes、side effect 或 approval。compiler 先验证 exact Binding operation，再从 operation pin 派生这三个授权敏感字段，规范化为完整 `CapabilityRequirementsV1`，并且只附着到对应 parent mount；child 中同名 Binding 不得继承 parent invocation requirements。
 
+完整 requirements envelope 与数值 envelope 使用同一棵规范表达式编译。sequence/parallel/nested/repeat 是合取：credential required scopes 取并集，credential mode 与 principal mode 取交集，空交集立即不可用；alternative 是析取：mode 取并集。egress 与 operation hash 取规范并集，read/output classification、side effect 取更严等级，approval 取 OR。相同 requirement ID 若对应不同 provider/audience 必须拒绝。alternative 的扁平 credential 集合是保守上包络，分支相关性仍只由原表达式表达，不能据此删除某分支需求或反推运行分支。
+
+Flow/internal-Agent composite Binding entry 只接受已验证的 parent call projection 与已验证的 child-root requirements。compiler 将二者组成 canonical `nested_call`，经 Workspace→root→exact-path ceiling meet 后解析完整 effective policy，并绑定 target/config/source hash、dependency node、GateSpec 与 async child policy hash。ceiling 必须覆盖 parent call 和 child operations，但最终 parent entry 的 operation allow-set 只保留 parent call operation；child operations 仍属于 child-prefixed entries，禁止复制到父路径形成越权别名。
+
 纯内核在返回前对完整规范结果重新执行同一结构/字节预算验证，再深度冻结；两份合法输入的笛卡尔交集可能增加输出大小，必须在本次 meet 拒绝，不能等下一次使用才失败。不访问网络、凭据或数据库；其 meet 结果本身不是可信授权凭证。GateSpec/operation-key 的实际绑定、registry 真实性和 epoch 重验证仍分别由 T3–T5 实现。
 
 ## 5. 发布、准入与运行时

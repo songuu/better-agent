@@ -44,3 +44,5 @@
 - Pack graph-sealing 回归必须构造“Agent→leaf 存在、Pack→leaf 缺失”的合法图，证明错误父边不能借权；再分别给 Agent root manifest 与 Pack manifest 增加一个仍可解析的额外依赖，证明 edge membership 通过时 manifest exactness 仍会拒绝。
 - Nested policy evidence 不能只用空 requirements 测字段存在；至少重封一次含非零 minimum/read classification 的 child closure、更新 graph nested hash，并断言 parent dependency node 逐字保留该 policy 且 deep-frozen。Composite 数值回归必须分别覆盖 sequence/parallel/alternative/repeat/nested-call、token 联合下限、safe-integer/bigint 溢出与 root envelope 超 aggregate 拒绝；parent entry 只能调用该编译器，不能复制 child minima。
 - Child-call invocation requirements 要同时测试缺失、零成本、自报 operation/effect/approval、schema drift、parent/child 同 ID 隔离以及深冻结；仅验证 call operation pin 不足以生成 composite policy。
+- 完整 requirements envelope 回归要逐轴覆盖 credential scope 并集、合取 mode 交集、alternative mode 并集、分类/effect 最大值、approval OR、egress/operation 规范集合、同 requirement ID 的 authority alias 冲突，以及 permutation stability/deep freeze；数值编译结果还要与既有 limit envelope 逐字一致。
+- Composite Binding entry 要证明 child operation 参与 ceiling 可满足性校验，但不会出现在 parent entry 的 operation allow-set；同时覆盖 exact path ceiling 缺失/重复、depth 不足、dependency pin 边界误传和重封 child closure 后的重新验证。
