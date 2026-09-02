@@ -25,3 +25,8 @@
 - Egress uses deployment-approved network policy pins, not Workspace-supplied IP/CIDR, proxy or DNS servers. Canonical host/path/method/redirect meet is pure compilation, not proof that runtime SSRF enforcement or deployment approval already happened.
 - Canonical composition must satisfy its input budgets at the output boundary too. Two bounded host/path sets can multiply into an oversized result; reject before returning instead of producing a value the next meet cannot consume.
 - Budget ceilings are independent caps. Simultaneous input/output token minima also need joint feasibility against the shared total cap; use bigint to avoid unsafe Number sums.
+
+## Pinned dependency graph staging
+
+- A verified manifest graph is an intermediate deterministic artifact, not a compiled capability closure or proof that a resource was authoritatively sealed. Source preimages, nested closure bodies, effective path policies and registry provenance must be verified before publisher/admission integration; never promote candidate `sealed` text to authority.
+- Graph traversal must enforce the longest root-to-leaf path, not first-visit depth. Memoized shared subtrees retain their full height; exact full pins and version-cycle identity serve distinct purposes, especially when a root semantic seed differs from its eventual compiled hash.

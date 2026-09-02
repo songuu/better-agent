@@ -1,6 +1,6 @@
 # Compiled Capability Closure v1
 
-> **状态：契约冻结；G0-02 已实现结构/引用 Schema，canonicalizer、policy meet 与 admission 尚未实现**
+> **状态：T1 canonical identity 与 T2 policy meet 已实现并本地验证；完整 closure compiler、registry/readback、admission 与应用上线仍待实现**
 > **适用范围：** `packages/domain-contracts`、`packages/agent-runtime`、`packages/flow-ir`、`packages/policy`、`packages/release-core`、`apps/worker`  
 > **关联：** [Agent Release v1](./agent-release-v1与能力装配契约.md)、[Flow IR v1](./flow-ir-v1与运行时契约.md)、[Agent Strategy ABI v1](./agent-runtime-strategy-v1.md)、[ADR-003](../adr/003-多租户与凭据模型.md)
 
@@ -291,6 +291,16 @@ G1 的 identity 实现使用以下固定字节语法；这是第 3 节 length-pr
 5. 构建版本级有向图并检查直接/间接循环。递归深度、资源数、operation 数和 canonical 文档大小必须有平台绝对上限；超限是发布错误，不可截断后运行。
 6. 对每条 root-to-leaf 路径按下节规则计算策略交集，然后合并为 Binding 和 root aggregate。必经/forced 路径交集为空时必须拒绝发布；可选 Binding 也必须显式 disabled 并进入 hash，不得在运行时悠悠失败。
 7. 以稳定排序和 JCS canonicalization 生成 `closure_hash`，再把该 hash 写入 root release compiled hash、dependency manifest 和发布 registry。嵌套 Agent/Flow 节点必须同时保留目标已发布 `nested_closure_hash`，不得将它用当前编译器原地重算。
+
+#### 4.1.1 Pinned dependency graph preparation
+
+`pinned-dependency-graph/1` 是编译器的中间依赖图，不是 `CompiledCapabilityClosureV1`、授权证据或已发布资源。输入 `pinned-dependency-graph-candidate/1` 固定 closure-local `root`、`root_dependencies` 和恰好覆盖传递依赖的 `resources`。每份 `pinned-dependency-record/1` 包含完整 `pin`、literal `publication_state=sealed`、既有 `published-resource-dependency-manifest/1`；Agent/Flow 另要求 `nested_closure_hash`，其他 kind 禁止该字段。
+
+该步骤重算每份 manifest、核对 owner/full pin、拒绝同版本多 hash、缺失/多余记录、跨 Workspace 引用和直接/间接环，输出 canonical node IDs、edges、dependency-first order 及独立 `graph_hash=SHA-256(JCS(graph_without_graph_hash))`。所有 UUID 必须是合法的小写规范文本；hash 是严格 71 字符 sha256 小写十六进制。集合排序不改变 graph hash，dependency-first order 必须由图计算，不能由调用方指定。深度按 root 到节点的最长依赖边数计算，不能因节点先通过较短路径访问就漏算。
+
+绝对上限：包含 root 最多 256 nodes、1,024 条去重边、最长路径 32 edges；输入/输出最多 8 MiB 字符串数据和 8 MiB JCS bytes，snapshot 最多 131,072 values、depth 12、每数组 1,024 entries、每对象 12 properties、每字符串 4,096 UTF-8 bytes。超限拒绝，不截断。使用 T1 的完整 pin identity，输入无 Proxy/getter/稀疏数组/非法 Unicode，输出 detached/deep-frozen；loader 必须与同一候选快照重算的完整 canonical artifact 精确比较，而不仅比较它自报的 hash。
+
+这里的 `sealed`、root semantic seed 和 nested closure hash 是待上层读取器证明的 registry facts，不因调用方填入字段就成为可信事实。本步骤不验证 root semantics preimage、nested closure body/compiled hash、kind-specific Binding 展开、policy path、GateSpec/route 或发布事务；这些仍是 T3 后续、T4–T6 的硬要求。Agent publisher 继续关闭，不得以该中间图代替最终闭包。受控全局目录需要独立 typed provenance，当前无这种证明的跨 Workspace 输入一律拒绝。
 
 ### 4.2 只能收窄的 meet 规则
 
