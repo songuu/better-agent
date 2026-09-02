@@ -21,7 +21,7 @@ import {
 
 type BindingPathSegmentV1 = ReturnType<typeof BindingPathSegmentV1Schema.parse>;
 
-interface CompiledRootBindingPathV1 {
+export interface CompiledRootBindingPathV1 {
   readonly binding_id: string;
   readonly binding_kind: CapabilityBindingV1['kind'];
   readonly binding_path: `bp1.${string}`;
@@ -29,7 +29,7 @@ interface CompiledRootBindingPathV1 {
   readonly enabled: boolean;
 }
 
-interface RootBindingPaths {
+export interface RootBindingPaths {
   readonly root: PreparedExecutableSourceV1['root'];
   readonly bindings: readonly CompiledRootBindingPathV1[];
   readonly source_disabled_binding_paths: readonly `bp1.${string}`[];
