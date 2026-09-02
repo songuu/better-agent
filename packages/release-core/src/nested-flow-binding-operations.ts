@@ -3,8 +3,8 @@ import type { CapabilityBindingV1, OperationContractPinV1 } from '@better-agent/
 import { canonicalJsonBytes } from './canonical-json.js';
 import { prepareNestedCapabilityDependency } from './compiled-capability-closure.js';
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
-import { prepareExecutableSource } from './executable-source.js';
 import { ReleaseCoreError } from './errors.js';
+import { prepareExecutableSource } from './executable-source.js';
 import { prepareGraphBoundAgentFlowPaths } from './graph-bound-direct-paths.js';
 import { prepareFlowNodePaths } from './root-binding-paths.js';
 
@@ -19,6 +19,9 @@ export interface PreparedNestedFlowBindingOperationsV1 {
   readonly schema_version: 'prepared-nested-flow-binding-operations/1';
   readonly graph_hash: `sha256:${string}`;
   readonly nested_closure_hash: string;
+  readonly dependency_resource_node: ReturnType<
+    typeof prepareNestedCapabilityDependency
+  >['resource_node'];
   readonly binding_operations: readonly ProjectedFlowBindingOperationV1[];
 }
 
@@ -152,6 +155,7 @@ export function prepareGraphBoundNestedFlowBindingOperations(
     schema_version: 'prepared-nested-flow-binding-operations/1',
     graph_hash: graphBound.graph_binding.graph_hash,
     nested_closure_hash: nestedClosure.closure_hash,
+    dependency_resource_node: nestedDependency.resource_node,
     binding_operations: bindingOperations.sort((left, right) =>
       compareCanonicalStrings(left.binding_path, right.binding_path),
     ),

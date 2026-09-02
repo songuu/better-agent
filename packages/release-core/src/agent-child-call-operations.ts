@@ -6,15 +6,15 @@ import {
   deepFreezeJson,
   publishedResourcePinKey,
 } from './dependency-manifest.js';
-import { prepareExecutableSource } from './executable-source.js';
 import { ReleaseCoreError } from './errors.js';
+import { prepareExecutableSource } from './executable-source.js';
 import {
-  prepareGraphBoundNestedAgentBindingOperations,
   type PreparedNestedAgentBindingOperationsV1,
+  prepareGraphBoundNestedAgentBindingOperations,
 } from './nested-agent-binding-operations.js';
 import {
-  prepareGraphBoundNestedFlowBindingOperations,
   type PreparedNestedFlowBindingOperationsV1,
+  prepareGraphBoundNestedFlowBindingOperations,
 } from './nested-flow-binding-operations.js';
 import { verifyBindingOperationContract } from './operation-contract-source.js';
 import { prepareRootBindingPaths } from './root-binding-paths.js';
@@ -33,6 +33,7 @@ export interface PreparedAgentChildCallOperationsV1 {
   readonly dependency_kind: 'AGENT_RELEASE' | 'FLOW_VERSION';
   readonly graph_hash: `sha256:${string}`;
   readonly nested_closure_hash: string;
+  readonly dependency_resource_node: NestedProjection['dependency_resource_node'];
   readonly binding_operations: readonly {
     readonly binding_id: string;
     readonly binding_kind: CapabilityBindingV1['kind'];
@@ -124,6 +125,7 @@ function prepare(
     dependency_kind: dependencyKind,
     graph_hash: projection.graph_hash,
     nested_closure_hash: projection.nested_closure_hash,
+    dependency_resource_node: projection.dependency_resource_node,
     binding_operations: projection.binding_operations
       .map((entry) => {
         const operation = operationByPath.get(entry.binding_path);

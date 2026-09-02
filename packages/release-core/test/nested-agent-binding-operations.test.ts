@@ -1,6 +1,5 @@
-import { describe, expect, it } from 'vitest';
-
 import type { PublishedResourcePinV1 } from '@better-agent/domain-contracts';
+import { describe, expect, it } from 'vitest';
 import { prepareGraphBoundAgentSubagentCallOperations } from '../src/agent-child-call-operations.js';
 import { canonicalResourceNodeId } from '../src/closure-identity.js';
 import { compareCanonicalStrings, deriveDependencyManifest } from '../src/dependency-manifest.js';
@@ -230,6 +229,12 @@ describe('nested Agent Binding operation projection', () => {
         (binding) => binding.binding_id === 'plugin',
       )?.binding_path,
     );
+    expect(result.dependency_resource_node).toMatchObject({
+      node_role: 'dependency',
+      pin: value.targetPin,
+      intrinsic_policy: emptyCapabilityRequirements,
+    });
+    expect(Object.isFrozen(result.dependency_resource_node.intrinsic_policy)).toBe(true);
   });
 
   it('does not leak child operations into the same-ID parent Binding', () => {
@@ -244,6 +249,43 @@ describe('nested Agent Binding operation projection', () => {
     const plugins = result.binding_operations.filter((binding) => binding.binding_id === 'plugin');
     expect(plugins).toHaveLength(2);
     expect(plugins.map((binding) => binding.operation_contracts.length).sort()).toEqual([0, 1]);
+  });
+
+  it('carries a non-empty verified child-root policy without caller substitution', () => {
+    const value = prepared();
+    const resourceNodes = structuredClone(value.closure.resource_nodes) as unknown as Array<
+      Record<string, unknown>
+    >;
+    const rootNode = resourceNodes.find((node) => node.node_role === 'root');
+    if (rootNode === undefined) throw new Error('fixture closure root node is missing');
+    const intrinsicPolicy = {
+      ...emptyCapabilityRequirements,
+      readable_data_classification: 'internal' as const,
+      minimum_limits: {
+        ...emptyCapabilityRequirements.minimum_limits,
+        calls: 1,
+      },
+    };
+    rootNode.intrinsic_policy = intrinsicPolicy;
+    const draft = { ...value.closure, resource_nodes: resourceNodes, closure_hash: hashA };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(candidate(value.agent)).root,
+      value.targetPin,
+      closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+    );
+    const result = prepareGraphBoundNestedAgentBindingOperations(
+      evidence.expectedGraph,
+      evidence.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      closure,
+    );
+    expect(result.dependency_resource_node.intrinsic_policy).toEqual(intrinsicPolicy);
   });
 
   it('isolates the child operation namespace under two parent mounts', () => {
@@ -429,6 +471,10 @@ describe('nested Agent Binding operation projection', () => {
       sameId.find((entry) => entry.operation_contracts.length === 1)?.operation_contracts[0]
         ?.operation_kind,
     ).toBe('subagent_call');
+    expect(result.dependency_resource_node).toMatchObject({
+      pin: value.targetPin,
+      intrinsic_policy: emptyCapabilityRequirements,
+    });
   });
 
   it('rejects missing, unknown, and schema-drifted SubAgent call declarations', () => {

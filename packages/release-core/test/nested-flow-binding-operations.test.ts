@@ -1,6 +1,5 @@
-import { describe, expect, it } from 'vitest';
-
 import type { PublishedResourcePinV1 } from '@better-agent/domain-contracts';
+import { describe, expect, it } from 'vitest';
 import { prepareGraphBoundAgentFlowCallOperations } from '../src/agent-child-call-operations.js';
 import { canonicalResourceNodeId, createClosureIdentityRegistry } from '../src/closure-identity.js';
 import {
@@ -217,6 +216,12 @@ describe('nested Flow Binding operation projection', () => {
     );
     expect(projected?.operation_contracts[0]?.operation_id).toBe('flow-output');
     expect(projected?.binding_path).not.toBe(value.closure.bindings[0]?.binding_path);
+    expect(result.dependency_resource_node).toMatchObject({
+      node_role: 'dependency',
+      pin: value.flowPin,
+      intrinsic_policy: emptyCapabilityRequirements,
+    });
+    expect(Object.isFrozen(result.dependency_resource_node.intrinsic_policy)).toBe(true);
   });
 
   it('isolates one verified node operation under two Flow mounts', () => {
