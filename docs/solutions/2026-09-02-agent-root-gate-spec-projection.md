@@ -26,6 +26,7 @@ GateSpec 若只按 ID 查找，无法区分同 closure 不同 source，运行时
 - Flow gate 同时断言 resource node、opaque source path 与 local node ID。
 - 测试用独立排序的 operation hash 期望，不依赖源声明顺序。
 - Binding approval coverage 未连接前不称 closed Gate authorization。
+- coverage join 必须重取同一 Agent source 的 Binding 与 Gates；required approval 要求非空唯一 operation pins 且全部在 protected set 内，approval-none 拒绝 intrinsic approval operation。
 
 ## Related
 

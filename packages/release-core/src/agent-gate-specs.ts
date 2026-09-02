@@ -1,4 +1,8 @@
-import { CompiledGateSpecEntryV1Schema, type FlowGraphV1 } from '@better-agent/domain-contracts';
+import {
+  CompiledGateSpecEntryV1Schema,
+  type FlowGraphV1,
+  OperationContractPinV1Schema,
+} from '@better-agent/domain-contracts';
 
 import { canonicalResourceNodeId } from './closure-identity.js';
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
@@ -18,6 +22,17 @@ interface PreparedFlowGateSpecsV1 {
   readonly schema_version: 'prepared-flow-gate-specs/1';
   readonly root: ReturnType<typeof prepareExecutableSource>['root'];
   readonly gate_specs: readonly CompiledGateSpecEntryV1[];
+}
+
+interface PreparedAgentBindingApprovalGateV1 {
+  readonly schema_version: 'prepared-agent-binding-approval-gate/1';
+  readonly root: ReturnType<typeof prepareExecutableSource>['root'];
+  readonly binding_id: string;
+  readonly operation_contracts: readonly ReturnType<typeof OperationContractPinV1Schema.parse>[];
+  readonly approval_gate_spec?: {
+    readonly gate_spec_id: string;
+    readonly gate_spec_hash: string;
+  };
 }
 
 function notClosed(): never {
@@ -171,5 +186,66 @@ export function prepareFlowGateSpecs(rootInput: unknown): PreparedFlowGateSpecsV
     schema_version: 'prepared-flow-gate-specs/1',
     root: source.root,
     gate_specs: gates,
+  });
+}
+
+/** Join one Agent Binding's approval declaration to exact same-source gate operation coverage. */
+export function prepareAgentBindingApprovalGate(
+  rootInput: unknown,
+  bindingId: string,
+  operationContractsInput: unknown,
+): PreparedAgentBindingApprovalGateV1 {
+  const preparedGates = prepareAgentGateSpecs(rootInput);
+  const source = prepareExecutableSource(rootInput);
+  const document = source.preimage.document as unknown as {
+    capability_bindings: readonly {
+      binding_id: string;
+      side_effect: {
+        approval: 'none' | 'required';
+        approval_gate_spec_id?: string;
+      };
+    }[];
+  };
+  const binding = document.capability_bindings.find((item) => item.binding_id === bindingId);
+  if (binding === undefined || !Array.isArray(operationContractsInput)) notClosed();
+  const operationContracts = operationContractsInput.map((value) => {
+    const parsed = OperationContractPinV1Schema.safeParse(value);
+    if (!parsed.success) notClosed();
+    return parsed.data;
+  });
+  const uniqueHashes = new Set(operationContracts.map((operation) => operation.contract_hash));
+  if (uniqueHashes.size !== operationContracts.length) notClosed();
+  if (binding.side_effect.approval === 'none') {
+    if (operationContracts.some((operation) => operation.approval_required)) notClosed();
+    return deepFreezeJson({
+      schema_version: 'prepared-agent-binding-approval-gate/1',
+      root: source.root,
+      binding_id: binding.binding_id,
+      operation_contracts: operationContracts,
+    });
+  }
+  if (operationContracts.length === 0) notClosed();
+  const matching = preparedGates.gate_specs.filter(
+    (gate) => gate.gate_spec_id === binding.side_effect.approval_gate_spec_id,
+  );
+  if (matching.length !== 1) notClosed();
+  const gate = matching[0];
+  if (
+    gate === undefined ||
+    gate.kind !== 'approval' ||
+    !operationContracts.every((operation) =>
+      gate.protected_operation_contract_hashes.includes(operation.contract_hash),
+    )
+  )
+    notClosed();
+  return deepFreezeJson({
+    schema_version: 'prepared-agent-binding-approval-gate/1',
+    root: source.root,
+    binding_id: binding.binding_id,
+    operation_contracts: operationContracts,
+    approval_gate_spec: {
+      gate_spec_id: gate.gate_spec_id,
+      gate_spec_hash: gate.gate_spec_hash,
+    },
   });
 }
