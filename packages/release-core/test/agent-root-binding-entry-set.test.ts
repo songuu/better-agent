@@ -156,60 +156,114 @@ function fixture(disabled = false, secondMount = false) {
     [dependency],
     policies,
   );
-  return { root, path, graph, slice };
+  return { root, path, graph, slice, policies, disabled };
+}
+
+function rootPolicy(value: ReturnType<typeof fixture>) {
+  const allowNoPrincipal = (ceiling: typeof value.policies.root_ceiling) => ({
+    ...ceiling,
+    principal_modes: [...ceiling.principal_modes, 'none'],
+  });
+  return {
+    ...value.policies,
+    schema_version: 'agent-root-binding-policy-input/1',
+    ...(value.disabled
+      ? {
+          workspace_ceiling: allowNoPrincipal(value.policies.workspace_ceiling),
+          root_ceiling: allowNoPrincipal(value.policies.root_ceiling),
+        }
+      : {}),
+  } as const;
 }
 
 describe('Agent root Binding entry-set assembly', () => {
   it('joins one exact graph-bound root namespace with retained intrinsic demand', () => {
     const value = fixture();
-    const result = prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [
-      value.slice,
-    ]);
+    const result = prepareAgentRootBindingEntrySet(
+      value.root,
+      value.graph.graph_hash,
+      [value.slice],
+      rootPolicy(value),
+    );
     expect(result.entries).toEqual(value.slice.prepared_entries.entries);
     expect(result.requirement_expressions).toEqual(
       value.slice.prepared_entries.requirement_expressions,
     );
     expect(result.disabled_binding_paths).toEqual([]);
     expect(result.graph_hash).toBe(value.graph.graph_hash);
+    expect(result.intrinsic_policy).toEqual(result.requirement_expressions[0]?.expression);
+    expect(result.aggregate_limits.operation_contract_hashes).toEqual(
+      result.entries[0]?.operation_contracts.map((operation) => operation.contract_hash),
+    );
   });
 
   it('joins multiple mounts in canonical path order without collapsing one shared target', () => {
     const value = fixture(false, true);
-    const result = prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [
-      value.slice,
-    ]);
+    const result = prepareAgentRootBindingEntrySet(
+      value.root,
+      value.graph.graph_hash,
+      [value.slice],
+      rootPolicy(value),
+    );
     expect(result.entries).toHaveLength(2);
     expect(result.entries.map((entry) => entry.binding_path)).toEqual(
       [...result.entries.map((entry) => entry.binding_path)].sort(),
     );
     expect(result.requirement_expressions).toHaveLength(2);
+    expect(result.intrinsic_policy.expression_kind).toBe('alternative');
+    if (result.intrinsic_policy.expression_kind !== 'alternative')
+      throw new Error('expected alternative');
+    expect(result.intrinsic_policy.children).toHaveLength(1);
   });
 
   it('retains a source-disabled root entry without adding intrinsic demand', () => {
     const value = fixture(true);
-    const result = prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [
-      value.slice,
-    ]);
+    const result = prepareAgentRootBindingEntrySet(
+      value.root,
+      value.graph.graph_hash,
+      [value.slice],
+      rootPolicy(value),
+    );
     expect(result.entries).toHaveLength(1);
     expect(result.requirement_expressions).toEqual([]);
     expect(result.disabled_binding_paths).toEqual([value.path.binding_path]);
+    expect(result.aggregate_limits).toMatchObject({
+      principal_modes: ['none'],
+      operation_contract_hashes: [],
+    });
+  });
+
+  it('rejects a root aggregate ceiling that cannot carry the folded demand', () => {
+    const value = fixture();
+    const policy = rootPolicy(value);
+    expect(() =>
+      prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [value.slice], {
+        ...policy,
+        root_ceiling: { ...policy.root_ceiling, max_calls: 0 },
+      }),
+    ).toThrow('CLOSURE_POLICY_REQUIREMENT_UNAVAILABLE');
   });
 
   it('rejects missing, duplicate, and unknown slices', () => {
     const value = fixture();
-    expect(() => prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [])).toThrow(
-      'CLOSURE_BINDING_ENTRY_NOT_CLOSED',
-    );
     expect(() =>
-      prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [
-        value.slice,
-        value.slice,
-      ]),
+      prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [], rootPolicy(value)),
     ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
     expect(() =>
-      prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [
-        { ...value.slice, unexpected: true },
-      ]),
+      prepareAgentRootBindingEntrySet(
+        value.root,
+        value.graph.graph_hash,
+        [value.slice, value.slice],
+        rootPolicy(value),
+      ),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+    expect(() =>
+      prepareAgentRootBindingEntrySet(
+        value.root,
+        value.graph.graph_hash,
+        [{ ...value.slice, unexpected: true }],
+        rootPolicy(value),
+      ),
     ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
   });
 
@@ -226,19 +280,32 @@ describe('Agent root Binding entry-set assembly', () => {
       requirement_expressions: prepared.requirement_expressions,
     };
     expect(() =>
-      prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [disguised]),
+      prepareAgentRootBindingEntrySet(
+        value.root,
+        value.graph.graph_hash,
+        [disguised],
+        rootPolicy(value),
+      ),
     ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
   });
 
   it('requires every slice to use the exact same verified graph hash', () => {
     const value = fixture();
     expect(() =>
-      prepareAgentRootBindingEntrySet(value.root, `sha256:${'1'.repeat(64)}`, [value.slice]),
+      prepareAgentRootBindingEntrySet(
+        value.root,
+        `sha256:${'1'.repeat(64)}`,
+        [value.slice],
+        rootPolicy(value),
+      ),
     ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
     expect(() =>
-      prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [
-        { ...value.slice, graph_hash: `sha256:${'2'.repeat(64)}` },
-      ]),
+      prepareAgentRootBindingEntrySet(
+        value.root,
+        value.graph.graph_hash,
+        [{ ...value.slice, graph_hash: `sha256:${'2'.repeat(64)}` }],
+        rootPolicy(value),
+      ),
     ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
   });
 
@@ -247,7 +314,12 @@ describe('Agent root Binding entry-set assembly', () => {
     const changed = structuredClone(value.slice);
     record(changed.prepared_entries.root).semantic_seed_hash = `sha256:${'3'.repeat(64)}`;
     expect(() =>
-      prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [changed]),
+      prepareAgentRootBindingEntrySet(
+        value.root,
+        value.graph.graph_hash,
+        [changed],
+        rootPolicy(value),
+      ),
     ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
   });
 
@@ -269,7 +341,12 @@ describe('Agent root Binding entry-set assembly', () => {
       if (entry === undefined) throw new Error('fixture entry is missing');
       mutate(record(entry));
       expect(() =>
-        prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [changed]),
+        prepareAgentRootBindingEntrySet(
+          value.root,
+          value.graph.graph_hash,
+          [changed],
+          rootPolicy(value),
+        ),
       ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
     }
   });
@@ -286,7 +363,12 @@ describe('Agent root Binding entry-set assembly', () => {
       const changed = structuredClone(value.slice);
       record(changed.prepared_entries).requirement_expressions = expressions;
       expect(() =>
-        prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [changed]),
+        prepareAgentRootBindingEntrySet(
+          value.root,
+          value.graph.graph_hash,
+          [changed],
+          rootPolicy(value),
+        ),
       ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
     }
   });
@@ -296,18 +378,28 @@ describe('Agent root Binding entry-set assembly', () => {
     const changed = structuredClone(value.slice);
     record(changed.prepared_entries).entries = [...changed.prepared_entries.entries].reverse();
     expect(() =>
-      prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [changed]),
+      prepareAgentRootBindingEntrySet(
+        value.root,
+        value.graph.graph_hash,
+        [changed],
+        rootPolicy(value),
+      ),
     ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
   });
 
   it('returns a deeply frozen intermediate without claiming closure authority', () => {
     const value = fixture();
-    const result = prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [
-      value.slice,
-    ]);
+    const result = prepareAgentRootBindingEntrySet(
+      value.root,
+      value.graph.graph_hash,
+      [value.slice],
+      rootPolicy(value),
+    );
     expect(result).not.toHaveProperty('closure_hash');
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.entries[0]?.effective_policy)).toBe(true);
     expect(Object.isFrozen(result.requirement_expressions[0]?.expression)).toBe(true);
+    expect(Object.isFrozen(result.intrinsic_policy)).toBe(true);
+    expect(Object.isFrozen(result.aggregate_limits)).toBe(true);
   });
 });

@@ -3,10 +3,17 @@ import {
   type CapabilityRequirementExpressionV1,
   CompiledBindingEntryV1Schema,
   ContractHashSchema,
+  type EffectiveCapabilityPolicyV1,
 } from '@better-agent/domain-contracts';
 
+import { parseAgentBindingPolicyInput } from './agent-binding-policy.js';
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
-import { normalizeCapabilityRequirementExpression } from './capability-policy.js';
+import {
+  compileCapabilityRequirementEnvelope,
+  meetCapabilityPolicyCeilings,
+  normalizeCapabilityRequirementExpression,
+  resolveEffectiveCapabilityPolicy,
+} from './capability-policy.js';
 import { canonicalJsonBytes } from './canonical-json.js';
 import { canonicalResourceNodeId } from './closure-identity.js';
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
@@ -36,7 +43,38 @@ export interface PreparedAgentRootBindingEntrySetV1 {
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly requirement_expressions: readonly RequirementExpressionByPath[];
   readonly disabled_binding_paths: readonly `bp1.${string}`[];
+  readonly intrinsic_policy: CapabilityRequirementExpressionV1;
+  readonly aggregate_limits: EffectiveCapabilityPolicyV1;
 }
+
+const emptyRootRequirement = {
+  schema_version: 'capability-requirement-expression/1',
+  expression_kind: 'leaf',
+  requirements: {
+    schema_version: 'capability-requirements/1',
+    credential_requirements: [],
+    principal_modes: ['none'],
+    egress: [],
+    readable_data_classification: 'public',
+    output_data_classification: 'public',
+    side_effect_class: 'safe',
+    approval_required: false,
+    operation_contract_hashes: [],
+    minimum_limits: {
+      calls: 0,
+      depth: 0,
+      parallelism: 0,
+      budget: {
+        schema_version: 'capability-budget/1',
+        amount_credits: '0',
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        duration_ms: 0,
+      },
+    },
+  },
+} as const;
 
 function notClosed(path: string): never {
   throw new ReleaseCoreError(
@@ -213,6 +251,7 @@ export function prepareAgentRootBindingEntrySet(
   rootInput: unknown,
   graphHashInput: unknown,
   sliceInputs: unknown,
+  policyInput: unknown,
 ): PreparedAgentRootBindingEntrySetV1 {
   const rootSource = prepareExecutableSource(rootInput);
   if (rootSource.root.pin.published_resource_kind !== 'AGENT_RELEASE') notClosed('$.root');
@@ -281,6 +320,45 @@ export function prepareAgentRootBindingEntrySet(
   )
     notClosed('$.requirement_expressions');
 
+  const policies = parseAgentBindingPolicyInput(policyInput, 'agent-root-binding-policy-input/1');
+  const policyPaths = policies.binding_ceilings
+    .map((item) => item.binding_path)
+    .sort(compareCanonicalStrings);
+  const rootPaths = paths.bindings.map((item) => item.binding_path).sort(compareCanonicalStrings);
+  if (
+    policyPaths.length !== rootPaths.length ||
+    new Set(policyPaths).size !== policyPaths.length ||
+    policyPaths.some((path, index) => path !== rootPaths[index])
+  )
+    notClosed('$.policy.binding_ceilings');
+
+  const uniqueExpressions = new Map<string, CapabilityRequirementExpressionV1>();
+  for (const item of expressions) {
+    uniqueExpressions.set(
+      canonicalJsonBytes(item.expression).toString('base64url'),
+      item.expression,
+    );
+  }
+  const intrinsicPolicy = normalizeCapabilityRequirementExpression(
+    expressions.length === 0
+      ? emptyRootRequirement
+      : expressions.length === 1
+        ? expressions[0]?.expression
+        : {
+            schema_version: 'capability-requirement-expression/1',
+            expression_kind: 'alternative',
+            children: [...uniqueExpressions.values()],
+          },
+  );
+  const rootCeiling = meetCapabilityPolicyCeilings(
+    policies.workspace_ceiling,
+    policies.root_ceiling,
+  );
+  const aggregateLimits = resolveEffectiveCapabilityPolicy(
+    rootCeiling,
+    compileCapabilityRequirementEnvelope(intrinsicPolicy),
+  );
+
   return deepFreezeJson({
     schema_version: 'prepared-agent-root-binding-entry-set/1',
     graph_hash: canonicalGraphHash,
@@ -288,5 +366,7 @@ export function prepareAgentRootBindingEntrySet(
     entries,
     requirement_expressions: expressions,
     disabled_binding_paths: paths.source_disabled_binding_paths,
+    intrinsic_policy: intrinsicPolicy,
+    aggregate_limits: aggregateLimits,
   });
 }
