@@ -131,6 +131,16 @@ describe('Agent leaf compiled Binding entry assembly', () => {
       operation_contracts: [value.prepared.operation_contract],
       dependency_node_ids: [canonicalResourceNodeId(value.prepared.full_pin)],
     });
+    expect(result.requirement_expressions).toEqual([
+      {
+        binding_path: value.path.binding_path,
+        expression: {
+          schema_version: 'capability-requirement-expression/1',
+          expression_kind: 'leaf',
+          requirements: value.prepared.intrinsic_policy,
+        },
+      },
+    ]);
   });
 
   it('meets all three ceilings and resolves the complete intrinsic demand', () => {
@@ -218,6 +228,25 @@ describe('Agent leaf compiled Binding entry assembly', () => {
     expect(result).not.toHaveProperty('closure_hash');
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.entries[0]?.effective_policy)).toBe(true);
+    expect(Object.isFrozen(result.requirement_expressions[0]?.expression)).toBe(true);
+  });
+
+  it('retains a disabled leaf entry but excludes it from root intrinsic demand', () => {
+    const value = fixture();
+    value.binding.enabled = false;
+    const root = candidate(value.agent);
+    const path = prepareRootBindingPaths(root).bindings.find(
+      (item) => item.binding_id === value.binding.binding_id,
+    );
+    if (path === undefined) throw new Error('missing disabled fixture path');
+    const result = prepareAgentLeafBindingEntries(root, value.dependency, {
+      ...value.policies,
+      binding_ceilings: [
+        { ...value.policies.binding_ceilings[0], binding_path: path.binding_path },
+      ],
+    });
+    expect(result.entries).toHaveLength(1);
+    expect(result.requirement_expressions).toEqual([]);
   });
 });
 
@@ -290,6 +319,10 @@ describe('complete Agent root leaf Binding entry set', () => {
       [...value.paths.map((path) => path.binding_path)].sort(),
     );
     expect(result.dependencies).toEqual([value.prepared.full_pin]);
+    expect(result.requirement_expressions).toHaveLength(2);
+    expect(result.requirement_expressions.map((item) => item.binding_path)).toEqual(
+      [...value.paths.map((path) => path.binding_path)].sort(),
+    );
     expect(Object.isFrozen(result.entries)).toBe(true);
     expect(result).not.toHaveProperty('closure_hash');
   });

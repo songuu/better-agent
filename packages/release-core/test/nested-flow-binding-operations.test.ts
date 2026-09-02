@@ -51,7 +51,7 @@ const emptyPolicy = {
   },
 } as const;
 
-function sources(secondMount = false) {
+function sources(secondMount = false, disabled = false) {
   const pluginPin = makePluginPin();
   const flow = { ...makeFlowIr(), resources: [pluginPin] };
   const flowRoot = prepareExecutableSource(executable(flow)).root;
@@ -60,6 +60,7 @@ function sources(secondMount = false) {
   const binding = agent.capability_bindings.find((item) => item.kind === 'flow');
   if (binding === undefined) throw new Error('fixture Flow Binding is missing');
   binding.pin = flowPin;
+  binding.enabled = !disabled;
   if (secondMount) {
     const second = structuredClone(binding);
     second.binding_id = 'flow-second';
@@ -178,8 +179,8 @@ function graph(
   return { candidateGraph, expectedGraph: preparePinnedDependencyGraph(candidateGraph) };
 }
 
-function prepared(secondMount = false) {
-  const value = sources(secondMount);
+function prepared(secondMount = false, disabled = false) {
+  const value = sources(secondMount, disabled);
   const closure = compiledClosure(value.flow);
   const root = prepareExecutableSource(executable(value.agent)).root;
   const evidence = graph(root, value.flowPin, closure.closure_hash, value.pluginPin);
@@ -491,5 +492,20 @@ describe('nested Flow Binding operation projection', () => {
       },
     });
     expect(result.requirement_expressions[0]?.expression.expression_kind).toBe('nested_call');
+  });
+
+  it('retains a disabled Flow parent entry but excludes it from root intrinsic demand', () => {
+    const value = prepared(false, true);
+    const result = prepareAgentFlowBindingEntries(
+      value.expectedGraph,
+      value.candidateGraph,
+      executable(value.agent),
+      executable(value.flow),
+      value.closure,
+      [flowCall(value.agent)],
+      compositePolicy(value.agent),
+    );
+    expect(result.entries).toHaveLength(1);
+    expect(result.requirement_expressions).toEqual([]);
   });
 });

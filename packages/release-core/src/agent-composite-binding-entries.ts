@@ -148,7 +148,7 @@ function prepareEntries(
       };
       const parsed = CompiledBindingEntryV1Schema.safeParse(candidate);
       if (!parsed.success) notClosed('$.entry');
-      expressions.push({ binding_path: parent.binding_path, expression });
+      if (path.enabled) expressions.push({ binding_path: parent.binding_path, expression });
       return parsed.data;
     })
     .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));

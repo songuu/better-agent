@@ -1,4 +1,5 @@
 import {
+  type CapabilityRequirementExpressionV1,
   CompiledBindingEntryV1Schema,
   type CapabilityBindingV1,
 } from '@better-agent/domain-contracts';
@@ -9,6 +10,7 @@ import { parseAgentBindingPolicyInput } from './agent-binding-policy.js';
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
 import {
   meetCapabilityPolicyCeilings,
+  normalizeCapabilityRequirementExpression,
   resolveEffectiveCapabilityPolicy,
 } from './capability-policy.js';
 import { canonicalResourceNodeId } from './closure-identity.js';
@@ -31,6 +33,10 @@ interface PreparedAgentLeafBindingEntriesV1 {
   readonly root: ReturnType<typeof prepareExecutableSource>['root'];
   readonly dependency: ReturnType<typeof prepareAgentLeafBindingOperations>['dependency'];
   readonly entries: readonly CompiledBindingEntryV1[];
+  readonly requirement_expressions: readonly {
+    readonly binding_path: `bp1.${string}`;
+    readonly expression: CapabilityRequirementExpressionV1;
+  }[];
 }
 
 interface PreparedAgentLeafBindingEntrySetV1 {
@@ -38,6 +44,7 @@ interface PreparedAgentLeafBindingEntrySetV1 {
   readonly root: ReturnType<typeof prepareExecutableSource>['root'];
   readonly dependencies: readonly ReturnType<typeof prepareLeafResourceSource>['full_pin'][];
   readonly entries: readonly CompiledBindingEntryV1[];
+  readonly requirement_expressions: PreparedAgentLeafBindingEntriesV1['requirement_expressions'];
 }
 
 interface GraphBoundAgentLeafBindingEntrySetV1 {
@@ -140,11 +147,23 @@ export function prepareAgentLeafBindingEntries(
     })
     .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
   if (entries.length !== policies.binding_ceilings.length) notClosed();
+  const requirementExpressions = selectedPaths
+    .filter((path) => path.enabled)
+    .map((path) => ({
+      binding_path: path.binding_path,
+      expression: normalizeCapabilityRequirementExpression({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'leaf',
+        requirements: projection.intrinsic_policy,
+      }),
+    }))
+    .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
   return deepFreezeJson({
     schema_version: 'prepared-agent-leaf-binding-entries/1',
     root: source.root,
     dependency: projection.dependency,
     entries,
+    requirement_expressions: requirementExpressions,
   });
 }
 
@@ -198,20 +217,21 @@ export function prepareAgentLeafBindingEntrySet(
   }
   if (expected.some((item) => !preparedByTarget.has(item.target_key))) notClosed('$.dependencies');
 
-  const entries = [...preparedByTarget.entries()]
-    .flatMap(([targetKey, dependency]) => {
-      const targetPaths = new Set<string>(
-        expected.filter((item) => item.target_key === targetKey).map((item) => item.path),
-      );
-      return prepareAgentLeafBindingEntries(rootInput, dependency.input, {
-        schema_version: 'agent-leaf-binding-policy-input/1',
-        workspace_ceiling: policies.workspace_ceiling,
-        root_ceiling: policies.root_ceiling,
-        binding_ceilings: policies.binding_ceilings.filter((item) =>
-          targetPaths.has(item.binding_path),
-        ),
-      }).entries;
-    })
+  const preparedSets = [...preparedByTarget.entries()].map(([targetKey, dependency]) => {
+    const targetPaths = new Set<string>(
+      expected.filter((item) => item.target_key === targetKey).map((item) => item.path),
+    );
+    return prepareAgentLeafBindingEntries(rootInput, dependency.input, {
+      schema_version: 'agent-leaf-binding-policy-input/1',
+      workspace_ceiling: policies.workspace_ceiling,
+      root_ceiling: policies.root_ceiling,
+      binding_ceilings: policies.binding_ceilings.filter((item) =>
+        targetPaths.has(item.binding_path),
+      ),
+    });
+  });
+  const entries = preparedSets
+    .flatMap((prepared) => prepared.entries)
     .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
   if (
     entries.length !== expectedPaths.size ||
@@ -227,6 +247,9 @@ export function prepareAgentLeafBindingEntrySet(
         compareCanonicalStrings(publishedResourcePinKey(left), publishedResourcePinKey(right)),
       ),
     entries,
+    requirement_expressions: preparedSets
+      .flatMap((prepared) => prepared.requirement_expressions)
+      .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path)),
   });
 }
 
