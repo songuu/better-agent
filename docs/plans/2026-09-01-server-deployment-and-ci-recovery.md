@@ -1,5 +1,11 @@
 # Better Agent server deployment and CI recovery
 
+## Product scope clarification — 2026-09-02
+
+The product is a complete Agent application modeled on `ai.betteryeah.com`, as specified by the existing product, architecture, and implementation documents. `E:/project/ai/agent` is a reference for server deployment mechanics only. It does not make Better Agent a VitePress or documentation site.
+
+The foundation scope below describes one deployment milestone, not the final user deliverable. Missing frontend, HTTP, and execution capabilities are unfinished implementation of the established application design; completing them does not require the user to redefine the product. The final delivery must run on the user's server, remain independent from neighboring projects, be reachable through `songuu.top`, and pass real browser/API/persistence/runtime acceptance. Database health, CI success, documentation pages, and placeholder UI are not substitutes for that acceptance. Operational changes such as resizing the host root partition still require their own authorization.
+
 ## Goal
 
 Restore the Windows GitHub Actions quality job and deploy the current Better Agent foundation to the same host as the Agent project using an isolated PostgreSQL service and immutable releases.

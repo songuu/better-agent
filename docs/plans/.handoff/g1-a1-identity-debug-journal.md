@@ -1,0 +1,11 @@
+# G1-A1 T1 identity kernel feedback log
+
+- TDD baseline: release-core 33 passing tests. First 44 new identity tests failed because the new APIs did not exist; implementation made all 77 pass.
+- Typecheck found `String.isWellFormed` unavailable in the project's ES2022 type profile. Replaced the call with scalar iteration rather than widening the global compiler target. Added entry/retained-byte tests; 79 passed.
+- Independent security/architecture review reproduced sparse-array aliasing: an array with a hole and property `4294967295` passed a numeric-key/count check, then lost data during snapshot mapping. Added a failing regression and constrained indices to safe canonical numbers below original length.
+- Security review reproduced Proxy trap execution and reentrant registry pollution. Added a failing zero-trap/reentrancy/forged-array/revoked-Proxy test; reject proxies with `node:util.types.isProxy` before any reflection. Both fixes brought the suite to 81 passing.
+- Quality review found `contract_hash` structural schemas accepted noncanonical text. Seven new negative cases first failed, then passed after all pin positions gained exact SHA-256 format checks; independently assembled vectors now use a valid SHA-256 pin. Total 88 passed.
+- Test review requested exact final framing-size evidence and retry of a rejected registry candidate. Added 1,048,575 / 1,048,576 / 1,048,577-byte fixtures, with the last failing specifically at encoded size; repeated capacity rejection must remain LIMIT rather than succeeding or becoming DUPLICATE. Total 89 passed.
+- Current local evidence: release-core test/typecheck/lint pass; fresh `TURBO_FORCE=true pnpm check` pass with zero Turbo cache reuse; architecture control-plane tests 31/31, skip=0, todo=0. Existing nine non-fatal test-support lint warnings remain unchanged.
+- Independent quality/architecture, test-strategy and security/performance final reviews passed with no remaining P0/P1/P2. This is T1 evidence, not completion of T2–T6, G1-A1, the complete Agent app, or production deployment.
+- No Docker/authority/production operations were performed during T1 implementation. Historical Receipt bytes remain unchanged. Current-source real PostgreSQL evidence will be obtained separately without copying the old Receipt onto new source.

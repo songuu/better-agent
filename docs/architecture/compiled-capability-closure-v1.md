@@ -261,6 +261,27 @@ interface OperationContractPinV1 {
 
 ## 4. 编译算法
 
+### 4.0 Identity byte profile (`binding-path-lp-utf8/1`)
+
+G1 的 identity 实现使用以下固定字节语法；这是第 3 节 length-prefixed 编码的具体化，不接受额外 tag/字段或可替代序列化。路径 API 消费 closed typed segments，不提供接收任意二进制编码的入口。
+
+- 整体：`segment_count:uint32be`，随后每段为 `segment_byte_length:uint32be + segment_bytes`；无 BOM、分隔符、padding 或隐式终止字符。
+- 每段：`segment_tag:uint8`，随后按下表字段顺序编码。第一个字段 tag 为 1，依次递增；每字段为 `field_tag:uint8 + utf8_byte_length:uint32be + utf8_bytes`。所有字段值是字符串，保留 Unicode 原始标量序列，不进行 NFC/NFD、大小写或空白归一化。
+- 完整 pin 的字段顺序固定为 `workspace_id, published_resource_kind, resource_id, resource_version_id, contract_hash, binding_mode`。owner pin/target pin 采用同一展开顺序。
+- 每个 root/owner/target/resource pin 的 `contract_hash` 必须是 71 字符的 `sha256:<64 lowercase hex>`，不能因为结构 Schema 使用非空字符串就接受缩写、其他算法、大小写别名或尾部空白。此处验证语法；已发布记录的真实性仍由 registry/compiler 校验。
+
+| Segment | Tag | Ordered fields |
+|---|---|---|
+| root | 1 | full pin (fields 1–6) |
+| binding | 2 | owner_kind, full owner pin, binding_kind, local_binding_id (fields 1–9) |
+| flow_node | 3 | owner_kind, full owner pin, node_id (fields 1–8) |
+| skill_pack_member | 4 | full owner_pin, local_member_binding_id (fields 1–7) |
+| subagent_target | 5 | full target_pin (fields 1–6) |
+
+路径必须恰好以一个 root 开始；后续不得再有 root，`owner_kind=root` 的 pin 必须逐字等于起始 root pin。每路径最多 128 segments；每字符串最多 4,096 UTF-8 bytes；最终编码最多 1,048,576 bytes。这些是当前 publisher/loader 的绝对拒绝上限，不做截断或降级。输入仅接受普通数据对象、连续数组和字符串；拒绝 getter、symbol、额外属性、非法 Unicode、NUL 和超过结构预算的输入。资源 node pin 使用同一输入边界，再经既有 RFC 8785 JCS 编码。
+
+`bp1.` / `rn1.` 后只能是 SHA-256 的 32 字节摘要的 canonical base64url（43 个字符，最后字符的未使用位必须为 0），不允许 `=`、标准 base64 别名、换行、前后空白或再次编码。loader 从原始 segments/pin 重算并精确比较，不把仅通过格式 Schema 当作身份验证。编译器在单个 closure 内登记 canonical bytes：binding path 重复拒绝，resource node 相同完整 pin 可去重，相同 digest 对应不同 canonical bytes 分别以 `BINDING_PATH_DIGEST_COLLISION` / `RESOURCE_NODE_ID_COLLISION` 失败。该内存登记器只服务有界编译过程，不作为跨请求的全局缓存；两类身份合计最多 4,096 entries、16,777,216 retained bytes，超限登记不得修改已存状态。
+
 ### 4.1 发布时展开
 
 1. 从固定的 Agent Release 或 Flow Version 开始，读取同 Workspace 或受控全局目录中的 typed release registry，固定 `ClosureRootV1.pin/semantic_seed_hash`，并为完整 root pin 生成/验证 resource node ID。

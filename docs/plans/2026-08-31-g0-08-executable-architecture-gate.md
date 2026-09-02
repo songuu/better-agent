@@ -2,7 +2,7 @@
 
 # G0-08 可执行架构门
 
-> 状态：实现与 L4 五视角独立 Review 已完成，最终终审为 P1/P2=0；最终本机 clean-checkout 重跑结果写入 `.handoff/g0-08-final-local-gate.json`，避免证据回填改变已验 source digest。Sprint Acceptance v1 仍为 `pending`，尚未获得 host-attested passed Receipt，因此当前不能关闭 G0-08 或进入 G1。
+> 状态更新（2026-09-02）：实现与 L4 五视角独立 Review 已完成，generation 3 host-attested passed Receipt 随后记录在 `.handoff/active-sprint.json`，历史 G0-08 已关闭、G1 准入已解除。Receipt hash 为 `sha256:b2f5b229b01162058cd364e06bfcdd2a9b98556392252f304cd9a235f1840668`；其签署范围只覆盖原 subject，不覆盖后续源码。原本机 authority 库目前不可回读，不能把不同远程库的 mismatch 当作旧 Receipt 失效证据；追溯恢复与新源码完整门分开处理。下文的 pending/无 reviewer channel 描述保留为原实施过程记录，不代表最新状态；旧 Receipt 与证据文件未修改。
 
 ## 原始请求
 

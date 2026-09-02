@@ -1,6 +1,8 @@
 # better-agent
 
-当前仓库已完成文档级 Gate A 以及 G0-01～G0-07 的本地可执行底座。G0-08 的声明式 registry、mutation gate、disposable clean checkout、PostgreSQL 精确清理与冻结 CI schema 已实现，并通过 L4 code-quality、security/integrity、architecture、performance 与 test-strategy 独立复审；最终本机 clean-checkout 重跑证据只写入 `.handoff` 控制面 sidecar，避免回填文字改变已验输入摘要。公开业务 handler、Knowledge/Database/Plugin/MCP/Skill/SubAgent runtime 与 G1 执行器仍未实现；host-attested Acceptance Receipt 未通过前仍不能关闭 G0-08 或进入 G1。
+Better Agent 的目标是对标 `ai.betteryeah.com` 的完整 Agent 应用；`E:/project/ai/agent` 只作为服务器部署方式参考。
+
+Gate A 与 G0 底座已完成；G0-08 的 generation 3 host-attested passed Receipt 记录在 [历史验收状态](docs/plans/.handoff/active-sprint.json)，其准入已解除。当前正在实施 [G1-A1 能力内核](docs/plans/2026-09-02-g1-a1-capability-closure-kernel.md)：canonical identity 首个切片已有实现和本地回归，完整 closure/policy/admission、公开业务 handler、Studio 与运行时仍未完成，不能据此宣称应用已上线。历史 Receipt 只覆盖原 subject；原本机 authority 库暂不可回读不自动撤回旧准入，新代码仍须取得自己的完整测试与验收证据。
 
 ```powershell
 pnpm install --frozen-lockfile
