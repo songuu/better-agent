@@ -48,7 +48,7 @@ interface FlowNodePaths {
   readonly nodes: readonly CompiledFlowNodePathV1[];
 }
 
-interface AgentFlowDependencyPaths {
+export interface AgentFlowDependencyPaths {
   readonly root: PreparedExecutableSourceV1['root'];
   readonly dependency: PreparedExecutableSourceV1['root'];
   readonly bindings: readonly (CompiledRootBindingPathV1 & {
@@ -96,7 +96,7 @@ interface CompiledInternalSubagentTargetPathV1 {
   readonly bindings: readonly CompiledSubagentTargetBindingPathV1[];
 }
 
-interface AgentInternalSubagentDependencyPaths {
+export interface AgentInternalSubagentDependencyPaths {
   readonly root: PreparedExecutableSourceV1['root'];
   readonly dependency: PreparedExecutableSourceV1['root'];
   readonly bindings: readonly (CompiledRootBindingPathV1 & {
@@ -111,7 +111,7 @@ interface CompiledExternalSubagentTargetPathV1 {
   readonly target_pin: ReturnType<typeof prepareLeafResourceSource>['full_pin'];
 }
 
-interface AgentExternalSubagentDependencyPaths {
+export interface AgentExternalSubagentDependencyPaths {
   readonly root: PreparedExecutableSourceV1['root'];
   readonly dependency: ReturnType<typeof prepareLeafResourceSource>['full_pin'];
   readonly bindings: readonly (CompiledRootBindingPathV1 & {

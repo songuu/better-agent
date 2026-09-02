@@ -7,7 +7,7 @@ import {
   verifyPinnedDependencyGraph,
 } from './pinned-dependency-graph.js';
 
-interface PreparedGraphBoundDirectDependencyV1 {
+export interface PreparedGraphBoundDirectDependencyV1 {
   readonly schema_version: 'graph-bound-direct-dependency/1';
   readonly graph_hash: `sha256:${string}`;
   readonly root_node: PinnedDependencyGraphNodeV1;

@@ -23,3 +23,4 @@
 - SubAgent 路径要成对覆盖 internal 与 external：internal 断言 target 后还有 dependency-owned Binding、same-version 自环拒绝和禁用目标地址；external 断言完整 leaf evidence 后终止于 target，且没有伪造 nested bindings/closure seal。不要为测试方便复制具有同 credential requirement ID 的 root Bindings而放宽全局唯一性。
 - Pack route 回归要独立重算 versioned route preimage hash，并用同一 Pack 在不同 root Binding/root release 下证明 Pack path、member path 与 route hash 全部隔离；disabled route 只证明 source fact 保留，不能断言其 runtime 可用。
 - Graph-bound direct slice 回归必须区分“节点存在”和“root 有直接边”：用一个真实 transitive 节点证明不能冒充 direct dependency，并分别破坏 expected graph bytes、candidate record 与 requested root，避免只查 node membership。
+- 同一个 graph-bound wrapper 形态仍要为 Flow/internal Agent/external A2A 各跑真实 source adapter：前两者断言 nested seal 保留，A2A 断言 terminal node 没有该字段，防止泛型组合抹平 target-kind 语义。
