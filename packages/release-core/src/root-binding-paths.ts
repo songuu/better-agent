@@ -12,6 +12,7 @@ import {
 } from './dependency-manifest.js';
 import { prepareExecutableSource, type PreparedExecutableSourceV1 } from './executable-source.js';
 import { ReleaseCoreError } from './errors.js';
+import { prepareSkillPackSource, verifySkillPackBindings } from './skill-pack-source.js';
 
 type BindingPathSegmentV1 = ReturnType<typeof BindingPathSegmentV1Schema.parse>;
 
@@ -51,6 +52,30 @@ interface AgentFlowDependencyPaths {
   readonly source_disabled_binding_paths: readonly `bp1.${string}`[];
 }
 
+interface CompiledSkillPackMemberPathV1 {
+  readonly member_binding_id: string;
+  readonly member_binding_kind: CapabilityBindingV1['kind'];
+  readonly member_binding_path: `bp1.${string}`;
+  readonly member_binding_path_segments: readonly BindingPathSegmentV1[];
+  readonly enabled: boolean;
+  readonly target: CapabilityBindingV1['pin'];
+}
+
+interface AgentSkillPackDependencyPaths {
+  readonly root: PreparedExecutableSourceV1['root'];
+  readonly dependency: ReturnType<typeof prepareSkillPackSource>['full_pin'];
+  readonly bindings: readonly (CompiledRootBindingPathV1 & {
+    readonly members: readonly CompiledSkillPackMemberPathV1[];
+  })[];
+  readonly source_disabled_binding_paths: readonly `bp1.${string}`[];
+}
+
+interface RegisteredRootBinding {
+  readonly binding: CapabilityBindingV1;
+  readonly binding_path: `bp1.${string}`;
+  readonly binding_path_segments: readonly BindingPathSegmentV1[];
+}
+
 function rootBindingSegments(
   root: PreparedExecutableSourceV1['root'],
   binding: CapabilityBindingV1,
@@ -64,6 +89,23 @@ function rootBindingSegments(
       local_binding_id: binding.binding_id,
     },
   ];
+}
+
+function registerRootBindingNamespace(
+  root: PreparedExecutableSourceV1['root'],
+  bindings: readonly CapabilityBindingV1[],
+  identity: ClosureIdentityRegistry,
+): RegisteredRootBinding[] {
+  return bindings
+    .map((binding) => {
+      const binding_path_segments = rootBindingSegments(root, binding);
+      return {
+        binding,
+        binding_path: identity.registerBindingPath(binding_path_segments),
+        binding_path_segments,
+      };
+    })
+    .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
 }
 
 function compileFlowNodes(
@@ -117,18 +159,19 @@ export function prepareRootBindingPaths(input: unknown): RootBindingPaths {
   };
   const identity = createClosureIdentityRegistry();
   identity.registerResourceNode(source.root.pin);
-  const bindings = document.capability_bindings
-    .map((binding): CompiledRootBindingPathV1 => {
-      const segments = rootBindingSegments(source.root, binding);
-      return {
-        binding_id: binding.binding_id,
-        binding_kind: binding.kind,
-        binding_path: identity.registerBindingPath(segments),
-        binding_path_segments: segments,
-        enabled: binding.enabled,
-      };
-    })
-    .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
+  const bindings = registerRootBindingNamespace(
+    source.root,
+    document.capability_bindings,
+    identity,
+  ).map(
+    ({ binding, binding_path, binding_path_segments }): CompiledRootBindingPathV1 => ({
+      binding_id: binding.binding_id,
+      binding_kind: binding.kind,
+      binding_path,
+      binding_path_segments,
+      enabled: binding.enabled,
+    }),
+  );
   const source_disabled_binding_paths = bindings
     .filter((binding) => !binding.enabled)
     .map((binding) => binding.binding_path)
@@ -207,28 +250,28 @@ export function prepareAgentFlowDependencyPaths(
   identity.registerResourceNode(rootSource.root.pin);
   identity.registerResourceNode(flowPin);
   const matchingIds = new Set(matching.map((binding) => binding.binding_id));
-  const bindings = rootDocument.capability_bindings
-    .map((binding) => {
-      const segments = rootBindingSegments(rootSource.root, binding);
-      const binding_path = identity.registerBindingPath(segments);
-      const nodes = matchingIds.has(binding.binding_id)
-        ? compileFlowNodes(
-            flowDocument.entry_graph,
-            { owner_kind: 'published_dependency', pin: flowPin },
-            segments,
-            identity,
-          )
-        : [];
-      return {
-        binding_id: binding.binding_id,
-        binding_kind: binding.kind,
-        binding_path,
-        binding_path_segments: segments,
-        enabled: binding.enabled,
-        nodes,
-      };
-    })
-    .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
+  const bindings = registerRootBindingNamespace(
+    rootSource.root,
+    rootDocument.capability_bindings,
+    identity,
+  ).map(({ binding, binding_path, binding_path_segments }) => {
+    const nodes = matchingIds.has(binding.binding_id)
+      ? compileFlowNodes(
+          flowDocument.entry_graph,
+          { owner_kind: 'published_dependency', pin: flowPin },
+          binding_path_segments,
+          identity,
+        )
+      : [];
+    return {
+      binding_id: binding.binding_id,
+      binding_kind: binding.kind,
+      binding_path,
+      binding_path_segments,
+      enabled: binding.enabled,
+      nodes,
+    };
+  });
   const source_disabled_binding_paths = bindings
     .filter((binding) => !binding.enabled)
     .map((binding) => binding.binding_path)
@@ -238,5 +281,87 @@ export function prepareAgentFlowDependencyPaths(
     dependency: dependencySource.root,
     bindings,
     source_disabled_binding_paths,
+  });
+}
+
+/** Compile one exact Skill Pack dependency under every matching root Binding. */
+export function prepareAgentSkillPackDependencyPaths(
+  rootInput: unknown,
+  dependencyInput: unknown,
+): AgentSkillPackDependencyPaths {
+  const rootSource = prepareExecutableSource(rootInput);
+  if (rootSource.root.pin.published_resource_kind !== 'AGENT_RELEASE')
+    throw new ReleaseCoreError(
+      'CLOSURE_SOURCE_INVALID',
+      '$.root',
+      'nested Skill Pack paths require an Agent root source',
+    );
+  const preliminaryPack = prepareSkillPackSource(dependencyInput);
+  const rootDocument = rootSource.preimage.document as unknown as {
+    capability_bindings: readonly CapabilityBindingV1[];
+  };
+  const targetKey = publishedResourcePinKey(preliminaryPack.full_pin);
+  const matching = rootDocument.capability_bindings.filter(
+    (binding) =>
+      binding.kind === 'skill_pack' && publishedResourcePinKey(binding.pin) === targetKey,
+  );
+  if (matching.length === 0)
+    throw new ReleaseCoreError(
+      'CAPABILITY_DEPENDENCY_UNRESOLVED',
+      '$.dependency',
+      'Skill Pack source is not an exact dependency of any root Binding',
+    );
+  const pack = verifySkillPackBindings(matching, dependencyInput);
+  const matchingIds = new Set(matching.map((binding) => binding.binding_id));
+  const identity = createClosureIdentityRegistry();
+  identity.registerResourceNode(rootSource.root.pin);
+  identity.registerResourceNode(pack.full_pin);
+  const disabledPaths: `bp1.${string}`[] = [];
+  const bindings = registerRootBindingNamespace(
+    rootSource.root,
+    rootDocument.capability_bindings,
+    identity,
+  ).map(({ binding, binding_path, binding_path_segments }) => {
+    if (!binding.enabled) disabledPaths.push(binding_path);
+    const members = matchingIds.has(binding.binding_id)
+      ? pack.document.member_bindings
+          .map((member): CompiledSkillPackMemberPathV1 => {
+            const memberSegments: BindingPathSegmentV1[] = [
+              ...binding_path_segments,
+              {
+                segment_kind: 'skill_pack_member',
+                owner_pin: pack.full_pin,
+                local_member_binding_id: member.binding_id,
+              },
+            ];
+            const member_binding_path = identity.registerBindingPath(memberSegments);
+            if (!member.enabled) disabledPaths.push(member_binding_path);
+            return {
+              member_binding_id: member.binding_id,
+              member_binding_kind: member.kind,
+              member_binding_path,
+              member_binding_path_segments: memberSegments,
+              enabled: member.enabled,
+              target: member.pin,
+            };
+          })
+          .sort((left, right) =>
+            compareCanonicalStrings(left.member_binding_path, right.member_binding_path),
+          )
+      : [];
+    return {
+      binding_id: binding.binding_id,
+      binding_kind: binding.kind,
+      binding_path,
+      binding_path_segments,
+      enabled: binding.enabled,
+      members,
+    };
+  });
+  return deepFreezeJson({
+    root: rootSource.root,
+    dependency: pack.full_pin,
+    bindings,
+    source_disabled_binding_paths: disabledPaths.sort(compareCanonicalStrings),
   });
 }

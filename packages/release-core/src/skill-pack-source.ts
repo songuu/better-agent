@@ -196,12 +196,10 @@ export function verifySkillPackSource(
   return actual;
 }
 
-/** Verify envelope and selected declarations; this does not replace per-route policy intersection or GateSpec coverage. */
-export function verifySkillPackBinding(
+function verifyPreparedSkillPackBinding(
   bindingInput: unknown,
-  input: unknown,
-): PreparedSkillPackSourceV1 {
-  const pack = prepareSkillPackSource(input);
+  pack: PreparedSkillPackSourceV1,
+): CapabilityBindingV1 {
   const binding = prepareCapabilityBindingSource(pack.full_pin.workspace_id, bindingInput);
   if (
     binding.kind !== 'skill_pack' ||
@@ -239,6 +237,34 @@ export function verifySkillPackBinding(
       (member.side_effect.approval === 'required' && binding.side_effect.approval !== 'required')
     )
       mismatchedSource();
+  }
+  return binding;
+}
+
+/** Verify envelope and selected declarations; this does not replace per-route policy intersection or GateSpec coverage. */
+export function verifySkillPackBinding(
+  bindingInput: unknown,
+  input: unknown,
+): PreparedSkillPackSourceV1 {
+  const pack = prepareSkillPackSource(input);
+  verifyPreparedSkillPackBinding(bindingInput, pack);
+  return pack;
+}
+
+/** Verify a bounded Binding set against one prepared Pack without reparsing the Pack for every caller. */
+export function verifySkillPackBindings(
+  bindingInputs: unknown,
+  input: unknown,
+): PreparedSkillPackSourceV1 {
+  const bindings = snapshotSource(bindingInputs);
+  if (!Array.isArray(bindings) || bindings.length === 0 || bindings.length > 128)
+    mismatchedSource();
+  const pack = prepareSkillPackSource(input);
+  const bindingIds = new Set<string>();
+  for (const bindingInput of bindings) {
+    const binding = verifyPreparedSkillPackBinding(bindingInput, pack);
+    if (bindingIds.has(binding.binding_id)) mismatchedSource();
+    bindingIds.add(binding.binding_id);
   }
   return pack;
 }

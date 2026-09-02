@@ -19,3 +19,4 @@
 - 局部 ID 的路径身份要用“相同 ID、不同命名空间”成对回归，并覆盖命名空间重复拒绝。递归路径不仅测叶子存在，还要断言深层 case/else/loop 的完整祖先段序列，才能杀死浅层截断实现。
 - 上游 source 上限与下游 identity registry 上限必须用同一个 exact-max fixture 贯通验证；分别测试两个模块的边界，无法发现合法输入在组合后因额外 root/ancestor 条目而失败。
 - 选择性依赖展开要同时断言“命中的依赖被展开”和“未命中的兄弟 Binding 仍被登记”；仅检查展开结果会允许实现把 closure-wide 冲突/预算域偷偷缩成过滤后的子集。
+- 批量 Binding verifier 要用两个不同 ID 的合法输入，再破坏非首项并单独拒绝重复/空集合；下游 Pack path 还需用 128-member exact max 贯通，且验证 disabled+unexposed member 仍有地址但不会被误造为 sealed route。

@@ -4,10 +4,12 @@ import {
   canonicalBindingPath,
   compareCanonicalStrings,
   prepareExecutableSource,
+  prepareSkillPackSource,
   ReleaseCoreError,
 } from '../src/index.js';
 import {
   prepareAgentFlowDependencyPaths,
+  prepareAgentSkillPackDependencyPaths,
   prepareFlowNodePaths,
   prepareRootBindingPaths,
 } from '../src/root-binding-paths.js';
@@ -18,6 +20,7 @@ import {
   richAgentSource,
 } from './executable-source-fixtures.js';
 import { workspaceId } from './fixtures.js';
+import { skillPackSource } from './skill-pack-source-fixtures.js';
 
 function candidate(document: unknown = richAgentSource()) {
   return { schema_version: 'executable-source-candidate/1', workspace_id: workspaceId, document };
@@ -459,5 +462,163 @@ describe('Agent-owned Flow dependency paths', () => {
     const expanded = result.bindings.find((binding) => binding.nodes.length > 0);
     expect(Object.isFrozen(expanded?.nodes)).toBe(true);
     expect(Object.isFrozen(expanded?.nodes[0]?.source_path_segments)).toBe(true);
+  });
+});
+
+function matchingAgentSkillPackSources() {
+  const packInput = skillPackSource();
+  const pack = prepareSkillPackSource(packInput);
+  const agent = richAgentSource();
+  const binding = agent.capability_bindings.find((item) => item.kind === 'skill_pack');
+  if (binding === undefined) throw new Error('fixture is missing its Skill Pack Binding');
+  binding.pin = pack.full_pin;
+  binding.manual = { ...pack.document.manual, hash: pack.component_hashes.manual };
+  binding.input_schema = pack.document.input_schema;
+  binding.output_schema = pack.document.output_schema;
+  binding.config = {
+    schema_version: 'skill-pack-binding/1',
+    member_projection_hash: pack.member_projection_hash,
+    exposed_operations: pack.exposed_operations.map((operation) => ({
+      exposed_operation_id: operation.exposed_operation_id,
+      exposed_operation_contract_hash: operation.exposed_operation_contract_hash,
+    })),
+  };
+  return { agent, packInput, binding };
+}
+
+describe('Agent-owned Skill Pack member paths', () => {
+  it('registers the complete root namespace and expands every member under the exact Pack Binding', () => {
+    const { agent, packInput, binding } = matchingAgentSkillPackSources();
+    const result = prepareAgentSkillPackDependencyPaths(candidate(agent), packInput);
+    expect(result.bindings).toHaveLength(agent.capability_bindings.length);
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    expect(compiled?.members).toHaveLength(packInput.document.member_bindings.length);
+    expect(result.bindings.filter((item) => item.members.length > 0)).toHaveLength(1);
+  });
+
+  it('constructs root, Binding and typed Skill Pack member segments', () => {
+    const { agent, packInput, binding } = matchingAgentSkillPackSources();
+    const result = prepareAgentSkillPackDependencyPaths(candidate(agent), packInput);
+    const member = result.bindings.find((item) => item.binding_id === binding.binding_id)
+      ?.members[0];
+    expect(member?.member_binding_path_segments.map((segment) => segment.segment_kind)).toEqual([
+      'root',
+      'binding',
+      'skill_pack_member',
+    ]);
+    expect(member?.member_binding_path_segments[2]).toEqual({
+      segment_kind: 'skill_pack_member',
+      owner_pin: result.dependency,
+      local_member_binding_id: packInput.document.member_bindings[0]?.binding_id,
+    });
+    expect(member?.member_binding_path).toBe(
+      canonicalBindingPath(member?.member_binding_path_segments),
+    );
+  });
+
+  it('admits the exact 128-member Pack boundary after registering the root namespace', () => {
+    const packInput = skillPackSource();
+    const template = packInput.document.member_bindings[0];
+    if (template === undefined) throw new Error('fixture is missing its member Binding');
+    for (let index = 1; index < 128; index += 1) {
+      const member = structuredClone(template);
+      member.binding_id = `member-${index.toString().padStart(3, '0')}`;
+      packInput.document.member_bindings.push(member);
+    }
+    const pack = prepareSkillPackSource(packInput);
+    const agent = richAgentSource();
+    const binding = agent.capability_bindings.find((item) => item.kind === 'skill_pack');
+    if (binding === undefined) throw new Error('fixture is missing its Skill Pack Binding');
+    binding.pin = pack.full_pin;
+    binding.manual = { ...pack.document.manual, hash: pack.component_hashes.manual };
+    binding.input_schema = pack.document.input_schema;
+    binding.output_schema = pack.document.output_schema;
+    binding.config = {
+      schema_version: 'skill-pack-binding/1',
+      member_projection_hash: pack.member_projection_hash,
+      exposed_operations: pack.exposed_operations.map((operation) => ({
+        exposed_operation_id: operation.exposed_operation_id,
+        exposed_operation_contract_hash: operation.exposed_operation_contract_hash,
+      })),
+    };
+    const result = prepareAgentSkillPackDependencyPaths(candidate(agent), packInput);
+    expect(
+      result.bindings.find((item) => item.binding_id === binding.binding_id)?.members,
+    ).toHaveLength(128);
+  });
+
+  it('keeps an unexposed disabled member addressable and marks only its exact path disabled', () => {
+    const packInput = skillPackSource();
+    const second = structuredClone(packInput.document.member_bindings[0]);
+    if (second === undefined) throw new Error('fixture is missing its member Binding');
+    second.binding_id = 'disabled-member';
+    second.enabled = false;
+    packInput.document.member_bindings.push(second);
+    const pack = prepareSkillPackSource(packInput);
+    const agent = richAgentSource();
+    const binding = agent.capability_bindings.find((item) => item.kind === 'skill_pack');
+    if (binding === undefined) throw new Error('fixture is missing its Skill Pack Binding');
+    binding.pin = pack.full_pin;
+    binding.manual = { ...pack.document.manual, hash: pack.component_hashes.manual };
+    binding.input_schema = pack.document.input_schema;
+    binding.output_schema = pack.document.output_schema;
+    binding.config = {
+      schema_version: 'skill-pack-binding/1',
+      member_projection_hash: pack.member_projection_hash,
+      exposed_operations: pack.exposed_operations.map((operation) => ({
+        exposed_operation_id: operation.exposed_operation_id,
+        exposed_operation_contract_hash: operation.exposed_operation_contract_hash,
+      })),
+    };
+    const result = prepareAgentSkillPackDependencyPaths(candidate(agent), packInput);
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    const disabled = compiled?.members.find(
+      (member) => member.member_binding_id === second.binding_id,
+    );
+    expect(disabled?.enabled).toBe(false);
+    expect(result.source_disabled_binding_paths).toEqual([disabled?.member_binding_path]);
+  });
+
+  it('isolates the same Pack members under two different root Bindings', () => {
+    const { agent, packInput, binding } = matchingAgentSkillPackSources();
+    const second = structuredClone(binding);
+    second.binding_id = 'pack-second';
+    agent.capability_bindings.push(second);
+    agent.strategy.allowed_capability_binding_ids.push(second.binding_id);
+    const expanded = prepareAgentSkillPackDependencyPaths(
+      candidate(agent),
+      packInput,
+    ).bindings.filter((item) => item.members.length > 0);
+    expect(expanded).toHaveLength(2);
+    expect(expanded[0]?.members[0]?.member_binding_path).not.toBe(
+      expanded[1]?.members[0]?.member_binding_path,
+    );
+  });
+
+  it('rejects exact-pin matches whose selected exposure projection is stale', () => {
+    const { agent, packInput, binding } = matchingAgentSkillPackSources();
+    binding.config.member_projection_hash =
+      'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    expect(() => prepareAgentSkillPackDependencyPaths(candidate(agent), packInput)).toThrow(
+      'CLOSURE_SOURCE_MISMATCH',
+    );
+  });
+
+  it('rejects a Pack source that is not an exact root dependency', () => {
+    const { agent, packInput } = matchingAgentSkillPackSources();
+    packInput.document.resource_version_id = '00000000-0000-7000-8000-000000000099';
+    expect(() => prepareAgentSkillPackDependencyPaths(candidate(agent), packInput)).toThrow(
+      'CAPABILITY_DEPENDENCY_UNRESOLVED',
+    );
+  });
+
+  it('returns deeply frozen paths without prematurely emitting sealed routes or hashes', () => {
+    const { agent, packInput, binding } = matchingAgentSkillPackSources();
+    const result = prepareAgentSkillPackDependencyPaths(candidate(agent), packInput);
+    const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
+    expect(result).not.toHaveProperty('closure_hash');
+    expect(compiled).not.toHaveProperty('skill_pack_operation_routes');
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(compiled?.members[0]?.member_binding_path_segments)).toBe(true);
   });
 });

@@ -289,6 +289,8 @@ G1 的 identity 实现使用以下固定字节语法；这是第 3 节 length-pr
 
 当前私有 direct Agent→Flow expansion 只接受双方 raw executable source，分别重走 closed source preparation，并要求 Agent 的 `flow` Binding target full pin 与重算 Flow pin 精确相等。它在同一 closure-local registry 内先登记 root/dependency resource，再生成 `root → binding → flow_node...`；Flow node owner 为 `published_dependency` 且携带目标完整 pin，嵌套 case/else/loop 保留全部祖先 node segments。同一 Flow 被多个 root Bindings 引用时必须形成互不重叠的命名空间。这个中间结果没有 hash、公共 barrel export 或 registry 权威含义，也未处理传递 Agent/Flow、Pack/SubAgent；authoritative pinned graph 与 nested closure seal 仍必须在最终 compiler/publisher 接入。
 
+当前私有 direct Agent→Skill Pack expansion 同样先重算 raw Agent/Pack sources、要求 root `skill_pack` Binding exact full-pin match，并用批量 verifier 一次准备 Pack 后校验 1–128 个唯一 root Bindings 的 envelope、projection、exposure 与 policy floor。closure-local registry 在展开前登记完整 root Binding namespace；每个 Pack member（包括 disabled 或 unexposed member）追加 `skill_pack_member(owner_pin=full Pack pin, local_member_binding_id)`，不同 root Binding 引用同一 Pack 时保持不同前缀。`source_disabled_binding_paths` 只记录显式 source disabled root/member；父级不可用导致的后代禁用由最终 policy compilation 产生。该中间结果不生成 `SkillPackOperationRouteV1`、`route_hash` 或 closure hash，不能作为 sealed runtime route。
+
 ### 4.1 发布时展开
 
 1. 从固定的 Agent Release 或 Flow Version 开始，读取同 Workspace 或受控全局目录中的 typed release registry，固定 `ClosureRootV1.pin/semantic_seed_hash`，并为完整 root pin 生成/验证 resource node ID。

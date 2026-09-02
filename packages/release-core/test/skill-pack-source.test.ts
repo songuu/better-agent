@@ -3,6 +3,7 @@ import {
   prepareSkillPackSource as prepare,
   verifySkillPackSource as verify,
   verifySkillPackBinding,
+  verifySkillPackBindings,
   prepareCapabilityBindingSource,
   canonicalSha256,
   prepareOperationContractSource,
@@ -103,6 +104,27 @@ describe('Skill Pack immutable source projection', () => {
     expect(verify(result, input)).toEqual(result);
     expect(verifySkillPackBinding(packBinding(input), input)).toEqual(result);
     expect(Object.isFrozen(result.document.member_bindings)).toBe(true);
+  });
+
+  it('verifies a unique Binding set against one Pack and rejects a bad non-first Binding', () => {
+    const input = source();
+    const first = packBinding(input);
+    const second = structuredClone(first);
+    second.binding_id = 'pack-second';
+    expect(verifySkillPackBindings([first, second], input)).toEqual(prepare(input));
+    record(second.config).member_projection_hash = hashB;
+    expect(() => verifySkillPackBindings([first, second], input)).toThrow(
+      'CLOSURE_SOURCE_MISMATCH',
+    );
+  });
+
+  it('rejects duplicate and empty Binding verification sets', () => {
+    const input = source();
+    const binding = packBinding(input);
+    expect(() => verifySkillPackBindings([], input)).toThrow('CLOSURE_SOURCE_MISMATCH');
+    expect(() => verifySkillPackBindings([binding, binding], input)).toThrow(
+      'CLOSURE_SOURCE_MISMATCH',
+    );
   });
 
   it.each([
