@@ -33,3 +33,5 @@
 - Closure canonical-set 测试必须先为乱序/重复 candidate 重算一个自洽 `closure_hash`，再断言 verifier 仍拒绝；否则测试只证明 hash mismatch，不能证明 canonical order enforcement。
 - Nested Agent operation projection 测试需要故意让 parent/child 复用同一 Binding ID，并覆盖同一 child 的两个 mount、重封后的 child path 缺失、重封后的 target 漂移以及 graph/closure hash 不一致；这样才能区分 exact path/target join 与错误的 local-ID/position join。
 - Nested Flow operation projection 除多 mount/path/freeze 外，还必须用重封后的非 Flow-node canonical path、缺失 source dependency 的 graph manifest 和缺失 assembly pin 的 closure 分别测试；只测 nested closure hash 会漏掉 source→graph→closure 三方装配漂移。
+- Parent child-call operation 测试必须让 child closure 复用 parent Binding ID，并断言 `flow_call`/`subagent_call` 只落在 parent canonical path；多 mount 需要 exact declaration cardinality，另测 missing/unknown/duplicate/wrong-kind/schema-drift。
+- Nested Agent manifest 回归的合法 fixture 必须使用完整 executable dependency manifest（不仅是 Capability Binding pins），并分别拒绝 graph manifest 省略依赖和重封 closure assembly 省略依赖；否则会漏掉 Strategy/Instruction 的传递图缺口。

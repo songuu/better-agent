@@ -1,8 +1,9 @@
-import type { OperationContractPinV1 } from '@better-agent/domain-contracts';
+import type { CapabilityBindingV1, OperationContractPinV1 } from '@better-agent/domain-contracts';
 
 import { canonicalJsonBytes } from './canonical-json.js';
 import { prepareNestedCapabilityClosure } from './compiled-capability-closure.js';
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
+import { prepareExecutableSource } from './executable-source.js';
 import { ReleaseCoreError } from './errors.js';
 import { prepareGraphBoundInternalSubagentPaths } from './graph-bound-direct-paths.js';
 import { prepareRootBindingPaths } from './root-binding-paths.js';
@@ -13,7 +14,7 @@ export interface PreparedNestedAgentBindingOperationsV1 {
   readonly nested_closure_hash: string;
   readonly binding_operations: readonly {
     readonly binding_id: string;
-    readonly binding_kind: string;
+    readonly binding_kind: CapabilityBindingV1['kind'];
     readonly binding_path: `bp1.${string}`;
     readonly operation_contracts: readonly OperationContractPinV1[];
   }[];
@@ -49,11 +50,24 @@ export function prepareGraphBoundNestedAgentBindingOperations(
     },
     nestedClosureInput,
   );
+  const childSource = prepareExecutableSource(dependencyInput);
   const childRootPaths = prepareRootBindingPaths(dependencyInput);
   if (!sameJson(childRootPaths.root.pin, nestedClosure.root.pin)) {
     mismatch(
       '$.nested_closure.root.pin',
       'nested closure does not describe the supplied child source',
+    );
+  }
+  const closureRootNode = nestedClosure.resource_nodes.find((node) => node.node_role === 'root');
+  if (
+    graphBound.graph_binding.dependency_node.dependency_manifest_hash !==
+      childSource.dependency_manifest.manifest_hash ||
+    closureRootNode?.dependency_manifest_hash !== childSource.dependency_manifest.manifest_hash ||
+    !sameJson(nestedClosure.assembly_pins, childSource.dependency_manifest.dependencies)
+  ) {
+    mismatch(
+      '$.nested_closure.assembly_pins',
+      'Agent source, graph dependency manifest, and nested closure assembly do not agree',
     );
   }
 
@@ -62,7 +76,11 @@ export function prepareGraphBoundNestedAgentBindingOperations(
   );
   const childOperations = new Map<
     string,
-    { binding_kind: string; target: unknown; operations: readonly OperationContractPinV1[] }
+    {
+      binding_kind: CapabilityBindingV1['kind'];
+      target: unknown;
+      operations: readonly OperationContractPinV1[];
+    }
   >();
   for (const childPath of childRootPaths.bindings) {
     const entry = closureBindings.get(childPath.binding_path);

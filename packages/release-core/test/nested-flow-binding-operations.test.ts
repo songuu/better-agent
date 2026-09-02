@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PublishedResourcePinV1 } from '@better-agent/domain-contracts';
+import { prepareGraphBoundAgentFlowCallOperations } from '../src/agent-child-call-operations.js';
 import { canonicalResourceNodeId, createClosureIdentityRegistry } from '../src/closure-identity.js';
 import {
   compareCanonicalStrings,
@@ -81,7 +82,7 @@ function compiledClosure(flow: ReturnType<typeof sources>['flow']) {
     binding_path_encoding_version: 'binding-path-lp-utf8/1' as const,
     binding_path: sourcePath.source_path,
     binding_path_segments: sourcePath.source_path_segments,
-    binding_id: 'flow-output-operation',
+    binding_id: 'flow',
     binding_kind: 'plugin' as const,
     target,
     config_schema_version: 'plugin-binding/1' as const,
@@ -174,6 +175,24 @@ function prepared(secondMount = false) {
   const root = prepareExecutableSource(executable(value.agent)).root;
   const evidence = graph(root, value.flowPin, closure.closure_hash, value.pluginPin);
   return { ...value, closure, ...evidence };
+}
+
+function flowCall(agent: ReturnType<typeof richAgentSource>, bindingId = 'flow') {
+  const binding = agent.capability_bindings.find((item) => item.binding_id === bindingId);
+  if (binding === undefined) throw new Error('fixture Flow call Binding is missing');
+  return {
+    binding_id: bindingId,
+    operation: {
+      schema_version: 'operation-contract-source/1',
+      operation_kind: 'flow_call',
+      operation_id: `${bindingId}-call`,
+      input_schema: binding.input_schema,
+      ...(binding.output_schema === undefined ? {} : { output_schema: binding.output_schema }),
+      side_effect_class: binding.side_effect.class,
+      operation_key_required: binding.side_effect.operation_key_source !== undefined,
+      approval_required: binding.side_effect.approval === 'required',
+    },
+  };
 }
 
 describe('nested Flow Binding operation projection', () => {
@@ -342,5 +361,69 @@ describe('nested Flow Binding operation projection', () => {
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.binding_operations)).toBe(true);
     expect(Object.isFrozen(result.binding_operations[0]?.operation_contracts)).toBe(true);
+  });
+
+  it('attaches flow_call only to the parent mount path and preserves same-ID child operations', () => {
+    const value = prepared();
+    const result = prepareGraphBoundAgentFlowCallOperations(
+      value.expectedGraph,
+      value.candidateGraph,
+      executable(value.agent),
+      executable(value.flow),
+      value.closure,
+      [flowCall(value.agent)],
+    );
+    const sameId = result.binding_operations.filter((entry) => entry.binding_id === 'flow');
+    expect(sameId).toHaveLength(2);
+    expect(sameId.map((entry) => entry.operation_contracts[0]?.operation_kind).sort()).toEqual([
+      'flow_call',
+      'plugin_tool',
+    ]);
+  });
+
+  it('requires one independently verified call declaration for every Flow mount', () => {
+    const value = prepared(true);
+    expect(() =>
+      prepareGraphBoundAgentFlowCallOperations(
+        value.expectedGraph,
+        value.candidateGraph,
+        executable(value.agent),
+        executable(value.flow),
+        value.closure,
+        [flowCall(value.agent)],
+      ),
+    ).toThrow('CAPABILITY_OPERATION_CONTRACT_MISMATCH');
+    const result = prepareGraphBoundAgentFlowCallOperations(
+      value.expectedGraph,
+      value.candidateGraph,
+      executable(value.agent),
+      executable(value.flow),
+      value.closure,
+      [flowCall(value.agent), flowCall(value.agent, 'flow-second')],
+    );
+    expect(
+      result.binding_operations.filter(
+        (entry) => entry.operation_contracts[0]?.operation_kind === 'flow_call',
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('rejects a wrong-kind or duplicate Flow call declaration', () => {
+    const value = prepared();
+    const declaration = flowCall(value.agent);
+    const wrong = structuredClone(declaration);
+    wrong.operation.operation_kind = 'subagent_call';
+    for (const declarations of [[wrong], [declaration, declaration]]) {
+      expect(() =>
+        prepareGraphBoundAgentFlowCallOperations(
+          value.expectedGraph,
+          value.candidateGraph,
+          executable(value.agent),
+          executable(value.flow),
+          value.closure,
+          declarations,
+        ),
+      ).toThrow('CAPABILITY_OPERATION_CONTRACT_MISMATCH');
+    }
   });
 });

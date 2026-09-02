@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PublishedResourcePinV1 } from '@better-agent/domain-contracts';
+import { prepareGraphBoundAgentSubagentCallOperations } from '../src/agent-child-call-operations.js';
 import { canonicalResourceNodeId } from '../src/closure-identity.js';
-import {
-  compareCanonicalStrings,
-  deriveDependencyManifest,
-  normalizeDependencyPins,
-} from '../src/dependency-manifest.js';
+import { compareCanonicalStrings, deriveDependencyManifest } from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
 import { canonicalSha256, canonicalSha256ExcludingRootKeys } from '../src/hash.js';
 import { prepareGraphBoundNestedAgentBindingOperations } from '../src/nested-agent-binding-operations.js';
@@ -80,10 +77,7 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
     operation_key_required: plugin.side_effect.operation_key_source !== undefined,
     approval_required: plugin.side_effect.approval === 'required',
   }).pin;
-  const assemblyPins = normalizeDependencyPins(
-    workspaceId,
-    document.capability_bindings.map((binding) => binding.pin),
-  );
+  const assemblyPins = prepared.dependency_manifest.dependencies;
   const resourceNodes = [
     {
       node_id: canonicalResourceNodeId(paths.root.pin),
@@ -151,8 +145,14 @@ function graph(
   root: { pin: PublishedResourcePinV1; semantic_seed_hash: string },
   dependency: PublishedResourcePinV1,
   nestedClosureHash: string,
+  dependencies: readonly PublishedResourcePinV1[],
 ) {
-  const { contract_hash: _hash, binding_mode: _mode, ...owner } = dependency;
+  const owner = (pin: PublishedResourcePinV1) => ({
+    workspace_id: pin.workspace_id,
+    published_resource_kind: pin.published_resource_kind,
+    resource_id: pin.resource_id,
+    resource_version_id: pin.resource_version_id,
+  });
   const candidateGraph = {
     schema_version: 'pinned-dependency-graph-candidate/1',
     root,
@@ -162,9 +162,19 @@ function graph(
         schema_version: 'pinned-dependency-record/1',
         pin: dependency,
         publication_state: 'sealed',
-        dependency_manifest: deriveDependencyManifest(owner, []),
+        dependency_manifest: deriveDependencyManifest(owner(dependency), dependencies),
         nested_closure_hash: nestedClosureHash,
       },
+      ...dependencies.map((pin) => ({
+        schema_version: 'pinned-dependency-record/1' as const,
+        pin,
+        publication_state: 'sealed' as const,
+        dependency_manifest: deriveDependencyManifest(owner(pin), []),
+        ...(pin.published_resource_kind === 'AGENT_RELEASE' ||
+        pin.published_resource_kind === 'FLOW_VERSION'
+          ? { nested_closure_hash: hashA }
+          : {}),
+      })),
     ],
   };
   return { candidateGraph, expectedGraph: preparePinnedDependencyGraph(candidateGraph) };
@@ -174,8 +184,31 @@ function prepared() {
   const sources = targetSources();
   const closure = compiledClosure(sources.target);
   const root = prepareExecutableSource(candidate(sources.agent)).root;
-  const evidence = graph(root, sources.targetPin, closure.closure_hash);
+  const evidence = graph(
+    root,
+    sources.targetPin,
+    closure.closure_hash,
+    prepareExecutableSource(candidate(sources.target)).dependency_manifest.dependencies,
+  );
   return { ...sources, closure, ...evidence };
+}
+
+function subagentCall(agent: ReturnType<typeof richAgentSource>) {
+  const binding = agent.capability_bindings.find((item) => item.binding_id === 'subagent');
+  if (binding === undefined) throw new Error('fixture SubAgent call Binding is missing');
+  return {
+    binding_id: binding.binding_id,
+    operation: {
+      schema_version: 'operation-contract-source/1',
+      operation_kind: 'subagent_call',
+      operation_id: 'subagent-call',
+      input_schema: binding.input_schema,
+      ...(binding.output_schema === undefined ? {} : { output_schema: binding.output_schema }),
+      side_effect_class: binding.side_effect.class,
+      operation_key_required: binding.side_effect.operation_key_source !== undefined,
+      approval_required: binding.side_effect.approval === 'required',
+    },
+  };
 }
 
 describe('nested Agent Binding operation projection', () => {
@@ -221,7 +254,12 @@ describe('nested Agent Binding operation projection', () => {
     value.agent.strategy.allowed_capability_binding_ids.push(second.binding_id);
     const closure = compiledClosure(value.target);
     const root = prepareExecutableSource(candidate(value.agent)).root;
-    const evidence = graph(root, value.targetPin, closure.closure_hash);
+    const evidence = graph(
+      root,
+      value.targetPin,
+      closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+    );
     const result = prepareGraphBoundNestedAgentBindingOperations(
       evidence.expectedGraph,
       evidence.candidateGraph,
@@ -251,6 +289,7 @@ describe('nested Agent Binding operation projection', () => {
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
       closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
     );
     expect(() =>
       prepareGraphBoundNestedAgentBindingOperations(
@@ -279,6 +318,7 @@ describe('nested Agent Binding operation projection', () => {
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
       closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
     );
     expect(() =>
       prepareGraphBoundNestedAgentBindingOperations(
@@ -297,6 +337,7 @@ describe('nested Agent Binding operation projection', () => {
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
       hashA,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
     );
     expect(() =>
       prepareGraphBoundNestedAgentBindingOperations(
@@ -305,6 +346,49 @@ describe('nested Agent Binding operation projection', () => {
         candidate(value.agent),
         candidate(value.target),
         value.closure,
+      ),
+    ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
+  });
+
+  it('rejects a graph manifest that omits child Agent dependencies', () => {
+    const value = prepared();
+    const evidence = graph(
+      prepareExecutableSource(candidate(value.agent)).root,
+      value.targetPin,
+      value.closure.closure_hash,
+      [],
+    );
+    expect(() =>
+      prepareGraphBoundNestedAgentBindingOperations(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        candidate(value.agent),
+        candidate(value.target),
+        value.closure,
+      ),
+    ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
+  });
+
+  it('rejects a resealed closure assembly that differs from the child Agent source', () => {
+    const value = prepared();
+    const draft = { ...value.closure, assembly_pins: [], closure_hash: hashA };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(candidate(value.agent)).root,
+      value.targetPin,
+      closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+    );
+    expect(() =>
+      prepareGraphBoundNestedAgentBindingOperations(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        candidate(value.agent),
+        candidate(value.target),
+        closure,
       ),
     ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
   });
@@ -326,5 +410,44 @@ describe('nested Agent Binding operation projection', () => {
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.binding_operations)).toBe(true);
     expect(Object.isFrozen(result.binding_operations[0]?.operation_contracts)).toBe(true);
+  });
+
+  it('attaches subagent_call only to the parent path when child reuses the Binding ID', () => {
+    const value = prepared();
+    const result = prepareGraphBoundAgentSubagentCallOperations(
+      value.expectedGraph,
+      value.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      value.closure,
+      [subagentCall(value.agent)],
+    );
+    const sameId = result.binding_operations.filter((entry) => entry.binding_id === 'subagent');
+    expect(sameId).toHaveLength(2);
+    expect(sameId.map((entry) => entry.operation_contracts.length).sort()).toEqual([0, 1]);
+    expect(
+      sameId.find((entry) => entry.operation_contracts.length === 1)?.operation_contracts[0]
+        ?.operation_kind,
+    ).toBe('subagent_call');
+  });
+
+  it('rejects missing, unknown, and schema-drifted SubAgent call declarations', () => {
+    const value = prepared();
+    const valid = subagentCall(value.agent);
+    const unknown = { ...valid, binding_id: 'unknown' };
+    const drifted = structuredClone(valid);
+    drifted.operation.input_schema = { type: 'string' };
+    for (const declarations of [[], [unknown], [drifted]]) {
+      expect(() =>
+        prepareGraphBoundAgentSubagentCallOperations(
+          value.expectedGraph,
+          value.candidateGraph,
+          candidate(value.agent),
+          candidate(value.target),
+          value.closure,
+          declarations,
+        ),
+      ).toThrow('CAPABILITY_OPERATION_CONTRACT_MISMATCH');
+    }
   });
 });
