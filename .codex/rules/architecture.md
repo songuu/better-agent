@@ -64,3 +64,8 @@
 - Pin schema dialect, engine/formats/options, reference semantics and limits in the hashed validation profile. With exactly one resource and unique anchors, dynamic references can lower to confirmed static locations; relaxing nested IDs or external refs invalidates that proof. Validate the original document first, transform only a worker copy and preserve simultaneous references/siblings/array indexes.
 - Worker deadlines and heap limits improve responsiveness but are not an OS sandbox or process-wide memory ceiling. Keep the concurrency slot until actual exit, including termination rejection. Source validation evidence is a reproducible result, not provenance, compiled closure or host attestation.
 - All explicit Schema-bearing fields in Agent, recursively nested Flow, all four leaf resources and Skill Pack are collected by typed structure, never by `_schema` name scanning. Batch compilation is capped at 8,194 schemas / 8 MiB and retains the same 5-second worker deadline as single validation; duplicate documents may share compilation but must retain separate canonical field-path evidence, chunked 1,024 entries per evidence array.
+
+## Closure compiler intermediate boundaries
+
+- Internal path-expansion helpers must not invent persistent schema versions, independent hashes or public artifacts that downstream code could mistake for closure authority. They consume verified/prepared artifacts and remain private until a complete verifier and architecture contract exist.
+- Source-declared disabled Bindings are not final policy-unavailable paths. Preserve disabled entries in the canonical namespace, name source-level projections explicitly, and only populate final `disabled_binding_paths` after recursive policy compilation.
