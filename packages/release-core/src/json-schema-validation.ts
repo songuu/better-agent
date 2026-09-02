@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+import { types } from 'node:util';
 import { deepFreezeJson } from './dependency-manifest.js';
 import { ReleaseCoreError, type ReleaseCoreErrorCode } from './errors.js';
 import { canonicalSha256 } from './hash.js';
@@ -24,15 +25,9 @@ function snapshot(input: unknown, instance = false): unknown {
 }
 
 let activeWorkers = 0;
-async function check(document: unknown, value?: { instance: unknown }): Promise<void> {
+async function runWorker(workerData: object, deadlineMs: number): Promise<void> {
   if (activeWorkers >= JSON_SCHEMA_VALIDATOR_PROFILE.maximum_workers)
     throw failure('JSON_SCHEMA_VALIDATOR_BUSY');
-  const workerData = {
-    schema: canonicalJsonBytes(document).toString('utf8'),
-    ...(value === undefined
-      ? {}
-      : { instance: canonicalJsonBytes(value.instance).toString('utf8') }),
-  };
   activeWorkers++;
   let worker: Worker;
   try {
@@ -62,10 +57,7 @@ async function check(document: unknown, value?: { instance: unknown }): Promise<
         void worker.terminate().catch(() => reject(failure('JSON_SCHEMA_VALIDATOR_UNAVAILABLE')));
       }
     };
-    const timer = setTimeout(
-      () => stop('JSON_SCHEMA_LIMIT_EXCEEDED'),
-      JSON_SCHEMA_VALIDATOR_PROFILE.worker_deadline_ms,
-    );
+    const timer = setTimeout(() => stop('JSON_SCHEMA_LIMIT_EXCEEDED'), deadlineMs);
     worker.on('message', (message: unknown) => {
       if (
         reply !== undefined ||
@@ -105,6 +97,17 @@ async function check(document: unknown, value?: { instance: unknown }): Promise<
     });
   });
 }
+async function check(document: unknown, value?: { instance: unknown }): Promise<void> {
+  await runWorker(
+    {
+      schema: canonicalJsonBytes(document).toString('utf8'),
+      ...(value === undefined
+        ? {}
+        : { instance: canonicalJsonBytes(value.instance).toString('utf8') }),
+    },
+    JSON_SCHEMA_VALIDATOR_PROFILE.worker_deadline_ms,
+  );
+}
 
 export interface PreparedJsonSchemaContractV1 {
   readonly schema_version: 'prepared-json-schema-contract/1';
@@ -114,6 +117,52 @@ export interface PreparedJsonSchemaContractV1 {
   readonly validator_profile_hash: `sha256:${string}`;
   readonly contract_hash: `sha256:${string}`;
 }
+export interface JsonSchemaContractSummaryV1 {
+  readonly schema_hash: `sha256:${string}`;
+  readonly contract_hash: `sha256:${string}`;
+}
+
+function summary(document: unknown, validator_profile_hash: `sha256:${string}`) {
+  const schema_hash = canonicalSha256(document);
+  return {
+    schema_hash,
+    contract_hash: canonicalSha256({
+      schema_version: 'json-schema-validation-contract/1',
+      schema_hash,
+      validator_profile_hash,
+    }),
+  };
+}
+
+/** Batch independent source schemas through one worker; callers still bind each field path separately. */
+export async function prepareJsonSchemaContractSummaries(
+  input: unknown,
+): Promise<readonly JsonSchemaContractSummaryV1[]> {
+  if (!Array.isArray(input) || types.isProxy(input)) throw failure('JSON_SCHEMA_INVALID');
+  if (input.length === 0) throw failure('JSON_SCHEMA_INVALID');
+  if (input.length > JSON_SCHEMA_VALIDATOR_PROFILE.maximum_source_schemas)
+    throw failure('JSON_SCHEMA_LIMIT_EXCEEDED');
+  const keys = Reflect.ownKeys(input);
+  if (keys.length !== input.length + 1) throw failure('JSON_SCHEMA_INVALID');
+  const documents: unknown[] = [];
+  const unique = new Set<string>();
+  let encodedBytes = 2;
+  for (let index = 0; index < input.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(input, index.toString());
+    if (descriptor === undefined || !descriptor.enumerable || !('value' in descriptor))
+      throw failure('JSON_SCHEMA_INVALID');
+    const document = snapshot(descriptor.value);
+    const bytes = canonicalJsonBytes(document);
+    encodedBytes += bytes.length + (index === 0 ? 0 : 1);
+    if (encodedBytes > JSON_SCHEMA_VALIDATOR_PROFILE.maximum_operand_bytes)
+      throw failure('JSON_SCHEMA_LIMIT_EXCEEDED');
+    documents.push(document);
+    unique.add(bytes.toString('utf8'));
+  }
+  await runWorker({ schemas: [...unique] }, JSON_SCHEMA_VALIDATOR_PROFILE.source_batch_deadline_ms);
+  const profileHash = canonicalSha256(JSON_SCHEMA_VALIDATOR_PROFILE);
+  return deepFreezeJson(documents.map((document) => summary(document, profileHash)));
+}
 
 /** Validate a single, self-contained 2020-12 schema. This is not publisher provenance or runtime authorization. */
 export async function prepareJsonSchemaContract(
@@ -121,19 +170,15 @@ export async function prepareJsonSchemaContract(
 ): Promise<PreparedJsonSchemaContractV1> {
   const document = snapshot(input);
   await check(document);
-  const schema_hash = canonicalSha256(document);
   const validator_profile_hash = canonicalSha256(JSON_SCHEMA_VALIDATOR_PROFILE);
+  const hashes = summary(document, validator_profile_hash);
   const result: PreparedJsonSchemaContractV1 = {
     schema_version: 'prepared-json-schema-contract/1',
     document,
-    schema_hash,
+    schema_hash: hashes.schema_hash,
     validator_profile: JSON_SCHEMA_VALIDATOR_PROFILE,
     validator_profile_hash,
-    contract_hash: canonicalSha256({
-      schema_version: 'json-schema-validation-contract/1',
-      schema_hash,
-      validator_profile_hash,
-    }),
+    contract_hash: hashes.contract_hash,
   };
   snapshot(result);
   return deepFreezeJson(result);

@@ -5,6 +5,7 @@ import {
   verifyJsonSchemaContract as verify,
   validateJsonSchemaInstance as validate,
 } from '../src/index.js';
+import { prepareJsonSchemaContractSummaries } from '../src/json-schema-validation.js';
 
 const dialect = 'https://json-schema.org/draft/2020-12/schema';
 function objectSchema() {
@@ -29,6 +30,44 @@ function independentHash(value: unknown): string {
 }
 
 describe('bounded JSON Schema contracts and real instance validation', () => {
+  it('validates a bounded batch in one contract profile while preserving order and duplicate identities', async () => {
+    const schemas = [
+      { $id: 'https://example.test/shared', type: 'integer' },
+      { $id: 'https://example.test/shared', type: 'string' },
+      { type: 'integer' },
+      { type: 'integer' },
+    ];
+    const summaries = await prepareJsonSchemaContractSummaries(schemas);
+    expect(summaries).toHaveLength(4);
+    expect(summaries.map((entry) => entry.schema_hash)).toEqual(
+      schemas.map((schema) => independentHash(schema)),
+    );
+    expect(summaries[2]).toEqual(summaries[3]);
+    expect(Object.isFrozen(summaries)).toBe(true);
+    expect(Object.isFrozen(summaries[0])).toBe(true);
+  });
+
+  it('fails a whole batch for an invalid non-first schema and enforces count/aggregate byte limits', async () => {
+    await expect(
+      prepareJsonSchemaContractSummaries([
+        { type: 'integer' },
+        { $defs: { unused: { type: 'not-a-type' } } },
+      ]),
+    ).rejects.toThrow('JSON_SCHEMA_INVALID');
+    await expect(prepareJsonSchemaContractSummaries([])).rejects.toThrow('JSON_SCHEMA_INVALID');
+    await expect(
+      prepareJsonSchemaContractSummaries(Array.from({ length: 8195 }, () => true)),
+    ).rejects.toThrow('JSON_SCHEMA_LIMIT_EXCEEDED');
+    const large = { title: 'x'.repeat(65_000) };
+    await expect(
+      prepareJsonSchemaContractSummaries(Array.from({ length: 130 }, () => large)),
+    ).rejects.toThrow('JSON_SCHEMA_LIMIT_EXCEEDED');
+    expect(
+      await prepareJsonSchemaContractSummaries(
+        Array.from({ length: 8194 }, (_, index) => ({ title: `schema-${index}` })),
+      ),
+    ).toHaveLength(8194);
+  }, 20_000);
   it('binds the exact source and versioned validator profile, freezes results and verifies whole artifacts', async () => {
     const schema = objectSchema();
     const before = structuredClone(schema);

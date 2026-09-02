@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   prepareJsonSchemaContract as prepare,
+  prepareJsonSchemaContractSummaries as prepareBatch,
   validateJsonSchemaInstance as validate,
 } from '../src/index.js';
 
@@ -51,12 +52,54 @@ function succeed(worker = lastWorker()) {
 }
 
 afterEach(() => {
+  state.workers.length = 0;
   state.failConstructor = false;
   state.holdExit = false;
   state.failTermination = false;
   vi.useRealTimers();
 });
 describe('JSON Schema worker lifecycle boundary (real engine tested separately)', () => {
+  it('deduplicates a batch into one isolated worker request', async () => {
+    const pending = prepareBatch([{ type: 'integer' }, { type: 'integer' }, { type: 'string' }]);
+    const worker = lastWorker();
+    expect(worker.options.workerData).toEqual({
+      schemas: ['{"type":"integer"}', '{"type":"string"}'],
+    });
+    expect(state.workers).toHaveLength(1);
+    succeed(worker);
+    const result = await pending;
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual(result[1]);
+  });
+
+  it('rejects a proxied batch before invoking user traps or a worker', async () => {
+    const trap = vi.fn();
+    const input = new Proxy([{}], { get: trap });
+    await expect(prepareBatch(input)).rejects.toThrow('JSON_SCHEMA_INVALID');
+    expect(trap).not.toHaveBeenCalled();
+    expect(state.workers).toHaveLength(0);
+  });
+
+  it('gives source batches exactly five seconds and retains their slots until exit', async () => {
+    vi.useFakeTimers();
+    state.holdExit = true;
+    const pending = Array.from({ length: 4 }, () => prepareBatch([{}]));
+    const workers = [...state.workers];
+    await vi.advanceTimersByTimeAsync(4999);
+    for (const worker of workers) expect(worker.terminate).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    for (const worker of workers) expect(worker.terminate).toHaveBeenCalledTimes(1);
+    await expect(prepareBatch([{}])).rejects.toThrow('JSON_SCHEMA_VALIDATOR_BUSY');
+    for (const worker of workers) worker.emit('exit', 1);
+    await Promise.all(
+      pending.map(async (promise) => {
+        await expect(promise).rejects.toThrow('JSON_SCHEMA_LIMIT_EXCEEDED');
+      }),
+    );
+    const recovered = prepareBatch([{}]);
+    succeed();
+    await expect(recovered).resolves.toHaveLength(1);
+  });
   it('uses a fixed module, clean options and waits for successful exit after a reply', async () => {
     const pending = prepare({ type: 'integer' });
     const worker = lastWorker();

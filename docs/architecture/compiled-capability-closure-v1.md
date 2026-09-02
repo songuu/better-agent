@@ -517,7 +517,9 @@ parent delegable closure
 - 仅允许同文档 `#` fragment 引用。嵌套 `$id` 禁止；root `$id` 不产生外部访问。所有 anchor/dynamicAnchor 名称在单资源内唯一，引用必须指向已识别的 schema 位置或存在的 anchor。fragment 必须采用唯一的 URI 编码和 JSON Pointer 转义，未使用定义中的无效引用也拒绝。schema map 与 dependentRequired 的 `__proto__` key 被显式拒绝，因为引擎会省略该约束；这不禁止用 patternProperties 校验真实数据中的同名 own property。
 - 原文 profile/meta-schema 检查通过后，仅在 worker 副本中将 anchor ref 转换为已确认的 schema-location pointer；`$dynamicRef` 转为 `$ref`。同节点已有 `$ref` 时在 allOf 尾部追加新约束，保留所有原 sibling、数组索引和指针位置。此降级仅在本 profile 的**单资源、唯一 anchor、禁止外部引用**下成立：不存在另一资源的动态 override；普通 anchor/pointer 按规范本就执行静态目标。修复避免引擎对部分动态目标错误回退到 root validator。原始 source 文档和 hash 不变。依据 [JSON Schema core §8.2.3.2](https://json-schema.org/draft/2020-12/json-schema-core)。放宽 resource/ref 规则必须重新设计并版本化 profile，不能复用此证明。
 
-每次编译/实例校验创建固定文件的 Node worker，`env={}`、`execArgv=[]`、`argv=[]`，不注册用户 callback、loader 或任何 schema-supplied executable。父线程在首次 await 前完成快照；同模块实例最多 4 个活 worker，无队列，第五个调用返回 BUSY。每 worker 从启动后的父线程计时起最多 5 秒，old/young generation 128/16 MiB、stack 4 MiB；超时请求 terminate，只有 exit 事件释放并发槽。停止事件幂等；terminate Promise 拒绝时返回 UNAVAILABLE 但保留槽位直到实际 exit。未知/重复消息、messageerror、stdout/stderr、异常/非零退出均失败；仅一次 `ok` 且 exit=0 才成功。错误不回显 Schema、实例或引擎 diagnostics；OOM/耗时/预算失败映射为 LIMIT。
+每次编译/实例校验创建固定文件的 Node worker，`env={}`、`execArgv=[]`、`argv=[]`，不注册用户 callback、loader 或任何 schema-supplied executable。父线程在首次 await 前完成快照；同模块实例最多 4 个活 worker，无队列，第五个调用返回 BUSY。单 Schema 与 source batch worker 从启动后的父线程计时起均最多 5 秒，old/young generation 128/16 MiB、stack 4 MiB；超时请求 terminate，只有 exit 事件释放并发槽。停止事件幂等；terminate Promise 拒绝时返回 UNAVAILABLE 但保留槽位直到实际 exit。未知/重复消息、messageerror、stdout/stderr、异常/非零退出均失败；仅一次 `ok` 且 exit=0 才成功。错误不回显 Schema、实例或引擎 diagnostics；OOM/耗时/预算失败映射为 LIMIT。
+
+`prepareJsonSchemaContractSummaries` 接受 1–8,194 个独立 Schema，整个数组仍受 8 MiB aggregate operand 预算；父线程按 canonical bytes 去重后只向一个 worker 发送唯一文档，worker 逐个独立编译并在每项后移除非 meta-schema 注册，避免相同 root `$id` 跨资源碰撞。去重只减少编译，返回仍保持原顺序和每个字段的独立 hash/contract_hash。任一项无效、5 秒总 deadline、worker/OOM/协议失败都会拒绝整批；小批次不会获得更长的 worker-slot 占用窗口。
 
 **worker 是响应性与资源隔离措施，不是 OS 安全沙箱或进程总内存保证。** `env/argv` 清空不等于抹除一切宿主状态；Node worker 仍处于同一进程并继承 Node environmentData。该 API 不接受代码、网络引用或凭证；宿主不得把此机制用作运行任意不可信代码的边界。并发额度是模块实例内的额度，不是跨进程全局限流。每次调用重新编译，没有预编译缓存或 pool。设计参考 [Ajv 对不可信 Schema 的限制](https://ajv.js.org/security.html) 与 [Node Worker API](https://nodejs.org/download/release/v22.22.0/docs/api/worker_threads.html)。
 
@@ -527,8 +529,11 @@ parent delegable closure
 
 - `prepareSchemaValidatedOperationSource` / `verifySchemaValidatedOperationSource` 校验 operation 的真实 input_schema 和存在时的 output_schema，不虚构缺失输出。
 - `prepareSchemaValidatedStrategySource` / `verifySchemaValidatedStrategySource` 顺序校验 config/input/state/decision/observation 五类 Schema，再用 config_schema 校验真实 config；不执行 Strategy 或验证 implementation_digest/sandbox 的宿主真实性。
+- `prepareSchemaValidatedExecutableSource` / verifier 显式校验 Agent input/optional output contract、全部 GateSpec decision Schema、全部 Capability Binding input/optional output Schema；Flow 校验 root input/output、递归 branch/else/loop graph 的每个 node output 与 human-gate decision Schema，不把 exports/config 中普通业务 JSON 当 Schema。
+- `prepareSchemaValidatedLeafResourceSource` / verifier 校验四类 leaf 的主 operation；Plugin 额外校验 tool_list 的全部 operations，A2A 额外校验 agent_card 全部 skill operations。
+- `prepareSchemaValidatedSkillPackSource` / verifier 校验 pack envelope、全部 member Binding 与全部 exposure operation 的 input/optional output Schema。
 
-返回 `schema-validated-operation-source/1` 或 `schema-validated-strategy-source/1`：原完整 source_artifact、`source-schema-validation-evidence/1` 与 validation_hash。evidence 精确包含原 artifact hash、validator_profile_hash、固定字段顺序的每项 schema field/hash/contract_hash，以及 Strategy config 的 field/schema_field/instance_hash；validation_hash=SHA-256/JCS(evidence)。整个 wrapper 再次限制大小并深冻结，verify 重建所有校验，不信自报 hash。它是可重算的校验结果，**不是签名 attestation、registry seal、host-attested reviewer receipt 或发布授权**。最终 closure compiler 尚须统一调用它及其他资源的显式 Schema 位置校验；叶资源/Agent/Flow/Pack/Binding/GateSpec 等全种类自动接线、实例执行数据与输出校验、registry/readback、UI/API/runtime 和线上验收仍待后续实现。
+Operation/Strategy 返回原完整 source_artifact、`source-schema-validation-evidence/1` 与 validation_hash。新增 executable/leaf/pack wrapper 分别使用对应的 `schema-validated-*-source/1` 和 `source-schema-set-validation-evidence/1`；证据固定 source artifact/profile hash、schema_count、按 canonical field path 排序的 field/hash/contract_hash，并每 1,024 项切成一批以满足通用数组预算。去重编译不能折叠字段证据。整个 wrapper 再次限制大小并深冻结，verify 重建所有校验，不信自报 source/evidence/count/batches/hash。它们是可重算的校验结果，**不是签名 attestation、registry seal、host-attested reviewer receipt 或发布授权**。最终 closure compiler 尚须消费这些 wrapper；实例执行输入/输出校验、registry/readback、UI/API/runtime 和线上验收仍待后续实现。
 
 ### 7.2 Final closure integration
 

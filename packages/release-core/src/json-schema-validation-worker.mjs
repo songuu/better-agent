@@ -166,32 +166,58 @@ function lowerReferences(schemaNodes, anchors) {
   }
 }
 
+function createAjv() {
+  const ajv = new Ajv2020({ ...profile.ajv_options, logger: false });
+  // Ajv resolves standard $anchor references but does not whitelist the keyword
+  // in strict mode; its syntax/uniqueness is checked above and by the meta-schema.
+  ajv.addKeyword('$anchor');
+  addFormats.default(ajv, {
+    mode: 'full',
+    formats: /** @type {import('ajv-formats').FormatName[]} */ ([...profile.formats]),
+    keywords: false,
+  });
+  return ajv;
+}
+
+/** @param {import('ajv').default} ajv @param {unknown} document */
+function compile(ajv, document) {
+  const { schemaNodes, anchors } = checkProfile(document);
+  const schema = /** @type {import('ajv').AnySchema} */ (document);
+  if (!ajv.validateSchema(schema)) throw new Error('schema');
+  lowerReferences(schemaNodes, anchors);
+  return ajv.compile(schema);
+}
+
 // The worker handles one bounded message and exits. No loader, user-defined keyword,
 // schema-supplied executable, logger callback or network reference fetch is registered.
 if (parentPort !== null) {
   let status = 'invalid_schema';
   try {
-    const request = /** @type {{schema: string, instance?: string}} */ (workerData);
-    const document = JSON.parse(request.schema);
-    const { schemaNodes, anchors } = checkProfile(document);
-    const ajv = new Ajv2020({ ...profile.ajv_options, logger: false });
-    // Ajv resolves standard $anchor references but does not whitelist the keyword
-    // in strict mode; its syntax/uniqueness is checked above and by the meta-schema.
-    ajv.addKeyword('$anchor');
-    addFormats.default(ajv, {
-      mode: 'full',
-      formats: /** @type {import('ajv-formats').FormatName[]} */ ([...profile.formats]),
-      keywords: false,
-    });
-    if (!ajv.validateSchema(document)) throw new Error('schema');
-    lowerReferences(schemaNodes, anchors);
-    const validator = ajv.compile(document);
-    status = 'ok';
-    if (request.instance !== undefined) {
-      try {
-        status = validator(JSON.parse(request.instance)) ? 'ok' : 'invalid_instance';
-      } catch {
-        status = 'limit';
+    const request = /** @type {{schema?: string, schemas?: string[], instance?: string}} */ (
+      workerData
+    );
+    const ajv = createAjv();
+    if (Array.isArray(request.schemas)) {
+      if (request.schemas.length === 0 || request.schemas.length > profile.maximum_source_schemas)
+        throw new RangeError('limit');
+      for (const encoded of request.schemas) {
+        if (typeof encoded !== 'string') throw new Error('schema');
+        compile(ajv, JSON.parse(encoded));
+        // Retain meta-schemas, but prevent root IDs from one independent document
+        // colliding with the next document in the same bounded source batch.
+        ajv.removeSchema();
+      }
+      status = 'ok';
+    } else {
+      if (typeof request.schema !== 'string') throw new Error('schema');
+      const validator = compile(ajv, JSON.parse(request.schema));
+      status = 'ok';
+      if (request.instance !== undefined) {
+        try {
+          status = validator(JSON.parse(request.instance)) ? 'ok' : 'invalid_instance';
+        } catch {
+          status = 'limit';
+        }
       }
     }
   } catch (error) {

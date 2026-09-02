@@ -28,8 +28,10 @@ export const JSON_SCHEMA_VALIDATOR_PROFILE = Object.freeze({
     'relative-json-pointer',
   ]),
   maximum_schema_nodes: 4096,
+  maximum_source_schemas: 8194,
   maximum_operand_bytes: 8_388_608,
   worker_deadline_ms: 5000,
+  source_batch_deadline_ms: 5000,
   maximum_workers: 4,
   resource_limits: Object.freeze({
     maxOldGenerationSizeMb: 128,
