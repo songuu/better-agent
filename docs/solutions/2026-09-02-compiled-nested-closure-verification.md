@@ -21,6 +21,8 @@ Agent/Flow dependency 的 `nested_closure_hash` 若只做格式校验，调用�
 
 新增私有 verifier：先在独立 closure 预算内复制纯数据，再做 closed Schema parse 与 canonical byte preservation；重算所有 resource node ID、可重建 Binding path 和排除 `closure_hash` 后的完整 artifact hash。nested Agent/Flow 再以 workspace、kind、resource、version、pinned mode 和 dependency graph 承诺的 nested hash 精确 join。
 
+所有 set-like 顶层集合还必须按各自协议 key 严格递增且唯一；即使调用方为乱序或重复集合重算出自洽 hash，仍然拒绝。
+
 ## Prevention
 
 保留 published hash 与 semantic seed 不同的正例，同时对 identity/hash/version drift、proxy/accessor 和超界集合做负例。

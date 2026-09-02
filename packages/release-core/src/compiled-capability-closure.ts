@@ -6,7 +6,7 @@ import {
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
 import { canonicalJsonBytes } from './canonical-json.js';
 import { verifyCanonicalBindingPath, verifyCanonicalResourceNodeId } from './closure-identity.js';
-import { deepFreezeJson } from './dependency-manifest.js';
+import { deepFreezeJson, publishedResourcePinKey } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { canonicalSha256ExcludingRootKeys } from './hash.js';
 
@@ -15,6 +15,21 @@ type ClosureResourceNodeV1 = ReturnType<typeof ClosureResourceNodeV1Schema.parse
 
 function invalid(path: string, reason: string): never {
   throw new ReleaseCoreError('COMPILED_CAPABILITY_CLOSURE_INVALID', path, reason);
+}
+
+function assertCanonicalSetOrder<T>(
+  values: readonly T[],
+  path: string,
+  key: (value: T) => string,
+): void {
+  let previous: string | undefined;
+  for (const value of values) {
+    const current = key(value);
+    if (previous !== undefined && previous >= current) {
+      invalid(path, 'canonical set entries must be strictly increasing and unique');
+    }
+    previous = current;
+  }
 }
 
 export function prepareCompiledCapabilityClosure(input: unknown): Readonly<CompiledClosureV1> {
@@ -30,6 +45,25 @@ export function prepareCompiledCapabilityClosure(input: unknown): Readonly<Compi
   for (const binding of parsed.data.bindings) {
     verifyCanonicalBindingPath(binding.binding_path, binding.binding_path_segments);
   }
+  assertCanonicalSetOrder(parsed.data.assembly_pins, '$.assembly_pins', publishedResourcePinKey);
+  assertCanonicalSetOrder(parsed.data.bindings, '$.bindings', (value) => value.binding_path);
+  assertCanonicalSetOrder(
+    parsed.data.gate_specs,
+    '$.gate_specs',
+    (value) => `${value.source_node_id}\u0000${value.gate_spec_id}`,
+  );
+  assertCanonicalSetOrder(parsed.data.resource_nodes, '$.resource_nodes', (value) => value.node_id);
+  assertCanonicalSetOrder(
+    parsed.data.dependency_edges,
+    '$.dependency_edges',
+    (value) =>
+      `${value.from_node_id}\u0000${value.to_node_id}\u0000${value.relation}\u0000${value.source_path}`,
+  );
+  assertCanonicalSetOrder(
+    parsed.data.disabled_binding_paths,
+    '$.disabled_binding_paths',
+    (value) => value,
+  );
   const expectedHash = canonicalSha256ExcludingRootKeys(parsed.data, ['closure_hash']);
   if (parsed.data.closure_hash !== expectedHash) {
     throw new ReleaseCoreError(

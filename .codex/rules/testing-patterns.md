@@ -30,3 +30,4 @@
 - Leaf Binding operation collector 必须对 Knowledge/Database/Plugin/A2A 四类真实 verifier 参数化，并额外断言未命中的 sibling path 仍存在且 operation set 为空；只测试命中项会漏掉 positional operation 泄漏。
 - Pack route/operation 测试要构造两个 exposed aliases 指向同一 member operation：routes 必须保留两条，Binding operation pins 必须按 contract hash 去重为一条，防止错误地把“调用入口”和“执行合同”当成同一集合。
 - Compiled closure verifier 必须覆盖：完整 hash 重算、unknown/future fields、accessor/proxy、collection budget、resource node/path identity 重算，以及 nested Agent/Flow 的 version tuple/hash 双重 join。必须保留“published pin hash 与 semantic seed hash 可以不同”的正例，防止误把两个 hash 层级合并。
+- Closure canonical-set 测试必须先为乱序/重复 candidate 重算一个自洽 `closure_hash`，再断言 verifier 仍拒绝；否则测试只证明 hash mismatch，不能证明 canonical order enforcement。

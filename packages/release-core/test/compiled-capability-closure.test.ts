@@ -196,6 +196,40 @@ describe('compiled capability closure verification', () => {
     expectCode(() => prepareCompiledCapabilityClosure(input), 'CLOSURE_IDENTITY_MISMATCH');
   });
 
+  it('rejects alternate ordering and duplicates for canonical closure sets', () => {
+    const valid = closureInput();
+    const first = {
+      ...valid.root.pin,
+      published_resource_kind: 'PLUGIN_TOOL_RELEASE',
+      resource_id: 'plugin-a',
+      resource_version_id: 'plugin-release-a',
+      contract_hash: hashA,
+    } as const;
+    const second = { ...first, resource_id: 'plugin-z' };
+    const reversed = {
+      ...valid,
+      assembly_pins: [second, first],
+      closure_hash: hashA,
+    };
+    expectCode(
+      () =>
+        prepareCompiledCapabilityClosure({
+          ...reversed,
+          closure_hash: canonicalSha256ExcludingRootKeys(reversed, ['closure_hash']),
+        }),
+      'COMPILED_CAPABILITY_CLOSURE_INVALID',
+    );
+    const duplicated = { ...valid, assembly_pins: [first, first], closure_hash: hashA };
+    expectCode(
+      () =>
+        prepareCompiledCapabilityClosure({
+          ...duplicated,
+          closure_hash: canonicalSha256ExcludingRootKeys(duplicated, ['closure_hash']),
+        }),
+      'COMPILED_CAPABILITY_CLOSURE_INVALID',
+    );
+  });
+
   it('rejects accessor and proxy input before schema parsing', () => {
     const accessor = closureInput() as Record<string, unknown>;
     Object.defineProperty(accessor, 'closure_hash', {
