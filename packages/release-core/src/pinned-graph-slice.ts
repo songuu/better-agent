@@ -21,6 +21,14 @@ export interface PreparedGraphBoundDirectDependenciesV1 {
   readonly dependency_nodes: readonly PinnedDependencyGraphNodeV1[];
 }
 
+export interface PreparedGraphBoundDependencyFanoutV1 {
+  readonly schema_version: 'graph-bound-dependency-fanout/1';
+  readonly graph_hash: `sha256:${string}`;
+  readonly root_node: PinnedDependencyGraphNodeV1;
+  readonly parent_node: PinnedDependencyGraphNodeV1;
+  readonly dependency_nodes: readonly PinnedDependencyGraphNodeV1[];
+}
+
 function unresolved(): never {
   throw new ReleaseCoreError(
     'CAPABILITY_DEPENDENCY_UNRESOLVED',
@@ -80,6 +88,54 @@ export function prepareGraphBoundDirectDependencies(
     schema_version: 'graph-bound-direct-dependencies/1',
     graph_hash: graph.graph_hash,
     root_node: rootNode,
+    dependency_nodes: dependencyNodes,
+  });
+}
+
+/** Verify root→parent and parent→children in one recomputed graph snapshot. */
+export function prepareGraphBoundDependencyFanout(
+  expectedGraph: unknown,
+  graphCandidate: unknown,
+  rootPin: PublishedResourcePinV1,
+  parentPin: PublishedResourcePinV1,
+  dependencyPins: readonly PublishedResourcePinV1[],
+): PreparedGraphBoundDependencyFanoutV1 {
+  const graph = verifyPinnedDependencyGraph(expectedGraph, graphCandidate);
+  const findNode = (pin: PublishedResourcePinV1) =>
+    graph.nodes.find(
+      (candidate) => publishedResourcePinKey(candidate.pin) === publishedResourcePinKey(pin),
+    );
+  const rootNode = findNode(rootPin);
+  const parentNode = findNode(parentPin);
+  if (
+    publishedResourcePinKey(graph.root.pin) !== publishedResourcePinKey(rootPin) ||
+    rootNode === undefined ||
+    parentNode === undefined ||
+    !graph.edges.some(
+      (edge) => edge.from_node_id === rootNode.node_id && edge.to_node_id === parentNode.node_id,
+    ) ||
+    dependencyPins.length === 0 ||
+    dependencyPins.length > 128
+  )
+    unresolved();
+  const keys = dependencyPins.map(publishedResourcePinKey);
+  if (new Set(keys).size !== keys.length) unresolved();
+  const dependencyNodes = dependencyPins.map((pin) => {
+    const node = findNode(pin);
+    if (
+      node === undefined ||
+      !graph.edges.some(
+        (edge) => edge.from_node_id === parentNode.node_id && edge.to_node_id === node.node_id,
+      )
+    )
+      unresolved();
+    return node;
+  });
+  return deepFreezeJson({
+    schema_version: 'graph-bound-dependency-fanout/1',
+    graph_hash: graph.graph_hash,
+    root_node: rootNode,
+    parent_node: parentNode,
     dependency_nodes: dependencyNodes,
   });
 }

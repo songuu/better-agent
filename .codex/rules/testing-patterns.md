@@ -41,3 +41,4 @@
 - Resource-node intrinsic policy 要有完整 typed 正例，并成对拒绝 `{}` 与 unknown field。Nested closure 回归必须直接传 graph dependency commitment；若生产适配器需要注入 `intrinsic_policy: {}` 或 `node_role` 才能复用校验器，说明两个 artifact 边界已混淆，测试应让这种额外字段 fail closed。
 - Nested intrinsic-policy 投影正例要故意让 graph published hash 与 child semantic seed hash 不同，同时断言父 dependency node 保留前者、policy 来自 child root。分别破坏 nested closure hash、version tuple 和 dependency manifest；只测 hash join 会遗漏 graph/source assembly 漂移。
 - Skill Pack leaf entry 测试要同时覆盖两个正交集合：leaf source 按 unique full pin 精确闭合，Pack/member policy 按每个 mount-specific canonical path 精确闭合。两个 Pack mount 复用一个 leaf source 应生成两条不同 path entry；禁用 Pack 或无选中 route 只增加 unavailable path，不能抹掉编译证据。
+- Pack graph-sealing 回归必须构造“Agent→leaf 存在、Pack→leaf 缺失”的合法图，证明错误父边不能借权；再分别给 Agent root manifest 与 Pack manifest 增加一个仍可解析的额外依赖，证明 edge membership 通过时 manifest exactness 仍会拒绝。

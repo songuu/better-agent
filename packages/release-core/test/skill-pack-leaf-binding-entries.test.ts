@@ -2,10 +2,16 @@ import { CompiledBindingEntryV1Schema } from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
 
 import { canonicalResourceNodeId } from '../src/closure-identity.js';
+import { deriveDependencyManifest, publishedResourcePinKey } from '../src/dependency-manifest.js';
+import { prepareExecutableSource } from '../src/executable-source.js';
 import { canonicalSha256 } from '../src/hash.js';
 import { prepareLeafResourceSource } from '../src/leaf-resource-source.js';
+import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js';
 import { prepareAgentSkillPackDependencyPaths } from '../src/root-binding-paths.js';
-import { prepareSkillPackLeafBindingEntrySet } from '../src/skill-pack-leaf-binding-entries.js';
+import {
+  prepareGraphBoundSkillPackLeafBindingEntrySet,
+  prepareSkillPackLeafBindingEntrySet,
+} from '../src/skill-pack-leaf-binding-entries.js';
 import { prepareSkillPackSource } from '../src/skill-pack-source.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import { workspaceId } from './fixtures.js';
@@ -40,6 +46,11 @@ function fixture(options: { secondMount?: boolean; selectExposure?: boolean } = 
             exposed_operation_contract_hash: operation.exposed_operation_contract_hash,
           })),
   };
+  const directLeafBinding = agent.capability_bindings.find((item) => item.kind === 'plugin');
+  const packMember = pack.document.member_bindings[0];
+  if (directLeafBinding === undefined || packMember === undefined)
+    throw new Error('fixture direct leaf Binding is missing');
+  Object.assign(directLeafBinding, structuredClone(packMember), { binding_id: 'plugin' });
   if (options.selectExposure === false) packBinding.enabled = false;
   if (options.secondMount) {
     const second = structuredClone(packBinding);
@@ -93,6 +104,50 @@ function fixture(options: { secondMount?: boolean; selectExposure?: boolean } = 
     ),
   };
   return { agent, root, packInput, pack, packBinding, leafInput, leaf, paths, policies, ceiling };
+}
+
+function graphFixture() {
+  const value = fixture({ secondMount: true });
+  const root = prepareExecutableSource(value.root);
+  const records = new Map<string, Record<string, unknown>>();
+  for (const pin of root.dependency_manifest.dependencies) {
+    const { contract_hash: _hash, binding_mode: _mode, ...owner } = pin;
+    const dependencyManifest =
+      publishedResourcePinKey(pin) === publishedResourcePinKey(value.pack.full_pin)
+        ? value.pack.dependency_manifest
+        : deriveDependencyManifest(owner, []);
+    records.set(publishedResourcePinKey(pin), {
+      schema_version: 'pinned-dependency-record/1',
+      pin,
+      publication_state: 'sealed',
+      dependency_manifest: dependencyManifest,
+      ...(pin.published_resource_kind === 'AGENT_RELEASE' ||
+      pin.published_resource_kind === 'FLOW_VERSION'
+        ? { nested_closure_hash: canonicalSha256({ pin }) }
+        : {}),
+    });
+  }
+  if (!records.has(publishedResourcePinKey(value.leaf.full_pin))) {
+    const { contract_hash: _hash, binding_mode: _mode, ...owner } = value.leaf.full_pin;
+    records.set(publishedResourcePinKey(value.leaf.full_pin), {
+      schema_version: 'pinned-dependency-record/1',
+      pin: value.leaf.full_pin,
+      publication_state: 'sealed',
+      dependency_manifest: deriveDependencyManifest(owner, []),
+    });
+  }
+  const graphCandidate = {
+    schema_version: 'pinned-dependency-graph-candidate/1' as const,
+    root: { pin: root.root.pin, semantic_seed_hash: root.root.semantic_seed_hash },
+    root_dependencies: root.dependency_manifest.dependencies,
+    resources: [...records.values()],
+  };
+  return {
+    ...value,
+    rootSource: root,
+    graphCandidate,
+    graph: preparePinnedDependencyGraph(graphCandidate),
+  };
 }
 
 describe('Skill Pack leaf Binding entry assembly', () => {
@@ -235,5 +290,115 @@ describe('Skill Pack leaf Binding entry assembly', () => {
     expect(result).not.toHaveProperty('closure_hash');
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.entries[0]?.effective_policy)).toBe(true);
+  });
+
+  it('seals Agent to Pack and Pack to every unique leaf in one graph snapshot', () => {
+    const value = graphFixture();
+    const result = prepareGraphBoundSkillPackLeafBindingEntrySet(
+      value.graph,
+      value.graphCandidate,
+      value.root,
+      value.packInput,
+      [value.leafInput],
+      value.policies,
+    );
+    expect(result.graph_hash).toBe(value.graph.graph_hash);
+    expect(result.prepared_entries.entries).toHaveLength(2);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('rejects a leaf that is direct from Agent but not from its Pack', () => {
+    const value = graphFixture();
+    const packRecord = value.graphCandidate.resources.find(
+      (record) =>
+        publishedResourcePinKey(record.pin as never) ===
+        publishedResourcePinKey(value.pack.full_pin),
+    );
+    if (packRecord === undefined) throw new Error('missing Pack record');
+    const { contract_hash: _hash, binding_mode: _mode, ...owner } = value.pack.full_pin;
+    packRecord.dependency_manifest = deriveDependencyManifest(owner, []);
+    value.graphCandidate.root_dependencies = [
+      ...value.graphCandidate.root_dependencies,
+      value.leaf.full_pin,
+    ];
+    const graph = preparePinnedDependencyGraph(value.graphCandidate);
+    expect(() =>
+      prepareGraphBoundSkillPackLeafBindingEntrySet(
+        graph,
+        value.graphCandidate,
+        value.root,
+        value.packInput,
+        [value.leafInput],
+        value.policies,
+      ),
+    ).toThrow();
+  });
+
+  it('rejects graph manifests that differ from the prepared Agent or Pack sources', () => {
+    const value = graphFixture();
+    const changed = structuredClone(value.graphCandidate);
+    const unrelated = {
+      ...value.leaf.full_pin,
+      resource_id: '33333333-3333-4333-8333-333333333333',
+      resource_version_id: '44444444-4444-4444-8444-444444444444',
+    };
+    const { contract_hash: _hash, binding_mode: _mode, ...owner } = unrelated;
+    changed.root_dependencies = [...changed.root_dependencies, unrelated];
+    changed.resources.push({
+      schema_version: 'pinned-dependency-record/1',
+      pin: unrelated,
+      publication_state: 'sealed',
+      dependency_manifest: deriveDependencyManifest(owner, []),
+    });
+    const graph = preparePinnedDependencyGraph(changed);
+    expect(() =>
+      prepareGraphBoundSkillPackLeafBindingEntrySet(
+        graph,
+        changed,
+        value.root,
+        value.packInput,
+        [value.leafInput],
+        value.policies,
+      ),
+    ).toThrow();
+  });
+
+  it('rejects a Pack graph manifest with an extra dependency despite retaining the leaf edge', () => {
+    const value = graphFixture();
+    const changed = structuredClone(value.graphCandidate);
+    const unrelated = {
+      ...value.leaf.full_pin,
+      resource_id: '55555555-5555-4555-8555-555555555555',
+      resource_version_id: '66666666-6666-4666-8666-666666666666',
+    };
+    const { contract_hash: _hash, binding_mode: _mode, ...owner } = unrelated;
+    changed.resources.push({
+      schema_version: 'pinned-dependency-record/1',
+      pin: unrelated,
+      publication_state: 'sealed',
+      dependency_manifest: deriveDependencyManifest(owner, []),
+    });
+    const packRecord = changed.resources.find(
+      (record) =>
+        publishedResourcePinKey(record.pin as never) ===
+        publishedResourcePinKey(value.pack.full_pin),
+    );
+    if (packRecord === undefined) throw new Error('missing Pack record');
+    const { contract_hash: _packHash, binding_mode: _packMode, ...packOwner } = value.pack.full_pin;
+    packRecord.dependency_manifest = deriveDependencyManifest(packOwner, [
+      value.leaf.full_pin,
+      unrelated,
+    ]);
+    const graph = preparePinnedDependencyGraph(changed);
+    expect(() =>
+      prepareGraphBoundSkillPackLeafBindingEntrySet(
+        graph,
+        changed,
+        value.root,
+        value.packInput,
+        [value.leafInput],
+        value.policies,
+      ),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
   });
 });

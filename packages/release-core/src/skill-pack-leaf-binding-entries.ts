@@ -20,6 +20,7 @@ import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
 import { canonicalSha256 } from './hash.js';
 import { prepareLeafResourceSource, verifyLeafResourceBindings } from './leaf-resource-source.js';
+import { prepareGraphBoundDependencyFanout } from './pinned-graph-slice.js';
 import { prepareAgentSkillPackDependencyPaths } from './root-binding-paths.js';
 import { prepareSkillPackOperationRoutes } from './skill-pack-operation-routes.js';
 import { prepareSkillPackSource } from './skill-pack-source.js';
@@ -41,6 +42,12 @@ export interface PreparedSkillPackLeafBindingEntrySetV1 {
   readonly leaf_dependencies: readonly ReturnType<typeof prepareLeafResourceSource>['full_pin'][];
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly policy_disabled_binding_paths: readonly `bp1.${string}`[];
+}
+
+export interface GraphBoundSkillPackLeafBindingEntrySetV1 {
+  readonly schema_version: 'graph-bound-skill-pack-leaf-binding-entry-set/1';
+  readonly graph_hash: `sha256:${string}`;
+  readonly prepared_entries: PreparedSkillPackLeafBindingEntrySetV1;
 }
 
 function notClosed(path = '$.pack'): never {
@@ -289,5 +296,41 @@ export function prepareSkillPackLeafBindingEntrySet(
       ),
     entries,
     policy_disabled_binding_paths: [...disabledPaths].sort(compareCanonicalStrings),
+  });
+}
+
+/** Seal Agent→Pack→leaf provenance against one recomputed pinned graph. */
+export function prepareGraphBoundSkillPackLeafBindingEntrySet(
+  expectedGraph: unknown,
+  graphCandidate: unknown,
+  rootInput: unknown,
+  packInput: unknown,
+  leafInputs: unknown,
+  policyInput: unknown,
+): GraphBoundSkillPackLeafBindingEntrySetV1 {
+  const prepared = prepareSkillPackLeafBindingEntrySet(
+    rootInput,
+    packInput,
+    leafInputs,
+    policyInput,
+  );
+  const root = prepareExecutableSource(rootInput);
+  const pack = prepareSkillPackSource(packInput);
+  const graph = prepareGraphBoundDependencyFanout(
+    expectedGraph,
+    graphCandidate,
+    prepared.root.pin,
+    prepared.pack_dependency,
+    prepared.leaf_dependencies,
+  );
+  if (
+    graph.root_node.dependency_manifest_hash !== root.dependency_manifest.manifest_hash ||
+    graph.parent_node.dependency_manifest_hash !== pack.dependency_manifest.manifest_hash
+  )
+    notClosed('$.graph');
+  return deepFreezeJson({
+    schema_version: 'graph-bound-skill-pack-leaf-binding-entry-set/1',
+    graph_hash: graph.graph_hash,
+    prepared_entries: prepared,
   });
 }
