@@ -147,14 +147,14 @@
     {
       "packageName": "@better-agent/domain-contracts",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 143,
-      "successMarker": "@better-agent/domain-contracts:test:       Tests  143 passed (143)"
+      "testCount": 152,
+      "successMarker": "@better-agent/domain-contracts:test:       Tests  152 passed (152)"
     },
     {
       "packageName": "@better-agent/release-core",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 542,
-      "successMarker": "@better-agent/release-core:test:       Tests  542 passed (542)"
+      "testCount": 605,
+      "successMarker": "@better-agent/release-core:test:       Tests  605 passed (605)"
     },
     {
       "packageName": "@better-agent/run-core",
@@ -199,8 +199,8 @@
         "@better-agent/auth:test:       Tests  48 passed (48)",
         "@better-agent/billing-core:test:       Tests  43 passed (43)",
         "@better-agent/db:test:       Tests  85 passed (85)",
-        "@better-agent/domain-contracts:test:       Tests  143 passed (143)",
-        "@better-agent/release-core:test:       Tests  542 passed (542)",
+        "@better-agent/domain-contracts:test:       Tests  152 passed (152)",
+        "@better-agent/release-core:test:       Tests  605 passed (605)",
         "@better-agent/run-core:test:       Tests  103 passed (103)",
         "@better-agent/test-support:test:       Tests  21 passed (21)"
       ],

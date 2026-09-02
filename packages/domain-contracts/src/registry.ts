@@ -1,4 +1,9 @@
 import type { z } from 'zod';
+import {
+  InstructionSkillSourceV1Schema,
+  InstructionSkillSourceCandidateV1Schema,
+  InstructionSkillTrustedSignersV1Schema,
+} from './instruction-skill-source-v1.js';
 import { OperationContractSourceV1Schema } from './operation-contract-source-v1.js';
 import {
   SkillPackSourceV1Schema,
@@ -259,6 +264,15 @@ export const domainContractSchemaEntries = [
   { schemaVersion: 'agent-executable-source/1', schema: AgentExecutableSourceV1Schema },
   { schemaVersion: 'operation-contract-source/1', schema: OperationContractSourceV1Schema },
   { schemaVersion: 'skill-pack-source/1', schema: SkillPackSourceV1Schema },
+  { schemaVersion: 'instruction-skill-source/1', schema: InstructionSkillSourceV1Schema },
+  {
+    schemaVersion: 'instruction-skill-source-candidate/1',
+    schema: InstructionSkillSourceCandidateV1Schema,
+  },
+  {
+    schemaVersion: 'instruction-skill-trusted-signers/1',
+    schema: InstructionSkillTrustedSignersV1Schema,
+  },
   { schemaVersion: 'skill-pack-source-candidate/1', schema: SkillPackSourceCandidateV1Schema },
   {
     schemaVersion: 'knowledge-index-generation-source/1',

@@ -21,6 +21,7 @@
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
-    "@better-agent/domain-contracts": "workspace:*"
+    "@better-agent/domain-contracts": "workspace:*",
+    "@noble/curves": "2.4.0"
   }
 }

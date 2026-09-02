@@ -15,6 +15,7 @@ export * from './experience-release-v1.js';
 export * from './flow-deployment-v1.js';
 export * from './flow-ir-v1.js';
 export * from './human-gate-v1.js';
+export * from './instruction-skill-source-v1.js';
 export * from './leaf-resource-source-v1.js';
 export * from './operation-contract-source-v1.js';
 export * from './primitives.js';

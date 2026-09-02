@@ -490,6 +490,23 @@ parent delegable closure
 
 **证明范围：** 这里固定的是源声明与局部曝光映射，不是 `SkillPackOperationRoute` 的 canonical path seal。子 pack 正文、所有成员（含曝光/未曝光成员）目标的实际来源、递归循环/closure、最终路径策略交集、凭证/egress/budget 收窄、GateSpec coverage 与 registry readback 仍由 T3/T4/T5/T6 完成。envelope schema 在此仅绑定内容，不做 JSON Schema 验证或输入转换执行。不得以此投影替代已发布资源、运行时路由授权或完整应用验收。
 
+#### 7.1.5 Instruction Skill signed inert source profile
+
+`instruction-skill-source-candidate/1` 包含同 Workspace UUID、闭集 `instruction-skill-source/1` document 和完整文件数据。document 固定 resource/release UUID、name/description、`parser_version="instruction-skill-bundle-parser/1"`、`entry_path="SKILL.md"`、origin（publisher_id/source_id/非 latest revision）、manifest、allowed_capability_binding_ids、context_budget_tokens、data_classification、scripts 与 signature。manifest 每项为 path、kind（instruction/reference/asset/script）、size_bytes 和 content_hash（原始文件 bytes 的 SHA-256）。这是本项目的有界 JSON bundle 协议，不声明 BetterYeah Skill 格式兼容、ZIP/TAR 导入或文件系统解包能力。
+
+- 1–64 个唯一文件，与 manifest 精确一一对应；manifest/files 按 path、allowed IDs 按字典序规范排序。每文件最多 1 MiB、全部解码 bytes 最多 2 MiB；文件以最多 22 个 canonical base64 chunk 表示，每个解码后 1–49,152 bytes，非末尾 chunk 必须恰好 49,152 bytes；零字节资源用空 chunks 数组。实际长度/hash 必须匹配 manifest，不接受声明替代实际数据。
+- path 必须 NFC，最多 1,024 UTF-8 bytes、8 段、每段 128 bytes；拒绝绝对/空/dot/dotdot 段、反斜线、百分号、冒号、Windows 禁用字符/设备名、末尾点或空格、C0/C1 控制符、Unicode 大写再 NFC 后的别名与文件/目录前缀冲突。唯一 instruction 为 `SKILL.md`；其他 kind 只在对应 `references/`、`assets/`、`scripts/` 下。内核不提取文件，不调用脚本。
+- SKILL.md 必须为 1–65,536 bytes、有效 UTF-8、非空白，拒绝开头 BOM 和除 Tab/LF/CR 外的 C0/C1；保留正文换行/Unicode bytes，不执行 Markdown 或解析其中的指令。其余资源（包括 scripts）为签名覆盖的惰性 bytes。`scripts.mode` 只允许 inert；requires_execution=true 显式报 `SKILL_SCRIPT_EXECUTION_UNSUPPORTED`，没有脚本降级执行路径。
+- capability ID 集合最多 128，context budget 为 1–1,000,000 整数 token，classification 为 public/internal/confidential/restricted。沿用 §7.1 的独立 candidate/expected/trust 与完整返回 artifact 预算；输入合法但返回 artifact 超预算也失败，不截断。
+
+签名采用 Ed25519，signature 固定 algorithm/key_id/64-byte canonical base64。`instruction-skill-trusted-signers/1` 是独立传入的可信配置：同 Workspace、最多 128 个唯一 key_id，各项固定 publisher_id/source_id、1–128 个 allowed_resource_ids 及 canonical base64 公钥 SPKI。验签同时匹配这些 scope；候选自身不能添加公钥或 trust 字段使自己可信。**调用方必须从可信发布者配置提供此集合；纯 helper 不验证配置的 registry provenance、撤销状态或宿主权威。**
+
+`instruction-skill-signing-payload/1` 精确为 schema_version、canonicalizer_version=`rfc8785/1`、workspace_id、published_resource_kind=`INSTRUCTION_SKILL_RELEASE`、规范 document 去除 signature，以及 signer={algorithm,key_id}；对该对象的 JCS bytes 验签。manifest hash 已与实际 bytes 核对，因此元数据、内容、资源身份和来源均被签名绑定。公钥只接受精确 44-byte Ed25519 public SPKI DER，解析再导出必须逐字相等；随后使用固定 `@noble/curves@2.4.0` 严格解码 raw point（非 ZIP215）、排除 identity 与非 torsion-free 公钥，并显式 `verify(...,{zip215:false})`。DER 合法不等于公钥可安全验签。参见 [库的 Ed25519 接口](https://github.com/paulmillr/noble-curves/blob/2.4.0/README.md)；升级实现必须重跑真实验签和 key/option 边界回归。签名/信任 scope 错误统一为 `INSTRUCTION_SKILL_SIGNATURE_INVALID`，不返回底层 crypto diagnostics。
+
+`prepareInstructionSkillSource` 输出 `prepared-instruction-skill-source/1`，包含规范 document/files、signing_payload、signature_evidence（schema/key/publisher/source/public_key_hash/signed_payload_hash）、完整 preimage/full_pin、content_hash、inert_content 与空直接依赖 manifest。`instruction-skill-source-preimage/1` 固定 compiler/canonicalizer versions、Workspace、resource kind 与完整规范 document（含 signature），完整 pin hash=SHA-256/JCS(preimage)。`content_hash=SHA-256(JCS({schema_version:"instruction-skill-content/1",parser_version,entry_path,manifest}))`；inert_content 仅导出入口正文/hash、allowed IDs、context budget、classification 与 inert 模式。所有返回内容深冻结，verify 重新核对真实文件、签名及整个 artifact，不只比较自报 hash。
+
+`verifyInstructionSkillAssembly` 先核真实 Agent executable source、同 Workspace 和指定 Instruction Skill Binding 的 full pin/content_hash；Binding token budget 不得超过源 budget，Binding allowed IDs 必须全部属于源集合，源中的每个 ID 都必须存在于 Agent Capability Bindings（即使该 Skill Binding 没有选择它）。不把 Skill 作为 Tool，也不派生新 Capability 依赖。**源证明不是最终 `CompiledInstructionSkillDescriptor`**：closure-unique path 映射、能力有效策略、activation/priority、按模型 tokenizer 的预算裁剪、分类授权、嵌入/渲染安全、registry seal 和真实运行仍由后续 compiler/host 集成落实。内容签名与 host-attested reviewer Acceptance Receipt 完全不同，不可互相替代。
+
 ### 7.2 Final closure integration
 
 `closure_hash = SHA-256(JCS(closure_without_closure_hash))`。JCS 指 RFC 8785 JSON Canonicalization Scheme。root 必须按以下两阶段顺序生成，不得把 final `compiled_hash` 又放回 closure 形成循环：
