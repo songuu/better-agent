@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 
 import { prepareGraphBoundAgentLeafBindingEntrySet } from '../src/agent-leaf-binding-entries.js';
 import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
+import { prepareAgentRootResourceGraph } from '../src/agent-root-resource-graph.js';
+import { canonicalEmptyCapabilityRequirementExpression } from '../src/capability-policy.js';
+import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
 import { deriveDependencyManifest } from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
 import { prepareLeafResourceSource } from '../src/leaf-resource-source.js';
@@ -156,7 +159,7 @@ function fixture(disabled = false, secondMount = false) {
     [dependency],
     policies,
   );
-  return { root, path, graph, slice, policies, disabled };
+  return { root, path, graph, graphCandidate, slice, policies, disabled };
 }
 
 function rootPolicy(value: ReturnType<typeof fixture>) {
@@ -189,6 +192,9 @@ describe('Agent root Binding entry-set assembly', () => {
     expect(result.requirement_expressions).toEqual(
       value.slice.prepared_entries.requirement_expressions,
     );
+    expect(result.dependency_intrinsic_policies).toEqual(
+      value.slice.prepared_entries.dependency_intrinsic_policies,
+    );
     expect(result.disabled_binding_paths).toEqual([]);
     expect(result.graph_hash).toBe(value.graph.graph_hash);
     expect(result.intrinsic_policy).toEqual(result.requirement_expressions[0]?.expression);
@@ -210,6 +216,7 @@ describe('Agent root Binding entry-set assembly', () => {
       [...result.entries.map((entry) => entry.binding_path)].sort(),
     );
     expect(result.requirement_expressions).toHaveLength(2);
+    expect(result.dependency_intrinsic_policies).toHaveLength(1);
     expect(result.intrinsic_policy.expression_kind).toBe('alternative');
     if (result.intrinsic_policy.expression_kind !== 'alternative')
       throw new Error('expected alternative');
@@ -228,6 +235,9 @@ describe('Agent root Binding entry-set assembly', () => {
     expect(result.requirement_expressions).toEqual([]);
     expect(result.disabled_binding_paths).toEqual([value.path.binding_path]);
     expect(value.slice.prepared_entries.dependency_intrinsic_policies).toHaveLength(1);
+    expect(result.dependency_intrinsic_policies).toEqual(
+      value.slice.prepared_entries.dependency_intrinsic_policies,
+    );
     expect(
       value.slice.prepared_entries.dependency_intrinsic_policies[0]?.intrinsic_policy,
     ).toMatchObject({ expression_kind: 'leaf' });
@@ -355,6 +365,22 @@ describe('Agent root Binding entry-set assembly', () => {
     }
   });
 
+  it('re-derives every dependency policy node identity from its complete pin', () => {
+    const value = fixture();
+    const changed = structuredClone(value.slice);
+    const evidence = changed.prepared_entries.dependency_intrinsic_policies[0];
+    if (evidence === undefined) throw new Error('fixture policy evidence is missing');
+    record(evidence).node_id = `rn1.${'A'.repeat(43)}`;
+    expect(() =>
+      prepareAgentRootBindingEntrySet(
+        value.root,
+        value.graph.graph_hash,
+        [changed],
+        rootPolicy(value),
+      ),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+  });
+
   it('requires exactly one canonical requirement expression per enabled root path', () => {
     const value = fixture();
     for (const expressions of [
@@ -405,5 +431,193 @@ describe('Agent root Binding entry-set assembly', () => {
     expect(Object.isFrozen(result.requirement_expressions[0]?.expression)).toBe(true);
     expect(Object.isFrozen(result.intrinsic_policy)).toBe(true);
     expect(Object.isFrozen(result.aggregate_limits)).toBe(true);
+  });
+});
+
+describe('Agent root direct resource-graph assembly', () => {
+  function prepared(disabled = false, secondMount = false) {
+    const value = fixture(disabled, secondMount);
+    const entrySet = prepareAgentRootBindingEntrySet(
+      value.root,
+      value.graph.graph_hash,
+      [value.slice],
+      rootPolicy(value),
+    );
+    return { ...value, entrySet };
+  }
+
+  it('assembles one canonical root node, direct dependency node, and Binding edge', () => {
+    const value = prepared();
+    const result = prepareAgentRootResourceGraph(value.graph, value.entrySet);
+    expect(result.resource_nodes).toHaveLength(value.graph.nodes.length);
+    expect(result.resource_nodes.find((node) => node.node_role === 'root')).toMatchObject({
+      node_id: value.graph.root_node_id,
+      intrinsic_policy: value.entrySet.intrinsic_policy,
+    });
+    expect(result.dependency_edges).toContainEqual({
+      from_node_id: value.graph.root_node_id,
+      to_node_id: value.entrySet.entries[0]?.dependency_node_ids[0],
+      relation: 'binding_target',
+      source_path: value.entrySet.entries[0]?.binding_path,
+    });
+    expect(
+      result.dependency_edges.filter((edge) => edge.relation === 'binding_target'),
+    ).toHaveLength(1);
+    expect(
+      result.dependency_edges.filter((edge) => edge.relation === 'typed_internal_dependency'),
+    ).toHaveLength(value.graph.edges.length - 1);
+    expect(
+      result.dependency_edges
+        .filter((edge) => edge.relation === 'typed_internal_dependency')
+        .every(
+          (edge) =>
+            edge.source_path ===
+            canonicalBindingPath([{ segment_kind: 'root', pin: value.entrySet.root.pin }]),
+        ),
+    ).toBe(true);
+    const assemblyEdge = result.dependency_edges.find(
+      (edge) => edge.relation === 'typed_internal_dependency',
+    );
+    expect(
+      result.resource_nodes.find((node) => node.node_id === assemblyEdge?.to_node_id)
+        ?.intrinsic_policy,
+    ).toEqual(canonicalEmptyCapabilityRequirementExpression());
+  });
+
+  it('retains one dependency node but one provenance edge per shared-target mount', () => {
+    const value = prepared(false, true);
+    const result = prepareAgentRootResourceGraph(value.graph, value.entrySet);
+    expect(result.resource_nodes).toHaveLength(value.graph.nodes.length);
+    const bindingEdges = result.dependency_edges.filter(
+      (edge) => edge.relation === 'binding_target',
+    );
+    expect(bindingEdges).toHaveLength(2);
+    expect(new Set(bindingEdges.map((edge) => edge.to_node_id)).size).toBe(1);
+  });
+
+  it('keeps a disabled dependency node and edge as evidence without granting closure authority', () => {
+    const value = prepared(true);
+    const result = prepareAgentRootResourceGraph(value.graph, value.entrySet);
+    expect(result.resource_nodes).toHaveLength(value.graph.nodes.length);
+    expect(
+      result.dependency_edges.filter((edge) => edge.relation === 'binding_target'),
+    ).toHaveLength(1);
+    expect(result).not.toHaveProperty('closure_hash');
+    expect(Object.isFrozen(result.resource_nodes[1]?.intrinsic_policy)).toBe(true);
+  });
+
+  it('rejects graph hash drift and missing dependency policy evidence', () => {
+    const value = prepared();
+    expect(() =>
+      prepareAgentRootResourceGraph(
+        { ...value.graph, graph_hash: `sha256:${'9'.repeat(64)}` },
+        value.entrySet,
+      ),
+    ).toThrow('CAPABILITY_GRAPH_HASH_MISMATCH');
+    expect(() =>
+      prepareAgentRootResourceGraph(value.graph, {
+        ...value.entrySet,
+        dependency_intrinsic_policies: [],
+      }),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+  });
+
+  it('rejects unknown graph fields, entry-set graph drift, and duplicate policy identities', () => {
+    const value = prepared();
+    expect(() =>
+      prepareAgentRootResourceGraph({ ...value.graph, unexpected: true }, value.entrySet),
+    ).toThrow('CAPABILITY_GRAPH_INPUT_INVALID');
+    expect(() =>
+      prepareAgentRootResourceGraph(value.graph, {
+        ...value.entrySet,
+        graph_hash: `sha256:${'8'.repeat(64)}`,
+      }),
+    ).toThrow('CAPABILITY_GRAPH_HASH_MISMATCH');
+    expect(() =>
+      prepareAgentRootResourceGraph(value.graph, {
+        ...value.entrySet,
+        dependency_intrinsic_policies: [
+          ...value.entrySet.dependency_intrinsic_policies,
+          ...value.entrySet.dependency_intrinsic_policies,
+        ],
+      }),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+    expect(() =>
+      prepareAgentRootResourceGraph(value.graph, {
+        ...value.entrySet,
+        entries: [...value.entrySet.entries, ...value.entrySet.entries],
+      }),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+  });
+
+  it.each(['EXPERIENCE_RELEASE', 'SYSTEM_RELEASE'] as const)(
+    'fails closed for an unclassified %s dependency instead of inventing zero demand',
+    (publishedResourceKind) => {
+      const value = prepared();
+      const graphCandidate = structuredClone(value.graphCandidate);
+      const firstEntry = value.entrySet.entries[0];
+      if (firstEntry === undefined) throw new Error('fixture entry is missing');
+      const pin = {
+        ...firstEntry.target,
+        published_resource_kind: publishedResourceKind,
+        resource_id: '018f47f2-c541-7cc6-9292-4a2c35303e8a',
+        resource_version_id: '018f47f2-c541-7cc6-9292-4a2c35303e8b',
+      };
+      const { contract_hash: _hash, binding_mode: _mode, ...owner } = pin;
+      const resource = {
+        schema_version: 'pinned-dependency-record/1',
+        pin,
+        publication_state: 'sealed',
+        dependency_manifest: deriveDependencyManifest(owner, []),
+      } as const;
+      const graph = preparePinnedDependencyGraph({
+        ...graphCandidate,
+        root_dependencies: [...graphCandidate.root_dependencies, pin],
+        resources: [...graphCandidate.resources, resource],
+      });
+      expect(() =>
+        prepareAgentRootResourceGraph(graph, { ...value.entrySet, graph_hash: graph.graph_hash }),
+      ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+    },
+  );
+
+  it('fails closed on recursive graph edges until descendant provenance is joined', () => {
+    const value = prepared();
+    const graphCandidate = structuredClone(value.graphCandidate);
+    const leaf = prepareLeafResourceSource(leafCandidate('KNOWLEDGE_INDEX_GENERATION'));
+    const firstEntry = value.entrySet.entries[0];
+    const parent = graphCandidate.resources.find(
+      (resource) => resource.pin.contract_hash === firstEntry?.target.contract_hash,
+    );
+    if (parent === undefined) throw new Error('fixture direct dependency record is missing');
+    const { contract_hash: _parentHash, binding_mode: _parentMode, ...parentOwner } = parent.pin;
+    parent.dependency_manifest = deriveDependencyManifest(parentOwner, [leaf.full_pin]);
+    const { contract_hash: _leafHash, binding_mode: _leafMode, ...leafOwner } = leaf.full_pin;
+    graphCandidate.resources.push({
+      schema_version: 'pinned-dependency-record/1',
+      pin: leaf.full_pin,
+      publication_state: 'sealed',
+      dependency_manifest: deriveDependencyManifest(leafOwner, []),
+    });
+    const graph = preparePinnedDependencyGraph(graphCandidate);
+    const leafPolicy = {
+      node_id: canonicalResourceNodeId(leaf.full_pin),
+      pin: leaf.full_pin,
+      intrinsic_policy: {
+        schema_version: 'capability-requirement-expression/1' as const,
+        expression_kind: 'leaf' as const,
+        requirements: leaf.intrinsic_policy,
+      },
+    };
+    expect(() =>
+      prepareAgentRootResourceGraph(graph, {
+        ...value.entrySet,
+        graph_hash: graph.graph_hash,
+        dependency_intrinsic_policies: [
+          ...value.entrySet.dependency_intrinsic_policies,
+          leafPolicy,
+        ].sort((left, right) => left.node_id.localeCompare(right.node_id)),
+      }),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
   });
 });

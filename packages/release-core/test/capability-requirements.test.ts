@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  canonicalEmptyCapabilityRequirementExpression,
   normalizeCapabilityRequirementExpression as normalizeExpression,
   normalizeCapabilityRequirements as normalize,
   resolveEffectiveCapabilityPolicy,
@@ -7,6 +8,20 @@ import {
 import { ceiling, requirements, hashA, hashB } from './policy-fixtures.js';
 
 describe('intrinsic requirement normalization', () => {
+  it('provides one frozen canonical zero-demand expression for assembly-only resources', () => {
+    const result = canonicalEmptyCapabilityRequirementExpression();
+    expect(result).toMatchObject({
+      expression_kind: 'leaf',
+      requirements: {
+        principal_modes: ['none'],
+        operation_contract_hashes: [],
+        minimum_limits: { calls: 0, depth: 0, parallelism: 0 },
+      },
+    });
+    expect(normalizeExpression(result)).toEqual(result);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
   it('canonicalizes all explicit sets without dropping demands or mutating inputs', () => {
     const input = {
       ...requirements(),

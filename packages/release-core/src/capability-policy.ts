@@ -285,6 +285,38 @@ export function normalizeCapabilityRequirementExpression(
   return deepFreezeJson(normalized.data);
 }
 
+/** Canonical intrinsic policy for non-executable assembly resources. */
+export function canonicalEmptyCapabilityRequirementExpression(): Readonly<CapabilityRequirementExpressionV1> {
+  return normalizeCapabilityRequirementExpression({
+    schema_version: 'capability-requirement-expression/1',
+    expression_kind: 'leaf',
+    requirements: {
+      schema_version: 'capability-requirements/1',
+      credential_requirements: [],
+      principal_modes: ['none'],
+      egress: [],
+      readable_data_classification: 'public',
+      output_data_classification: 'public',
+      side_effect_class: 'safe',
+      approval_required: false,
+      operation_contract_hashes: [],
+      minimum_limits: {
+        calls: 0,
+        depth: 0,
+        parallelism: 0,
+        budget: {
+          schema_version: 'capability-budget/1',
+          amount_credits: '0',
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+          duration_ms: 0,
+        },
+      },
+    },
+  });
+}
+
 const maximumSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
 const maximumCredits = 9_223_372_036_854_775_807n;
 

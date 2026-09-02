@@ -2,13 +2,16 @@ import {
   type CapabilityBindingV1,
   type CapabilityRequirementExpressionV1,
   CompiledBindingEntryV1Schema,
+  ClosureResourceNodeV1Schema,
   ContractHashSchema,
   type EffectiveCapabilityPolicyV1,
+  PublishedResourcePinV1Schema,
 } from '@better-agent/domain-contracts';
 
 import { parseAgentBindingPolicyInput } from './agent-binding-policy.js';
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
 import {
+  canonicalEmptyCapabilityRequirementExpression,
   compileCapabilityRequirementEnvelope,
   meetCapabilityPolicyCeilings,
   normalizeCapabilityRequirementExpression,
@@ -29,10 +32,17 @@ interface RequirementExpressionByPath {
   readonly expression: CapabilityRequirementExpressionV1;
 }
 
+interface DependencyIntrinsicPolicyEvidence {
+  readonly node_id: ReturnType<typeof canonicalResourceNodeId>;
+  readonly pin: ReturnType<typeof PublishedResourcePinV1Schema.parse>;
+  readonly intrinsic_policy: CapabilityRequirementExpressionV1;
+}
+
 interface ParsedSlice {
   readonly graph_hash: `sha256:${string}`;
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly requirement_expressions: readonly RequirementExpressionByPath[];
+  readonly dependency_intrinsic_policies: readonly DependencyIntrinsicPolicyEvidence[];
   readonly root?: unknown;
 }
 
@@ -43,38 +53,10 @@ export interface PreparedAgentRootBindingEntrySetV1 {
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly requirement_expressions: readonly RequirementExpressionByPath[];
   readonly disabled_binding_paths: readonly `bp1.${string}`[];
+  readonly dependency_intrinsic_policies: readonly DependencyIntrinsicPolicyEvidence[];
   readonly intrinsic_policy: CapabilityRequirementExpressionV1;
   readonly aggregate_limits: EffectiveCapabilityPolicyV1;
 }
-
-const emptyRootRequirement = {
-  schema_version: 'capability-requirement-expression/1',
-  expression_kind: 'leaf',
-  requirements: {
-    schema_version: 'capability-requirements/1',
-    credential_requirements: [],
-    principal_modes: ['none'],
-    egress: [],
-    readable_data_classification: 'public',
-    output_data_classification: 'public',
-    side_effect_class: 'safe',
-    approval_required: false,
-    operation_contract_hashes: [],
-    minimum_limits: {
-      calls: 0,
-      depth: 0,
-      parallelism: 0,
-      budget: {
-        schema_version: 'capability-budget/1',
-        amount_credits: '0',
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: 0,
-        duration_ms: 0,
-      },
-    },
-  },
-} as const;
 
 function notClosed(path: string): never {
   throw new ReleaseCoreError(
@@ -143,6 +125,37 @@ function parseExpressions(value: unknown, path: string): RequirementExpressionBy
   return expressions;
 }
 
+function parseDependencyIntrinsicPolicies(
+  value: unknown,
+  accepts: (
+    kind: ReturnType<typeof PublishedResourcePinV1Schema.parse>['published_resource_kind'],
+  ) => boolean,
+  path: string,
+): DependencyIntrinsicPolicyEvidence[] {
+  if (!Array.isArray(value) || value.length > 256) notClosed(path);
+  const policies = value.map((candidate, index) => {
+    const itemPath = `${path}[${index}]`;
+    const item = record(candidate, itemPath);
+    exactKeys(item, ['node_id', 'pin', 'intrinsic_policy'], itemPath);
+    const pin = PublishedResourcePinV1Schema.safeParse(item.pin);
+    if (!pin.success || !accepts(pin.data.published_resource_kind)) notClosed(`${itemPath}.pin`);
+    const nodeId = canonicalResourceNodeId(pin.data);
+    if (item.node_id !== nodeId) notClosed(`${itemPath}.node_id`);
+    const intrinsicPolicy = normalizeCapabilityRequirementExpression(item.intrinsic_policy);
+    if (!canonicalJsonBytes(intrinsicPolicy).equals(canonicalJsonBytes(item.intrinsic_policy))) {
+      notClosed(`${itemPath}.intrinsic_policy`);
+    }
+    return { node_id: nodeId, pin: pin.data, intrinsic_policy: intrinsicPolicy };
+  });
+  if (
+    policies.some(
+      (item, index) => index > 0 && (policies[index - 1]?.node_id ?? '') >= item.node_id,
+    )
+  )
+    notClosed(path);
+  return policies;
+}
+
 function parseSlice(input: unknown, index: number): ParsedSlice {
   const path = `$.slices[${index}]`;
   const slice = record(input, path);
@@ -182,6 +195,15 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
         prepared.requirement_expressions,
         `${path}.prepared_entries.requirement_expressions`,
       ),
+      dependency_intrinsic_policies: parseDependencyIntrinsicPolicies(
+        prepared.dependency_intrinsic_policies,
+        (kind) =>
+          kind === 'KNOWLEDGE_INDEX_GENERATION' ||
+          kind === 'DATABASE_OPERATION_RELEASE' ||
+          kind === 'PLUGIN_TOOL_RELEASE' ||
+          kind === 'A2A_AGENT_RELEASE',
+        `${path}.prepared_entries.dependency_intrinsic_policies`,
+      ),
     };
   }
   if (slice.schema_version === 'graph-bound-skill-pack-leaf-binding-entry-set/1') {
@@ -215,6 +237,15 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
         prepared.pack_requirement_expressions,
         `${path}.prepared_entries.pack_requirement_expressions`,
       ),
+      dependency_intrinsic_policies: parseDependencyIntrinsicPolicies(
+        prepared.leaf_dependency_intrinsic_policies,
+        (kind) =>
+          kind === 'KNOWLEDGE_INDEX_GENERATION' ||
+          kind === 'DATABASE_OPERATION_RELEASE' ||
+          kind === 'PLUGIN_TOOL_RELEASE' ||
+          kind === 'A2A_AGENT_RELEASE',
+        `${path}.prepared_entries.leaf_dependency_intrinsic_policies`,
+      ),
     };
   }
   if (slice.schema_version === 'prepared-agent-composite-binding-entries/1') {
@@ -233,6 +264,14 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
     );
     const dependencyKind = slice.dependency_kind;
     if (dependencyKind !== 'FLOW_VERSION' && dependencyKind !== 'AGENT_RELEASE') notClosed(path);
+    const dependencyNode = ClosureResourceNodeV1Schema.safeParse(slice.dependency_resource_node);
+    if (!dependencyNode.success || dependencyNode.data.node_role !== 'dependency') {
+      notClosed(`${path}.dependency_resource_node`);
+    }
+    const dependencyNodeId = canonicalResourceNodeId(dependencyNode.data.pin);
+    if (dependencyNode.data.node_id !== dependencyNodeId) {
+      notClosed(`${path}.dependency_resource_node.node_id`);
+    }
     return {
       graph_hash: canonicalGraphHash,
       entries: parseEntries(
@@ -249,6 +288,13 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
         slice.requirement_expressions,
         `${path}.requirement_expressions`,
       ),
+      dependency_intrinsic_policies: [
+        {
+          node_id: dependencyNodeId,
+          pin: dependencyNode.data.pin,
+          intrinsic_policy: dependencyNode.data.intrinsic_policy,
+        },
+      ],
     };
   }
   return notClosed(`${path}.schema_version`);
@@ -328,6 +374,20 @@ export function prepareAgentRootBindingEntrySet(
   )
     notClosed('$.requirement_expressions');
 
+  const dependencyPoliciesByNode = new Map<string, DependencyIntrinsicPolicyEvidence>();
+  for (const evidence of slices.flatMap((slice) => slice.dependency_intrinsic_policies)) {
+    const existing = dependencyPoliciesByNode.get(evidence.node_id);
+    if (
+      existing !== undefined &&
+      !canonicalJsonBytes(existing).equals(canonicalJsonBytes(evidence))
+    )
+      notClosed('$.dependency_intrinsic_policies');
+    dependencyPoliciesByNode.set(evidence.node_id, evidence);
+  }
+  const dependencyIntrinsicPolicies = [...dependencyPoliciesByNode.values()].sort((left, right) =>
+    compareCanonicalStrings(left.node_id, right.node_id),
+  );
+
   const policies = parseAgentBindingPolicyInput(policyInput, 'agent-root-binding-policy-input/1');
   const policyPaths = policies.binding_ceilings
     .map((item) => item.binding_path)
@@ -349,7 +409,7 @@ export function prepareAgentRootBindingEntrySet(
   }
   const intrinsicPolicy = normalizeCapabilityRequirementExpression(
     expressions.length === 0
-      ? emptyRootRequirement
+      ? canonicalEmptyCapabilityRequirementExpression()
       : expressions.length === 1
         ? expressions[0]?.expression
         : {
@@ -374,6 +434,7 @@ export function prepareAgentRootBindingEntrySet(
     entries,
     requirement_expressions: expressions,
     disabled_binding_paths: paths.source_disabled_binding_paths,
+    dependency_intrinsic_policies: dependencyIntrinsicPolicies,
     intrinsic_policy: intrinsicPolicy,
     aggregate_limits: aggregateLimits,
   });
