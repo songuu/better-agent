@@ -1,4 +1,9 @@
-import type { CapabilityBindingV1, OperationContractPinV1 } from '@better-agent/domain-contracts';
+import {
+  type CapabilityBindingV1,
+  CapabilityInvocationRequirementsV1Schema,
+  type CapabilityRequirementsV1,
+  type OperationContractPinV1,
+} from '@better-agent/domain-contracts';
 
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
 import {
@@ -8,6 +13,7 @@ import {
 } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
+import { normalizeCapabilityRequirements } from './capability-policy.js';
 import {
   type PreparedNestedAgentBindingOperationsV1,
   prepareGraphBoundNestedAgentBindingOperations,
@@ -26,6 +32,7 @@ type NestedProjection =
 interface CallDeclaration {
   readonly binding_id: string;
   readonly operation: unknown;
+  readonly requirements: unknown;
 }
 
 export interface PreparedAgentChildCallOperationsV1 {
@@ -39,6 +46,7 @@ export interface PreparedAgentChildCallOperationsV1 {
     readonly binding_kind: CapabilityBindingV1['kind'];
     readonly binding_path: `bp1.${string}`;
     readonly operation_contracts: readonly OperationContractPinV1[];
+    readonly invocation_requirements?: CapabilityRequirementsV1;
   }[];
 }
 
@@ -55,11 +63,15 @@ function declarations(input: unknown): readonly CallDeclaration[] {
       typeof entry !== 'object' ||
       entry === null ||
       Array.isArray(entry) ||
-      Object.keys(entry).length !== 2 ||
+      Object.keys(entry).length !== 3 ||
       !Object.hasOwn(entry, 'binding_id') ||
-      !Object.hasOwn(entry, 'operation')
+      !Object.hasOwn(entry, 'operation') ||
+      !Object.hasOwn(entry, 'requirements')
     ) {
-      mismatch(`$[${index}]`, 'child call declaration must contain only binding_id and operation');
+      mismatch(
+        `$[${index}]`,
+        'child call declaration must contain only binding_id, operation and requirements',
+      );
     }
     const value = entry as Record<string, unknown>;
     if (typeof value.binding_id !== 'string' || value.binding_id.length === 0) {
@@ -69,7 +81,11 @@ function declarations(input: unknown): readonly CallDeclaration[] {
       mismatch(`$[${index}].binding_id`, 'child call Binding declaration is duplicated');
     }
     seen.add(value.binding_id);
-    return { binding_id: value.binding_id, operation: value.operation };
+    return {
+      binding_id: value.binding_id,
+      operation: value.operation,
+      requirements: value.requirements,
+    };
   });
 }
 
@@ -98,6 +114,7 @@ function prepare(
   }
   const matchingById = new Map(matching.map((binding) => [binding.binding_id, binding]));
   const operationById = new Map<string, OperationContractPinV1>();
+  const requirementsById = new Map<string, CapabilityRequirementsV1>();
   for (const declaration of supplied) {
     const binding = matchingById.get(declaration.binding_id);
     if (binding === undefined) {
@@ -106,10 +123,30 @@ function prepare(
         'call operation declaration does not identify an exact child mount',
       );
     }
-    operationById.set(
-      declaration.binding_id,
-      verifyBindingOperationContract(binding, declaration.operation),
+    const operation = verifyBindingOperationContract(binding, declaration.operation);
+    const requirements = CapabilityInvocationRequirementsV1Schema.safeParse(
+      declaration.requirements,
     );
+    if (!requirements.success) {
+      mismatch(`$.${declaration.binding_id}.requirements`, 'call requirements are invalid');
+    }
+    let normalized: Readonly<CapabilityRequirementsV1>;
+    try {
+      normalized = normalizeCapabilityRequirements({
+        ...requirements.data,
+        schema_version: 'capability-requirements/1',
+        operation_contract_hashes: [operation.contract_hash],
+        side_effect_class: operation.side_effect_class,
+        approval_required: operation.approval_required,
+      });
+    } catch (error) {
+      if (error instanceof ReleaseCoreError && error.code.startsWith('CLOSURE_POLICY_')) {
+        mismatch(`$.${declaration.binding_id}.requirements`, 'call requirements are invalid');
+      }
+      throw error;
+    }
+    operationById.set(declaration.binding_id, operation);
+    requirementsById.set(declaration.binding_id, normalized);
   }
   const operationByPath = new Map<string, OperationContractPinV1>();
   for (const path of prepareRootBindingPaths(rootInput).bindings) {
@@ -129,9 +166,19 @@ function prepare(
     binding_operations: projection.binding_operations
       .map((entry) => {
         const operation = operationByPath.get(entry.binding_path);
-        return operation === undefined
-          ? entry
-          : { ...entry, operation_contracts: [operation] as readonly OperationContractPinV1[] };
+        if (operation === undefined) return entry;
+        const requirements = requirementsById.get(entry.binding_id);
+        if (requirements === undefined) {
+          mismatch(
+            `$.${entry.binding_id}.requirements`,
+            'verified call operation is missing its invocation requirements',
+          );
+        }
+        return {
+          ...entry,
+          operation_contracts: [operation] as readonly OperationContractPinV1[],
+          invocation_requirements: requirements,
+        };
       })
       .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path)),
   });

@@ -54,6 +54,28 @@ export const emptyCapabilityRequirementExpression = {
   requirements: emptyCapabilityRequirements,
 } as const;
 
+export const callCapabilityRequirements = {
+  schema_version: 'capability-invocation-requirements/1',
+  credential_requirements: [],
+  principal_modes: ['none'],
+  egress: [],
+  readable_data_classification: 'public',
+  output_data_classification: 'public',
+  minimum_limits: {
+    calls: 1,
+    depth: 0,
+    parallelism: 1,
+    budget: {
+      schema_version: 'capability-budget/1',
+      amount_credits: '0',
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      duration_ms: 1,
+    },
+  },
+} as const;
+
 export function makeStrategyRelease() {
   const candidate = {
     schema_version: 'agent-strategy-release/1',

@@ -11,6 +11,7 @@ import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js'
 import { prepareRootBindingPaths } from '../src/root-binding-paths.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import {
+  callCapabilityRequirements,
   emptyCapabilityRequirementExpression,
   emptyCapabilityRequirements,
   hashA,
@@ -203,6 +204,7 @@ function subagentCall(agent: ReturnType<typeof richAgentSource>) {
   if (binding === undefined) throw new Error('fixture SubAgent call Binding is missing');
   return {
     binding_id: binding.binding_id,
+    requirements: callCapabilityRequirements,
     operation: {
       schema_version: 'operation-contract-source/1',
       operation_kind: 'subagent_call',
@@ -486,6 +488,20 @@ describe('nested Agent Binding operation projection', () => {
       sameId.find((entry) => entry.operation_contracts.length === 1)?.operation_contracts[0]
         ?.operation_kind,
     ).toBe('subagent_call');
+    const parent = sameId.find((entry) => entry.operation_contracts.length === 1);
+    const parentOperationHash = parent?.operation_contracts[0]?.contract_hash;
+    expect(parent?.invocation_requirements).toMatchObject({
+      schema_version: 'capability-requirements/1',
+      side_effect_class: 'safe',
+      approval_required: false,
+      operation_contract_hashes: [parentOperationHash],
+      minimum_limits: { calls: 1, parallelism: 1 },
+    });
+    expect(Object.isFrozen(parent?.invocation_requirements)).toBe(true);
+    expect(Object.isFrozen(parent?.invocation_requirements?.minimum_limits)).toBe(true);
+    expect(sameId.find((entry) => entry.operation_contracts.length === 0)).not.toHaveProperty(
+      'invocation_requirements',
+    );
     expect(result.dependency_resource_node).toMatchObject({
       pin: value.targetPin,
       intrinsic_policy: emptyCapabilityRequirementExpression,
@@ -507,6 +523,35 @@ describe('nested Agent Binding operation projection', () => {
           candidate(value.target),
           value.closure,
           declarations,
+        ),
+      ).toThrow('CAPABILITY_OPERATION_CONTRACT_MISMATCH');
+    }
+  });
+
+  it('rejects absent, zero-cost, and self-authorized invocation requirements', () => {
+    const value = prepared();
+    const valid = subagentCall(value.agent);
+    const absent = { binding_id: valid.binding_id, operation: valid.operation };
+    const zeroCost = {
+      ...valid,
+      requirements: {
+        ...valid.requirements,
+        minimum_limits: { ...valid.requirements.minimum_limits, calls: 0 },
+      },
+    };
+    const selfAuthorized = {
+      ...valid,
+      requirements: { ...valid.requirements, side_effect_class: 'unsafe' },
+    };
+    for (const declaration of [absent, zeroCost, selfAuthorized]) {
+      expect(() =>
+        prepareGraphBoundAgentSubagentCallOperations(
+          value.expectedGraph,
+          value.candidateGraph,
+          candidate(value.agent),
+          candidate(value.target),
+          value.closure,
+          [declaration],
         ),
       ).toThrow('CAPABILITY_OPERATION_CONTRACT_MISMATCH');
     }

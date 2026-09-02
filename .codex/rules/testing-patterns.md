@@ -43,3 +43,4 @@
 - Skill Pack leaf entry 测试要同时覆盖两个正交集合：leaf source 按 unique full pin 精确闭合，Pack/member policy 按每个 mount-specific canonical path 精确闭合。两个 Pack mount 复用一个 leaf source 应生成两条不同 path entry；禁用 Pack 或无选中 route 只增加 unavailable path，不能抹掉编译证据。
 - Pack graph-sealing 回归必须构造“Agent→leaf 存在、Pack→leaf 缺失”的合法图，证明错误父边不能借权；再分别给 Agent root manifest 与 Pack manifest 增加一个仍可解析的额外依赖，证明 edge membership 通过时 manifest exactness 仍会拒绝。
 - Nested policy evidence 不能只用空 requirements 测字段存在；至少重封一次含非零 minimum/read classification 的 child closure、更新 graph nested hash，并断言 parent dependency node 逐字保留该 policy 且 deep-frozen。Composite 数值回归必须分别覆盖 sequence/parallel/alternative/repeat/nested-call、token 联合下限、safe-integer/bigint 溢出与 root envelope 超 aggregate 拒绝；parent entry 只能调用该编译器，不能复制 child minima。
+- Child-call invocation requirements 要同时测试缺失、零成本、自报 operation/effect/approval、schema drift、parent/child 同 ID 隔离以及深冻结；仅验证 call operation pin 不足以生成 composite policy。

@@ -15,6 +15,7 @@ import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js'
 import { prepareFlowNodePaths } from '../src/root-binding-paths.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import {
+  callCapabilityRequirements,
   emptyCapabilityRequirementExpression,
   hashA,
   hashB,
@@ -188,6 +189,7 @@ function flowCall(agent: ReturnType<typeof richAgentSource>, bindingId = 'flow')
   if (binding === undefined) throw new Error('fixture Flow call Binding is missing');
   return {
     binding_id: bindingId,
+    requirements: callCapabilityRequirements,
     operation: {
       schema_version: 'operation-contract-source/1',
       operation_kind: 'flow_call',
@@ -391,6 +393,15 @@ describe('nested Flow Binding operation projection', () => {
       'flow_call',
       'plugin_tool',
     ]);
+    const parent = sameId.find(
+      (entry) => entry.operation_contracts[0]?.operation_kind === 'flow_call',
+    );
+    expect(parent?.invocation_requirements?.operation_contract_hashes).toEqual([
+      parent?.operation_contracts[0]?.contract_hash,
+    ]);
+    expect(
+      sameId.find((entry) => entry.operation_contracts[0]?.operation_kind === 'plugin_tool'),
+    ).not.toHaveProperty('invocation_requirements');
   });
 
   it('requires one independently verified call declaration for every Flow mount', () => {

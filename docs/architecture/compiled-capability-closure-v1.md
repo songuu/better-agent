@@ -363,6 +363,8 @@ Direct Agent→SubAgent expansion 按 target kind 分两条 closed 路径。`int
 
 `nested_call.invocation` 必须是已验证的完整 `CapabilityRequirementsV1`，不能用隐含零预算替代父调用。任何 safe-integer 或 PostgreSQL bigint 溢出都在编译时失败。`alternative` 的 flat envelope 仅是所有分支可被同一上限承载的最小轴对齐包络；原表达式必须继续保留，不能用 envelope 反推或替代分支语义。
 
+Flow/SubAgent call source 使用 `capability-invocation-requirements/1` 声明凭证、principal、egress、数据分类与非零最小 limits；它不得自报 operation hashes、side effect 或 approval。compiler 先验证 exact Binding operation，再从 operation pin 派生这三个授权敏感字段，规范化为完整 `CapabilityRequirementsV1`，并且只附着到对应 parent mount；child 中同名 Binding 不得继承 parent invocation requirements。
+
 纯内核在返回前对完整规范结果重新执行同一结构/字节预算验证，再深度冻结；两份合法输入的笛卡尔交集可能增加输出大小，必须在本次 meet 拒绝，不能等下一次使用才失败。不访问网络、凭据或数据库；其 meet 结果本身不是可信授权凭证。GateSpec/operation-key 的实际绑定、registry 真实性和 epoch 重验证仍分别由 T3–T5 实现。
 
 ## 5. 发布、准入与运行时

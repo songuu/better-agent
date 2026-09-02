@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BindingPathSegmentV1Schema,
+  CapabilityInvocationRequirementsV1Schema,
   CapabilityRequirementExpressionV1Schema,
   CompiledBindingEntryV1Schema,
   CompiledCapabilityClosureV1Schema,
@@ -75,6 +76,16 @@ const intrinsicExpression = {
 const invocationRequirements = {
   ...intrinsicRequirements,
   minimum_limits: { ...intrinsicRequirements.minimum_limits, calls: 1, parallelism: 1 },
+} as const;
+
+const invocationSourceRequirements = {
+  schema_version: 'capability-invocation-requirements/1',
+  credential_requirements: invocationRequirements.credential_requirements,
+  principal_modes: invocationRequirements.principal_modes,
+  egress: invocationRequirements.egress,
+  readable_data_classification: invocationRequirements.readable_data_classification,
+  output_data_classification: invocationRequirements.output_data_classification,
+  minimum_limits: invocationRequirements.minimum_limits,
 } as const;
 
 function actionNode(nodeId: string, key: string, type: 'output' | 'start' | 'text') {
@@ -214,6 +225,24 @@ describe('Flow graph semantic invariants', () => {
 });
 
 describe('Compiled closure reference integrity', () => {
+  it('keeps invocation source demands nonzero and forbids self-authorized operation facts', () => {
+    expect(
+      CapabilityInvocationRequirementsV1Schema.safeParse(invocationSourceRequirements).success,
+    ).toBe(true);
+    expect(
+      CapabilityInvocationRequirementsV1Schema.safeParse({
+        ...invocationSourceRequirements,
+        minimum_limits: { ...invocationSourceRequirements.minimum_limits, calls: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      CapabilityInvocationRequirementsV1Schema.safeParse({
+        ...invocationSourceRequirements,
+        approval_required: false,
+      }).success,
+    ).toBe(false);
+  });
+
   it('requires every resource node to carry a topology-preserving requirement expression', () => {
     const node = {
       node_id: rootNodeId,

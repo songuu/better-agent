@@ -189,6 +189,18 @@ export const CapabilityRequirementsV1Schema = z.strictObject({
   minimum_limits: CapabilityMinimumLimitsV1Schema,
 });
 
+/** Source-declared demand axes; operation identity/effect/approval are compiler-derived. */
+export const CapabilityInvocationRequirementsV1Schema = CapabilityRequirementsV1Schema.omit({
+  operation_contract_hashes: true,
+  side_effect_class: true,
+  approval_required: true,
+})
+  .extend({ schema_version: z.literal('capability-invocation-requirements/1') })
+  .refine(
+    (value) => value.minimum_limits.calls >= 1 && value.minimum_limits.parallelism >= 1,
+    'an invocation must account for at least one call and one execution slot',
+  );
+
 export const EffectiveCapabilityPolicyV1Schema = z.strictObject({
   credential_requirements: Requirements,
   ...PolicyShape,
@@ -199,6 +211,9 @@ export type CapabilityBudgetV1 = z.infer<typeof CapabilityBudgetV1Schema>;
 export type CapabilityPolicyCeilingV1 = z.infer<typeof CapabilityPolicyCeilingV1Schema>;
 export type CapabilityMinimumLimitsV1 = z.infer<typeof CapabilityMinimumLimitsV1Schema>;
 export type CapabilityRequirementsV1 = z.infer<typeof CapabilityRequirementsV1Schema>;
+export type CapabilityInvocationRequirementsV1 = z.infer<
+  typeof CapabilityInvocationRequirementsV1Schema
+>;
 export type EffectiveCapabilityPolicyV1 = z.infer<typeof EffectiveCapabilityPolicyV1Schema>;
 
 export type CapabilityRequirementExpressionV1 =
