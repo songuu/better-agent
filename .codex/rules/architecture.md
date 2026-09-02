@@ -18,3 +18,10 @@
 - G1-A1 identity primitives live in release-core and reuse closed domain schemas / canonical JSON. Agent and Flow will share this implementation; no runtime or network fallback is added to identity generation.
 - `binding-path-lp-utf8/1` uses fixed typed tags and uint32be UTF-8 framing; `rn1` hashes the full JCS pin. Input is snapshotted without getters or Proxy traps; path bytes and per-compilation registry memory have separate absolute limits.
 - Historical G0 admission is scoped to its recorded subject. A local environment outage does not itself revoke that admission or prevent pure kernel TDD; new source still needs fresh real database/full-gate evidence before completion or release.
+
+## Capability policy kernel
+
+- Separate permission ceilings from intrinsic resource demands. Intersect scopes only in allow-sets; a required scope, operation or endpoint cannot be removed to make a demand pass.
+- Egress uses deployment-approved network policy pins, not Workspace-supplied IP/CIDR, proxy or DNS servers. Canonical host/path/method/redirect meet is pure compilation, not proof that runtime SSRF enforcement or deployment approval already happened.
+- Canonical composition must satisfy its input budgets at the output boundary too. Two bounded host/path sets can multiply into an oversized result; reject before returning instead of producing a value the next meet cannot consume.
+- Budget ceilings are independent caps. Simultaneous input/output token minima also need joint feasibility against the shared total cap; use bigint to avoid unsafe Number sums.

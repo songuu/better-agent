@@ -1,5 +1,6 @@
 export * from './admission-snapshot.js';
 export * from './canonical-json.js';
+export * from './capability-policy.js';
 export * from './closure-identity.js';
 export * from './credential-mapping.js';
 export * from './dependency-manifest.js';

@@ -128,14 +128,14 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/domain-contracts',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 53,
-    successMarker: '@better-agent/domain-contracts:test:       Tests  53 passed (53)',
+    testCount: 122,
+    successMarker: '@better-agent/domain-contracts:test:       Tests  122 passed (122)',
   }),
   Object.freeze({
     packageName: '@better-agent/release-core',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 89,
-    successMarker: '@better-agent/release-core:test:       Tests  89 passed (89)',
+    testCount: 157,
+    successMarker: '@better-agent/release-core:test:       Tests  157 passed (157)',
   }),
   Object.freeze({
     packageName: '@better-agent/run-core',

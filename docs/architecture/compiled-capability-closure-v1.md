@@ -223,7 +223,7 @@ interface ClosureDependencyEdgeV1 {
 }
 
 interface EffectiveCapabilityPolicyV1 {
-  credential_requirements: CanonicalCredentialRequirementV1[];
+  credential_requirements: CredentialRequirementV1[]; // canonical sorted demands
   principal_modes: ("caller_delegated" | "service_principal" | "team_shared" | "none")[];
   egress: CanonicalEgressRuleV1[];
   readable_data_classification_ceiling: "public" | "internal" | "confidential" | "restricted";
@@ -236,7 +236,7 @@ interface EffectiveCapabilityPolicyV1 {
   max_calls: number;
   max_depth: number;
   max_parallelism: number;
-  budget: CanonicalBudgetCeilingV1;
+  budget: CapabilityBudgetV1;
 }
 
 interface OperationContractPinV1 {
@@ -306,6 +306,24 @@ G1 的 identity 实现使用以下固定字节语法；这是第 3 节 length-pr
 | budget/limits | 金额、token、耗时、calls、depth、parallelism 各自取最小上限 | 必经路径的最小需求已超有效上限 |
 
 “更严格”不能只用枚举大小实现。例如，数据分类对“允许读取上限”取最低 clearance，对“输出污点”则取最高 sensitivity；两者必须是独立字段。
+
+#### 4.2.1 G1 policy vocabulary
+
+`capability-policy-ceiling/1` 表示权限上限，`capability-requirements/1` 表示资源固有需求；两者不可混用。前者的 credential allowance 以精确 `(provider_id, audience)` 为键，保存 scope/principal allow-set；后者保留不可删减的 required scopes。meet 只求上限交集，再校验每个固有需求，不能通过对 required scopes 求交集把资源需求悄悄删掉。空 allow-set 是拒绝，不代表无限制；`none` 是无凭据模式，不可替代有凭据模式。
+
+`canonical-egress-rule/1` 固定 deployment-approved `network_policy` 的 ID、SHA-256 hash 和 address class（`public_only` 或 `approved_internal`），再限制 scheme、ASCII 小写 DNS host、显式 port、绝对 path、HTTP method。不同 policy pin/address class 不可互相替代；Workspace/Binding 不能配置任意 IP/CIDR、DNS server 或 proxy。`public_only` 只接受 HTTPS；受控内部服务可使用 HTTP/HTTPS。单条 rule 不是出网授权证明：准入必须验证 policy pin 的部署级批准事实，执行器仍须落实 ADR-002 的 network-layer、DNS/IP 检查。
+
+- Host `exact` 精确匹配；`subdomains` 匹配任意层级子域但不包含 apex；必须按 `.` 边界收窄。拒绝 IP literal、大小写/尾点别名和 URL 字段混入。
+- Path `exact` 精确匹配；`subtree` 包含自身与 `/` 边界后代，根 `/` 包含所有路径。只接受规范绝对 ASCII URI path（非 ASCII 使用大写百分号 UTF-8 编码）；拒绝 query/fragment、反斜线、空段、dot segment、encoded separators/dot/percent/control、非规范 unreserved 编码及非法 UTF-8。运行时 request path 使用同一规范验证，不做多重 decode 或前缀猜测。
+- Methods 是 GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS 闭集。DNS 固定 `revalidate_each_connection`；每次连接和 redirect 都重新解析、验证并 pin 实际连接地址。Redirect `deny < same_origin < approved_targets`，同时对 `max_hops` 取最小（0 强制 deny；最大 10）。每跳仍须在有效规则内；跨 origin 必须移除凭据，禁止绕过地址检查。
+- 规范化先拆分 method 原子、去重、删除被更宽规则完全涵盖的原子，再把其余相同规则的 method 合并并按 JCS 字节序排列。规则的 scheme/port/network pin 必须相同；host/path 取更窄区域，method 取交集，redirect mode/hops 取更严值。
+- 输入每策略最多 32 egress rules、32 credential allowances/requirements、128 operation hashes，单集合最多 128 项；规范化最多 224 method 原子，meet 中间结果最多 1,024 个不同原子，规范结果最多 32 rules。超过绝对预算失败，不截断。对象输入必须有界、无 Proxy/getter/cycle/稀疏数组，单字符串 4,096 UTF-8 bytes，总字符串数据 1 MiB、最多 32,768 值、深度 12。
+
+`capability-budget/1` 所有维度都必填：`amount_credits` 为 PostgreSQL bigint 范围内规范非负十进制字符串；`input_tokens`、`output_tokens`、`total_tokens`、`duration_ms` 为非负 safe integer。各自取 min，0 代表零额度，不是 unlimited，缺字段/未知字段拒绝。calls/depth/parallelism 同样为非负 safe integer。金额比较只使用 bigint，不转换为 Number。资源的 `minimum_limits` 必须逐维不超过有效上限。
+
+`minimum_limits` 是一次能力执行需要同时满足的最低资源消耗，因此除逐轴校验外，`input_tokens + output_tokens` 的最低消耗之和也不得超过有效 `total_tokens` 上限；用 bigint 做联合可行性比较。ceiling 的 input/output 上限不必相加小于 total 上限，后者可以合法地限制二者的联合使用。
+
+纯内核在返回前对完整规范结果重新执行同一结构/字节预算验证，再深度冻结；两份合法输入的笛卡尔交集可能增加输出大小，必须在本次 meet 拒绝，不能等下一次使用才失败。不访问网络、凭据或数据库；其 meet 结果本身不是可信授权凭证。GateSpec/operation-key 的实际绑定、registry 真实性和 epoch 重验证仍分别由 T3–T5 实现。
 
 ## 5. 发布、准入与运行时
 

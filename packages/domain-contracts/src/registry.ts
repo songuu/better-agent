@@ -49,6 +49,12 @@ import {
 } from './billing-v2.js';
 import { BrowserSessionMetadataV1Schema } from './browser-session-v1.js';
 import {
+  CanonicalEgressRuleV1Schema,
+  CapabilityBudgetV1Schema,
+  CapabilityPolicyCeilingV1Schema,
+  CapabilityRequirementsV1Schema,
+} from './capability-policy-v1.js';
+import {
   CompiledCapabilityClosureV1Schema,
   CompiledGateSpecEntryV1Schema,
   ProductionPromotionGateDecisionV1Schema,
@@ -373,6 +379,22 @@ export const domainContractSchemaEntries = [
   { schemaVersion: 'subagent-binding/1', schema: SubagentBindingConfigV1Schema },
   { schemaVersion: 'flow-ir/1', schema: FlowIrV1Schema },
   { schemaVersion: 'human-gate/1', schema: FlowGateSpecV1Schema },
+  {
+    schemaVersion: 'canonical-egress-rule/1',
+    schema: CanonicalEgressRuleV1Schema,
+  },
+  {
+    schemaVersion: 'capability-budget/1',
+    schema: CapabilityBudgetV1Schema,
+  },
+  {
+    schemaVersion: 'capability-policy-ceiling/1',
+    schema: CapabilityPolicyCeilingV1Schema,
+  },
+  {
+    schemaVersion: 'capability-requirements/1',
+    schema: CapabilityRequirementsV1Schema,
+  },
   {
     schemaVersion: 'compiled-capability-closure/1',
     schema: CompiledCapabilityClosureV1Schema,

@@ -1,10 +1,7 @@
 import { z } from 'zod';
 
-import {
-  BindingKindV1Schema,
-  CredentialRequirementV1Schema,
-  PublishedResourcePinV1Schema,
-} from './agent-release-v1.js';
+import { BindingKindV1Schema, PublishedResourcePinV1Schema } from './agent-release-v1.js';
+import { EffectiveCapabilityPolicyV1Schema } from './capability-policy-v1.js';
 import {
   addCustomIssue,
   CanonicalBindingPathV1Schema,
@@ -102,33 +99,6 @@ export const BindingPathSegmentV1Schema = z.union([
     }),
   }),
 ]);
-
-export const EffectiveCapabilityPolicyV1Schema = z.strictObject({
-  credential_requirements: z.array(CredentialRequirementV1Schema),
-  principal_modes: z
-    .array(z.enum(['caller_delegated', 'service_principal', 'team_shared', 'none']))
-    .refine(hasUniqueStrings, 'principal modes must be unique'),
-  // Egress and budget own separate versioned vocabularies; this contract only embeds JSON values.
-  egress: z.array(JsonObjectSchema),
-  readable_data_classification_ceiling: z.enum([
-    'public',
-    'internal',
-    'confidential',
-    'restricted',
-  ]),
-  output_data_classification: z.enum(['public', 'internal', 'confidential', 'restricted']),
-  side_effect: z.strictObject({
-    maximum_class: z.enum(['safe', 'requires_key', 'unsafe']),
-    approval: z.enum(['none', 'required']),
-  }),
-  operation_contract_hashes: z
-    .array(ContractHashSchema)
-    .refine(hasUniqueStrings, 'operation contract hashes must be unique'),
-  max_calls: NonNegativeIntegerSchema,
-  max_depth: NonNegativeIntegerSchema,
-  max_parallelism: NonNegativeIntegerSchema,
-  budget: JsonObjectSchema,
-});
 
 export const OperationContractPinV1Schema = z.strictObject({
   operation_kind: z.enum([

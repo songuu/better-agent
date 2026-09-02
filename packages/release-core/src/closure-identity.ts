@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { types } from 'node:util';
 
 import {
   BindingPathSegmentV1Schema,
@@ -8,6 +7,7 @@ import {
 } from '@better-agent/domain-contracts';
 
 import { canonicalJsonBytes } from './canonical-json.js';
+import { boundedDataSnapshot } from './bounded-data-snapshot.js';
 import { ReleaseCoreError } from './errors.js';
 
 export type CanonicalBindingPathV1 = `bp1.${string}`;
@@ -16,8 +16,6 @@ export type ClosureResourceNodeIdV1 = `rn1.${string}`;
 type Segment = ReturnType<typeof BindingPathSegmentV1Schema.parse>;
 type Pin = ReturnType<typeof PublishedResourcePinV1Schema.parse>;
 
-const maximumSegments = 128;
-const maximumStringBytes = 4_096;
 const maximumPathBytes = 1_048_576;
 const maximumRegistryEntries = 4_096;
 const maximumRegistryBytes = 16_777_216;
@@ -28,90 +26,6 @@ function invalid(path: string, reason: string): never {
 
 function limit(path: string, reason: string): never {
   throw new ReleaseCoreError('CLOSURE_IDENTITY_LIMIT_EXCEEDED', path, reason);
-}
-
-function isScalarText(value: string): boolean {
-  for (const character of value) {
-    const codePoint = character.codePointAt(0);
-    if (
-      codePoint === 0 ||
-      (codePoint !== undefined && codePoint >= 0xd800 && codePoint <= 0xdfff)
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** Bound before schema parsing/JCS so hostile input cannot allocate an unbounded encoding. */
-function boundedSnapshot(input: unknown): unknown {
-  let remainingBytes = maximumPathBytes;
-  let remainingNodes = 8_192;
-  const active = new Set<object>();
-
-  function visit(value: unknown, path: string, depth: number): unknown {
-    remainingNodes -= 1;
-    if (depth > 8 || remainingNodes < 0) limit(path, 'identity structure exceeds its budget');
-    if (typeof value === 'string') {
-      if (value.length > maximumStringBytes) limit(path, 'identity string exceeds byte limit');
-      const bytes = Buffer.byteLength(value, 'utf8');
-      remainingBytes -= bytes;
-      if (bytes > maximumStringBytes || remainingBytes < 0) {
-        limit(path, 'identity string data exceeds byte budget');
-      }
-      if (!isScalarText(value)) {
-        invalid(path, 'identity text must contain Unicode scalar values without NUL');
-      }
-      return value;
-    }
-    if (typeof value !== 'object' || value === null) {
-      invalid(path, 'identity accepts data objects, arrays and strings only');
-    }
-    if (types.isProxy(value)) invalid(path, 'identity proxies are forbidden');
-    if (active.has(value)) invalid(path, 'cyclic identity input is forbidden');
-    const array = Array.isArray(value);
-    const prototype = Object.getPrototypeOf(value);
-    if (!array && prototype !== Object.prototype && prototype !== null) {
-      invalid(path, 'identity containers must be plain objects');
-    }
-    if (array && value.length > maximumSegments) limit(path, 'too many path segments');
-    const keys = Reflect.ownKeys(value);
-    if (keys.length > (array ? maximumSegments + 1 : 12)) {
-      limit(path, 'identity container has too many properties');
-    }
-    const copy: Record<string, unknown> | unknown[] = array ? [] : Object.create(null);
-    active.add(value);
-    try {
-      for (const key of keys) {
-        if (array && key === 'length') continue;
-        if (typeof key !== 'string' || key.length > 64) invalid(path, 'invalid identity key');
-        if (
-          array &&
-          (!/^(?:0|[1-9][0-9]*)$/u.test(key) ||
-            !Number.isSafeInteger(Number(key)) ||
-            Number(key) >= value.length)
-        ) {
-          invalid(path, 'array properties must be consecutive indices');
-        }
-        const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (descriptor === undefined || !descriptor.enumerable || !('value' in descriptor)) {
-          invalid(path, 'identity accepts enumerable data properties only');
-        }
-        Object.defineProperty(copy, key, {
-          value: visit(descriptor.value, `${path}.${key}`, depth + 1),
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-      }
-      if (array && keys.length !== value.length + 1) invalid(path, 'sparse arrays are forbidden');
-      return copy;
-    } finally {
-      active.delete(value);
-    }
-  }
-
-  return visit(input, '$', 0);
 }
 
 function assertPinHash(pin: Pin): void {
@@ -176,7 +90,7 @@ function encodeSegment(segment: Segment): Buffer {
 }
 
 export function canonicalBindingPathBytes(input: unknown): Buffer {
-  const snapshot = boundedSnapshot(input);
+  const snapshot = boundedDataSnapshot(input, 'identity');
   if (!Array.isArray(snapshot) || snapshot.length === 0) invalid('$', 'path requires segments');
   const segments = snapshot.map((value, index) => {
     const result = BindingPathSegmentV1Schema.safeParse(value);
@@ -206,7 +120,7 @@ export function canonicalBindingPathBytes(input: unknown): Buffer {
 }
 
 function resourceNodeBytes(input: unknown): Buffer {
-  const parsed = PublishedResourcePinV1Schema.safeParse(boundedSnapshot(input));
+  const parsed = PublishedResourcePinV1Schema.safeParse(boundedDataSnapshot(input, 'identity'));
   if (!parsed.success) invalid('$', 'resource pin does not match the closed contract');
   assertPinHash(parsed.data);
   return canonicalJsonBytes(parsed.data);

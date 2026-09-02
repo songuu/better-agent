@@ -6,6 +6,7 @@ export * from './auth-v1.js';
 export * from './billing-v1.js';
 export * from './billing-v2.js';
 export * from './browser-session-v1.js';
+export * from './capability-policy-v1.js';
 export * from './compiled-capability-closure-v1.js';
 export * from './conversation-v1.js';
 export * from './deployment-common-v1.js';

@@ -69,7 +69,14 @@ const aggregateLimits = {
   max_calls: 0,
   max_depth: 0,
   max_parallelism: 0,
-  budget: {},
+  budget: {
+    schema_version: 'capability-budget/1',
+    amount_credits: '0',
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    duration_ms: 0,
+  },
 } as const;
 
 describe('domain contract registry', () => {
