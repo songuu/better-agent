@@ -16,3 +16,5 @@ export * from './leaf-resource-source.js';
 export * from './agent-strategy-source.js';
 export * from './skill-pack-source.js';
 export * from './instruction-skill-source.js';
+export * from './json-schema-validation.js';
+export * from './schema-validated-source.js';

@@ -22,6 +22,8 @@
   },
   "dependencies": {
     "@better-agent/domain-contracts": "workspace:*",
-    "@noble/curves": "2.4.0"
+    "@noble/curves": "2.4.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
   }
 }

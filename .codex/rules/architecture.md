@@ -58,3 +58,8 @@
 - Signed source and trusted signer configuration are separate inputs. Match Workspace, key, publisher, origin and resource scope; an internally consistent signature does not attest configuration provenance, current revocation or host reviewer authority.
 - Canonical public SPKI DER does not ensure a valid signer point. Require canonical prime-subgroup nonidentity Ed25519 keys and explicit strict verification through the pinned cryptographic library; retain independent real-signature and degenerate-key regressions alongside isolated guard-order tests.
 - Scripts remain opaque signed assets, never Tools or executable dependencies. Source IDs and context caps are not effective closure paths or runtime token clipping; compile and enforce those separately before application acceptance.
+
+## Bounded Schema validation
+
+- Pin schema dialect, engine/formats/options, reference semantics and limits in the hashed validation profile. With exactly one resource and unique anchors, dynamic references can lower to confirmed static locations; relaxing nested IDs or external refs invalidates that proof. Validate the original document first, transform only a worker copy and preserve simultaneous references/siblings/array indexes.
+- Worker deadlines and heap limits improve responsiveness but are not an OS sandbox or process-wide memory ceiling. Keep the concurrency slot until actual exit, including termination rejection. Source validation evidence is a reproducible result, not provenance, compiled closure or host attestation.

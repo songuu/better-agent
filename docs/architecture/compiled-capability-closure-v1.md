@@ -507,6 +507,29 @@ parent delegable closure
 
 `verifyInstructionSkillAssembly` 先核真实 Agent executable source、同 Workspace 和指定 Instruction Skill Binding 的 full pin/content_hash；Binding token budget 不得超过源 budget，Binding allowed IDs 必须全部属于源集合，源中的每个 ID 都必须存在于 Agent Capability Bindings（即使该 Skill Binding 没有选择它）。不把 Skill 作为 Tool，也不派生新 Capability 依赖。**源证明不是最终 `CompiledInstructionSkillDescriptor`**：closure-unique path 映射、能力有效策略、activation/priority、按模型 tokenizer 的预算裁剪、分类授权、嵌入/渲染安全、registry seal 和真实运行仍由后续 compiler/host 集成落实。内容签名与 host-attested reviewer Acceptance Receipt 完全不同，不可互相替代。
 
+#### 7.1.6 Bounded JSON Schema validation profile
+
+`prepareJsonSchemaContract` / `verifyJsonSchemaContract` / `validateJsonSchemaInstance` 实现独立的、无外部加载器的单资源 JSON Schema 2020-12 平台 profile。它不是任意 dialect/扩展的兼容层；既有 source helper 仍只负责声明绑定，不能把其同步返回值当成 Schema 校验成功。新增异步校验与原 source hash 分离，避免悄悄改变已固定的声明身份。
+
+`json-schema-validator-profile/1` 固定 `ajv@8.20.0`、`ajv-formats@3.0.1`、dialect=`https://json-schema.org/draft/2020-12/schema`、完整 formats 模式及明确的 format 白名单。strictSchema/strictNumbers/validateSchema/validateFormats 开启，allErrors/useDefaults/coerceTypes/removeAdditional 关闭，ownProperties=true、inlineRefs=false、unicodeRegExp=true。未知 keyword/format、旧 dialect、`$async`/`$data`/自定义 keyword/loader 不受支持，不能静默忽略；标准 annotation 保留为数据，`contentSchema` 自身接受结构检查，但 contentEncoding/contentMediaType 不意味着执行内容解码或验证。
+
+- schema 可以是 boolean 或 object；调用方 schema/instance 各自同步复制并采用 §7.1 source snapshot 预算（8 MiB JCS、131,072 数据节点、64 深度、1,024 数组项、128 对象字段、65,536 UTF-8 string bytes、256 key bytes）；拒绝 getter/Proxy/cycle 等非 JSON 值。整个准备后的 artifact 也必须独立满足预算。额外最多 4,096 个 schema-bearing 位置，只遍历明确的 schema map/array/single keyword，不把 const/default/examples 中的业务字段当 Schema。
+- 仅允许同文档 `#` fragment 引用。嵌套 `$id` 禁止；root `$id` 不产生外部访问。所有 anchor/dynamicAnchor 名称在单资源内唯一，引用必须指向已识别的 schema 位置或存在的 anchor。fragment 必须采用唯一的 URI 编码和 JSON Pointer 转义，未使用定义中的无效引用也拒绝。schema map 与 dependentRequired 的 `__proto__` key 被显式拒绝，因为引擎会省略该约束；这不禁止用 patternProperties 校验真实数据中的同名 own property。
+- 原文 profile/meta-schema 检查通过后，仅在 worker 副本中将 anchor ref 转换为已确认的 schema-location pointer；`$dynamicRef` 转为 `$ref`。同节点已有 `$ref` 时在 allOf 尾部追加新约束，保留所有原 sibling、数组索引和指针位置。此降级仅在本 profile 的**单资源、唯一 anchor、禁止外部引用**下成立：不存在另一资源的动态 override；普通 anchor/pointer 按规范本就执行静态目标。修复避免引擎对部分动态目标错误回退到 root validator。原始 source 文档和 hash 不变。依据 [JSON Schema core §8.2.3.2](https://json-schema.org/draft/2020-12/json-schema-core)。放宽 resource/ref 规则必须重新设计并版本化 profile，不能复用此证明。
+
+每次编译/实例校验创建固定文件的 Node worker，`env={}`、`execArgv=[]`、`argv=[]`，不注册用户 callback、loader 或任何 schema-supplied executable。父线程在首次 await 前完成快照；同模块实例最多 4 个活 worker，无队列，第五个调用返回 BUSY。每 worker 从启动后的父线程计时起最多 5 秒，old/young generation 128/16 MiB、stack 4 MiB；超时请求 terminate，只有 exit 事件释放并发槽。停止事件幂等；terminate Promise 拒绝时返回 UNAVAILABLE 但保留槽位直到实际 exit。未知/重复消息、messageerror、stdout/stderr、异常/非零退出均失败；仅一次 `ok` 且 exit=0 才成功。错误不回显 Schema、实例或引擎 diagnostics；OOM/耗时/预算失败映射为 LIMIT。
+
+**worker 是响应性与资源隔离措施，不是 OS 安全沙箱或进程总内存保证。** `env/argv` 清空不等于抹除一切宿主状态；Node worker 仍处于同一进程并继承 Node environmentData。该 API 不接受代码、网络引用或凭证；宿主不得把此机制用作运行任意不可信代码的边界。并发额度是模块实例内的额度，不是跨进程全局限流。每次调用重新编译，没有预编译缓存或 pool。设计参考 [Ajv 对不可信 Schema 的限制](https://ajv.js.org/security.html) 与 [Node Worker API](https://nodejs.org/download/release/v22.22.0/docs/api/worker_threads.html)。
+
+`prepared-json-schema-contract/1` 完整包含 document、schema_hash=SHA-256/JCS(document)、完整固定 validator_profile 与其 hash，以及 `contract_hash=SHA-256(JCS({schema_version:"json-schema-validation-contract/1",schema_hash,validator_profile_hash}))`。verify 重新校验真实 Schema 并逐字比较完整 artifact。instance API 编译并校验实际值，返回独立深冻结快照；禁止靠默认填充、类型强转或删除额外字段让非法值通过。
+
+实际 source 接口：
+
+- `prepareSchemaValidatedOperationSource` / `verifySchemaValidatedOperationSource` 校验 operation 的真实 input_schema 和存在时的 output_schema，不虚构缺失输出。
+- `prepareSchemaValidatedStrategySource` / `verifySchemaValidatedStrategySource` 顺序校验 config/input/state/decision/observation 五类 Schema，再用 config_schema 校验真实 config；不执行 Strategy 或验证 implementation_digest/sandbox 的宿主真实性。
+
+返回 `schema-validated-operation-source/1` 或 `schema-validated-strategy-source/1`：原完整 source_artifact、`source-schema-validation-evidence/1` 与 validation_hash。evidence 精确包含原 artifact hash、validator_profile_hash、固定字段顺序的每项 schema field/hash/contract_hash，以及 Strategy config 的 field/schema_field/instance_hash；validation_hash=SHA-256/JCS(evidence)。整个 wrapper 再次限制大小并深冻结，verify 重建所有校验，不信自报 hash。它是可重算的校验结果，**不是签名 attestation、registry seal、host-attested reviewer receipt 或发布授权**。最终 closure compiler 尚须统一调用它及其他资源的显式 Schema 位置校验；叶资源/Agent/Flow/Pack/Binding/GateSpec 等全种类自动接线、实例执行数据与输出校验、registry/readback、UI/API/runtime 和线上验收仍待后续实现。
+
 ### 7.2 Final closure integration
 
 `closure_hash = SHA-256(JCS(closure_without_closure_hash))`。JCS 指 RFC 8785 JSON Canonicalization Scheme。root 必须按以下两阶段顺序生成，不得把 final `compiled_hash` 又放回 closure 形成循环：

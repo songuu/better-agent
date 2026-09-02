@@ -14,3 +14,4 @@
 - 多 guard 负例必须排除遮蔽：测试附加 filter 分类时先让列 allowlist、Binding output 与另一分类轴满足，再分别变异 read/output guard。凭证身份须在实际 Binding 入口逐字段错配；source→intrinsic 传递须包含非默认 effect/approval，不能全部只用 safe/false。
 - 集合校验需要异构双项：第一项合法、第二项独立违规；投影逐项断言完整 target/operation pin。仅单模型/单成员正例无法捕获只查首项、只比部分身份或取错首成员；权限集合用非空正例，并让扩大/缩减引用均真实存在以排除上游 unknown-reference 遮蔽。
 - 编码/分块负例应保持实际 decoded bytes、长度、hash 和签名不变，只破坏目标表示规则，避免被内容漂移校验遮蔽。冻结的第三方密码学接口用单独 mock-boundary 套件测试 guard 顺序/选项，真实签名与异常公钥回归仍必须直接跑真实库。
+- 校验器返回父线程原快照会遮蔽 worker 内的数据变更：禁止默认值需用 required+default 且缺字段必拒绝的负例，而不只断言返回值未变。生命周期 fake 必须能延迟 exit/拒绝 terminate，以四槽满载证明仅实际退出释放额度，并用连续 stop 事件证明幂等。独立 schema-node 与完整返回 artifact 预算各有 exact/+1 或输入可用/输出溢出的成对回归。
