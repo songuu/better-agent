@@ -7,12 +7,20 @@ import { prepareGraphBoundDirectDependency } from './pinned-graph-slice.js';
 import { prepareAgentSkillPackDependencyPaths } from './root-binding-paths.js';
 
 type SkillPackOperationRouteV1 = ReturnType<typeof SkillPackOperationRouteV1Schema.parse>;
+type SkillPackMemberOperationV1 = ReturnType<
+  typeof prepareAgentSkillPackDependencyPaths
+>['exposed_operations'][number]['member_operation_contract'];
 
 interface PreparedSkillPackOperationRoutesV1 {
   readonly schema_version: 'prepared-skill-pack-operation-routes/1';
   readonly root: ReturnType<typeof prepareAgentSkillPackDependencyPaths>['root'];
   readonly dependency: ReturnType<typeof prepareAgentSkillPackDependencyPaths>['dependency'];
   readonly routes: readonly SkillPackOperationRouteV1[];
+  readonly binding_operations: readonly {
+    readonly binding_id: string;
+    readonly pack_binding_path: `bp1.${string}`;
+    readonly operation_contracts: readonly SkillPackMemberOperationV1[];
+  }[];
 }
 
 interface PreparedGraphBoundSkillPackOperationRoutesV1 {
@@ -80,11 +88,39 @@ export function prepareSkillPackOperationRoutes(
         ? compareCanonicalStrings(left.exposed_operation_id, right.exposed_operation_id)
         : byPath;
     });
+  const bindingOperations = paths.bindings
+    .filter((binding) => binding.selected_exposed_operations.length > 0)
+    .map((binding) => {
+      const operations = new Map<string, SkillPackMemberOperationV1>();
+      for (const selected of binding.selected_exposed_operations) {
+        const exposure = paths.exposed_operations.find(
+          (candidate) =>
+            candidate.exposed_operation_id === selected.exposed_operation_id &&
+            candidate.exposed_operation_contract_hash === selected.exposed_operation_contract_hash,
+        );
+        if (exposure === undefined) unresolved();
+        operations.set(
+          exposure.member_operation_contract.contract_hash,
+          exposure.member_operation_contract,
+        );
+      }
+      return {
+        binding_id: binding.binding_id,
+        pack_binding_path: binding.binding_path,
+        operation_contracts: [...operations.values()].sort((left, right) =>
+          compareCanonicalStrings(left.contract_hash, right.contract_hash),
+        ),
+      };
+    })
+    .sort((left, right) =>
+      compareCanonicalStrings(left.pack_binding_path, right.pack_binding_path),
+    );
   return deepFreezeJson({
     schema_version: 'prepared-skill-pack-operation-routes/1',
     root: paths.root,
     dependency: paths.dependency,
     routes,
+    binding_operations: bindingOperations,
   });
 }
 

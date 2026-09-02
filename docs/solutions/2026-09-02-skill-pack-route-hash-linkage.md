@@ -26,6 +26,7 @@ aliases: ["Skill Pack route hash", "Pack exposure member linkage"]
 - 同一 Pack 在两个 root Binding 及两个 root release 下必须产生不同路径和 route hash。
 - stale member projection 在路由编译前 fail closed。
 - publisher/registry seal 未接入前只称 seal-ready intermediate，不称 sealed closure。
+- exposed aliases 保留独立 routes；Binding-level member operation pins 按 contract hash 去重，两个集合不得互相替代。
 
 ## Related
 

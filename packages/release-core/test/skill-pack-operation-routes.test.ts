@@ -93,17 +93,60 @@ describe('Skill Pack operation route preparation', () => {
     );
   });
 
+  it('attaches the exact member operation pin to the matching Pack Binding path', () => {
+    const { agent, packInput, pack, binding } = matchingSources();
+    const result = prepareSkillPackOperationRoutes(candidate(agent), packInput);
+    expect(result.binding_operations).toEqual([
+      {
+        binding_id: binding.binding_id,
+        pack_binding_path: result.routes[0]?.pack_binding_path,
+        operation_contracts: [pack.exposed_operations[0]?.member_operation_contract],
+      },
+    ]);
+  });
+
+  it('deduplicates one member operation exposed under multiple route aliases', () => {
+    const packInput = skillPackSource();
+    const exposure = packInput.document.exposures[0];
+    if (exposure === undefined) throw new Error('fixture exposure is missing');
+    packInput.document.exposures.push({
+      ...structuredClone(exposure),
+      exposed_operation_id: 'search-again',
+    });
+    const pack = prepareSkillPackSource(packInput);
+    const agent = richAgentSource();
+    const binding = agent.capability_bindings.find((item) => item.kind === 'skill_pack');
+    if (binding === undefined) throw new Error('fixture Pack Binding is missing');
+    binding.pin = pack.full_pin;
+    binding.manual = { ...pack.document.manual, hash: pack.component_hashes.manual };
+    binding.input_schema = pack.document.input_schema;
+    binding.output_schema = pack.document.output_schema;
+    binding.config = {
+      schema_version: 'skill-pack-binding/1',
+      member_projection_hash: pack.member_projection_hash,
+      exposed_operations: pack.exposed_operations.map((operation) => ({
+        exposed_operation_id: operation.exposed_operation_id,
+        exposed_operation_contract_hash: operation.exposed_operation_contract_hash,
+      })),
+    };
+    const result = prepareSkillPackOperationRoutes(candidate(agent), packInput);
+    expect(result.routes).toHaveLength(2);
+    expect(result.binding_operations[0]?.operation_contracts).toHaveLength(1);
+  });
+
   it('isolates identical Pack operations under distinct root Binding paths', () => {
     const { agent, packInput, binding } = matchingSources();
     const second = structuredClone(binding);
     second.binding_id = 'pack-second';
     agent.capability_bindings.push(second);
     agent.strategy.allowed_capability_binding_ids.push(second.binding_id);
-    const routes = prepareSkillPackOperationRoutes(candidate(agent), packInput).routes;
+    const prepared = prepareSkillPackOperationRoutes(candidate(agent), packInput);
+    const routes = prepared.routes;
     expect(routes).toHaveLength(2);
     expect(routes[0]?.pack_binding_path).not.toBe(routes[1]?.pack_binding_path);
     expect(routes[0]?.member_binding_path).not.toBe(routes[1]?.member_binding_path);
     expect(routes[0]?.route_hash).not.toBe(routes[1]?.route_hash);
+    expect(prepared.binding_operations).toHaveLength(2);
   });
 
   it('changes route identity when the root resource identity changes', () => {
@@ -142,6 +185,7 @@ describe('Skill Pack operation route preparation', () => {
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.routes)).toBe(true);
     expect(Object.isFrozen(result.routes[0]?.member_target)).toBe(true);
+    expect(Object.isFrozen(result.binding_operations[0]?.operation_contracts)).toBe(true);
   });
 
   it('uses the self-consistent Agent contract after changing root identity', () => {
