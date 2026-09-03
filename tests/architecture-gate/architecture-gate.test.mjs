@@ -4,8 +4,10 @@ import { link, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'n
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { inspect } from 'node:util';
 import {
   createBoundedOutputCapture,
+  createPostgresHarness,
   installPostgresSignalCleanup,
   runPostgresCommand,
 } from '../../infra/test/postgres/harness.mjs';
@@ -96,6 +98,199 @@ test('rejects a missing PostgreSQL command without an unhandled stdin error', as
     runPostgresCommand('better-agent-missing-command-for-test', [], { input: 'unconsumed input' }),
     /ENOENT/u,
   );
+});
+
+function createInteractiveChild(options = {}) {
+  const {
+    closeAfterExitMs = 0,
+    endCloses = true,
+    endError,
+    endThrows,
+    exitAfterKillMs = 0,
+    killThrows,
+    lateStderr,
+    writeMarkerThenError,
+    writeThrows,
+  } = options;
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = new EventEmitter();
+  child.stdin.destroyed = false;
+  child.kills = [];
+  child.closed = false;
+  const finish = () => {
+    if (child.exited) return;
+    child.exited = true;
+    child.emit('exit', 0);
+    setTimeout(() => {
+      if (lateStderr !== undefined) child.stderr.emit('data', Buffer.from(lateStderr));
+      child.closed = true;
+      child.stdin.destroyed = true;
+      child.emit('close', 0);
+    }, closeAfterExitMs);
+  };
+  child.stdin.end = (input) => {
+    child.endInput = input;
+    if (endThrows !== undefined) throw endThrows;
+    queueMicrotask(() => {
+      if (endError !== undefined) child.stdin.emit('error', endError);
+      if (endCloses) finish();
+    });
+  };
+  child.stdin.write = (input) => {
+    child.writeInput = input;
+    if (writeThrows !== undefined) throw writeThrows;
+    if (writeMarkerThenError !== undefined) {
+      const marker = /\\echo (ba_marker_[0-9a-f]+)/u.exec(input)?.[1];
+      assert.ok(marker);
+      queueMicrotask(() => {
+        child.stdout.emit('data', Buffer.from(`${marker}\n`));
+        child.stdin.emit('error', writeMarkerThenError);
+      });
+    }
+    return true;
+  };
+  child.stdin.destroy = () => {
+    child.stdin.destroyed = true;
+  };
+  child.kill = (signal) => {
+    child.kills.push(signal);
+    if (killThrows !== undefined) throw killThrows;
+    setTimeout(finish, exitAfterKillMs);
+    return true;
+  };
+  return child;
+}
+
+test('closes an interactive PostgreSQL session when the peer rejects the quit write', async () => {
+  const child = createInteractiveChild({
+    endError: Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }),
+  });
+
+  const harness = createPostgresHarness('interactive-close-regression', {
+    registerSignalCleanup: () => () => {},
+    spawnInteractiveProcess: () => child,
+  });
+  const session = harness.openInteractivePsql('ba_migrator_test');
+
+  await assert.doesNotReject(session.close());
+  assert.equal(child.endInput, '\\quit\n');
+  assert.deepEqual(child.kills, []);
+});
+
+test('rejects and cleans up a hanging peer after an unexpected stdin close error', async () => {
+  const child = createInteractiveChild({
+    endCloses: false,
+    endThrows: Object.assign(new Error('PGPASSWORD=supersecret'), { code: 'EIO' }),
+    exitAfterKillMs: 10,
+  });
+  const harness = createPostgresHarness('interactive-close-unexpected-error', {
+    registerSignalCleanup: () => () => {},
+    spawnInteractiveProcess: () => child,
+  });
+  const session = harness.openInteractivePsql('ba_migrator_test');
+
+  await assert.rejects(session.close(), (error) => {
+    assert.match(error.message, /interactive psql stdin failed: \[REDACTED\]/u);
+    assert.doesNotMatch(inspect(error), /supersecret/u);
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  assert.equal(child.closed, true);
+  assert.deepEqual(child.kills, [undefined]);
+});
+
+test('rejects a same-turn marker and stdin error only after abrupt cleanup exits', async () => {
+  const child = createInteractiveChild({
+    closeAfterExitMs: 20,
+    exitAfterKillMs: 10,
+    lateStderr: 'late diagnostic with scan needle\n',
+    writeMarkerThenError: Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }),
+  });
+  const harness = createPostgresHarness('interactive-execute-error', {
+    registerSignalCleanup: () => () => {},
+    spawnInteractiveProcess: () => child,
+  });
+  const session = harness.openInteractivePsql('ba_migrator_test', {
+    scanFor: ['scan needle'],
+  });
+
+  await assert.rejects(session.execute('SELECT 1;'), /interactive psql stdin failed: write EPIPE/u);
+  assert.equal(child.closed, true);
+  assert.deepEqual(child.kills, [undefined]);
+  assert.match(session.metadata().stderr, /late diagnostic/u);
+  assert.deepEqual(session.metadata().rawScan, {
+    count: 1,
+    leakDetected: true,
+    source: 'stderr',
+  });
+});
+
+test('preserves and redacts both close and cleanup failures', async () => {
+  const child = createInteractiveChild({
+    endCloses: false,
+    endThrows: new Error('PGPASSWORD=primarysecret'),
+    killThrows: new Error('PGPASSWORD=cleanupsecret'),
+  });
+  const harness = createPostgresHarness('interactive-close-double-failure', {
+    registerSignalCleanup: () => () => {},
+    spawnInteractiveProcess: () => child,
+  });
+  const session = harness.openInteractivePsql('ba_migrator_test');
+
+  await assert.rejects(session.close(), (error) => {
+    assert.match(
+      error.message,
+      /interactive psql close failed: Error: interactive psql stdin failed: \[REDACTED\]; cleanup failed: Error: \[REDACTED\]/u,
+    );
+    assert.doesNotMatch(inspect(error), /primarysecret|cleanupsecret/u);
+    return true;
+  });
+  assert.deepEqual(child.kills, [undefined]);
+});
+
+test('preserves and redacts both execute and cleanup failures', async () => {
+  const child = createInteractiveChild({
+    killThrows: new Error('PGPASSWORD=cleanupsecret'),
+    writeMarkerThenError: Object.assign(new Error('PGPASSWORD=primarysecret'), { code: 'EIO' }),
+  });
+  const harness = createPostgresHarness('interactive-execute-double-failure', {
+    registerSignalCleanup: () => () => {},
+    spawnInteractiveProcess: () => child,
+  });
+  const session = harness.openInteractivePsql('ba_migrator_test');
+
+  await assert.rejects(session.execute('SELECT 1;'), (error) => {
+    assert.match(
+      error.message,
+      /interactive psql execution failed: Error: interactive psql stdin failed: \[REDACTED\]; cleanup failed: Error: \[REDACTED\]/u,
+    );
+    assert.doesNotMatch(inspect(error), /primarysecret|cleanupsecret/u);
+    return true;
+  });
+  assert.deepEqual(child.kills, [undefined]);
+});
+
+test('redacts a synchronous execute write failure after cleanup closes', async () => {
+  const child = createInteractiveChild({
+    closeAfterExitMs: 10,
+    exitAfterKillMs: 10,
+    writeThrows: new Error('PGPASSWORD=executesecret'),
+  });
+  const harness = createPostgresHarness('interactive-execute-sync-failure', {
+    registerSignalCleanup: () => () => {},
+    spawnInteractiveProcess: () => child,
+  });
+  const session = harness.openInteractivePsql('ba_migrator_test');
+
+  await assert.rejects(session.execute('SELECT 1;'), (error) => {
+    assert.match(error.message, /interactive psql stdin failed: \[REDACTED\]/u);
+    assert.doesNotMatch(inspect(error), /executesecret/u);
+    return true;
+  });
+  assert.equal(child.closed, true);
+  assert.deepEqual(child.kills, [undefined]);
 });
 
 function clone(value) {
@@ -406,8 +601,8 @@ test('requires the mutation gate to report its exact pass count with zero skip a
   const prefixedMutationResult = prefixedCounts.find(({ id }) => id === 'mutation');
   assert.ok(prefixedMutationResult);
   prefixedMutationResult.output = prefixedMutationResult.output
-    .replace('# tests 31', '# tests 310')
-    .replace('# pass 31', '# pass 310')
+    .replace('# tests 37', '# tests 370')
+    .replace('# pass 37', '# pass 370')
     .replace('# fail 0', '# fail 01')
     .replace('# skipped 0', '# skipped 00')
     .replace('# todo 0', '# todo 00');

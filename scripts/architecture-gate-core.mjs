@@ -90,7 +90,7 @@ const EXPECTED_POSTGRES_SUPPORT_FILES = Object.freeze([
   }),
   Object.freeze({
     file: 'infra/test/postgres/harness.mjs',
-    sha256: 'eda327cc5f693b22e9fda3b4380b8b707204ef8701f31e510a86768770591f44',
+    sha256: '1a29abb9b081ff77e7d71f4daeb361f1a8f535b0f8d07dc6ab2fc48c248adb66',
   }),
 ]);
 
@@ -165,8 +165,8 @@ const EXPECTED_GATE_COMMANDS = Object.freeze([
     args: Object.freeze(['--test', 'tests/architecture-gate/architecture-gate.test.mjs']),
     timeoutMs: 120_000,
     successMarkers: Object.freeze([
-      '# tests 31',
-      '# pass 31',
+      '# tests 37',
+      '# pass 37',
       '# fail 0',
       '# skipped 0',
       '# todo 0',
