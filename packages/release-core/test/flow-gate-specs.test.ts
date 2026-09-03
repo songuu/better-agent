@@ -61,6 +61,15 @@ describe('Flow GateSpec preparation', () => {
     expect(compiled?.source_kind).toBe('flow_node');
     if (compiled?.source_kind !== 'flow_node') throw new Error('compiled Flow gate is missing');
     expect(compiled.source_binding_path).toMatch(/^bp1\.[A-Za-z0-9_-]{43}$/u);
+    expect(compiled.source_binding_path_segments.map((segment) => segment.segment_kind)).toEqual([
+      'root',
+      'flow_node',
+    ]);
+    expect(compiled.source_binding_path_segments[1]).toMatchObject({
+      segment_kind: 'flow_node',
+      graph_id: 'root',
+      node_id: 'output-1',
+    });
   });
 
   it('returns an empty closed projection for a Flow without human gates', () => {

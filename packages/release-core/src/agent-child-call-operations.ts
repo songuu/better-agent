@@ -41,8 +41,10 @@ export interface PreparedAgentChildCallOperationsV1 {
   readonly dependency_kind: 'AGENT_RELEASE' | 'FLOW_VERSION';
   readonly graph_hash: `sha256:${string}`;
   readonly nested_closure_hash: string;
+  readonly nested_closure: NestedProjection['nested_closure'];
   readonly dependency_resource_node: NestedProjection['dependency_resource_node'];
   readonly projected_resource_nodes: NestedProjection['projected_resource_nodes'];
+  readonly projected_gate_specs: NestedProjection['projected_gate_specs'];
   readonly binding_operations: readonly {
     readonly binding_id: string;
     readonly binding_kind: CapabilityBindingV1['kind'];
@@ -166,8 +168,10 @@ function prepare(
     dependency_kind: dependencyKind,
     graph_hash: projection.graph_hash,
     nested_closure_hash: projection.nested_closure_hash,
+    nested_closure: projection.nested_closure,
     dependency_resource_node: projection.dependency_resource_node,
     projected_resource_nodes: projection.projected_resource_nodes,
+    projected_gate_specs: projection.projected_gate_specs,
     projected_binding_entries: projection.projected_binding_entries,
     binding_operations: projection.binding_operations
       .map((entry) => {

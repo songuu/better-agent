@@ -6,6 +6,7 @@ import {
   ClosureResourceNodeV1Schema,
   ClosureRootV1Schema,
   CompiledBindingEntryV1Schema,
+  CompiledGateSpecEntryV1Schema,
   ContractHashSchema,
   EffectiveCapabilityPolicyV1Schema,
   PublishedResourcePinV1Schema,
@@ -213,6 +214,8 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
       'disabled_binding_paths',
       'dependency_intrinsic_policies',
       'descendant_binding_entries',
+      'descendant_gate_specs',
+      'nested_gate_closures',
       'intrinsic_policy',
       'aggregate_limits',
     ]) ||
@@ -221,7 +224,9 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
     !Array.isArray(value.requirement_expressions) ||
     !Array.isArray(value.disabled_binding_paths) ||
     !Array.isArray(value.dependency_intrinsic_policies) ||
-    !Array.isArray(value.descendant_binding_entries)
+    !Array.isArray(value.descendant_binding_entries) ||
+    !Array.isArray(value.descendant_gate_specs) ||
+    !Array.isArray(value.nested_gate_closures)
   ) {
     invalid('$.entry_set', 'entry set does not match its closed intermediate shape');
   }
@@ -247,6 +252,39 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
     )
   ) {
     invalid('$.entry_set.entries', 'Binding entries must be sorted and unique');
+  }
+  const descendantGateSpecs = value.descendant_gate_specs.map((candidate, index) => {
+    const parsed = CompiledGateSpecEntryV1Schema.safeParse(candidate);
+    if (!parsed.success) {
+      invalid(`$.entry_set.descendant_gate_specs[${index}]`, 'invalid descendant GateSpec');
+    }
+    return parsed.data;
+  });
+  const nestedGateClosures = value.nested_gate_closures.map((candidate, index) => {
+    const path = `$.entry_set.nested_gate_closures[${index}]`;
+    const evidence = record(candidate, path);
+    if (!exactKeys(evidence, ['source_node_id', 'nested_closure_hash', 'nested_closure'])) {
+      invalid(path, 'nested Gate closure evidence is not closed');
+    }
+    const sourceNodeId = ClosureResourceNodeIdV1Schema.safeParse(evidence.source_node_id);
+    const nestedClosureHash = ContractHashSchema.safeParse(evidence.nested_closure_hash);
+    if (!sourceNodeId.success || !nestedClosureHash.success) {
+      invalid(path, 'nested Gate closure evidence identity is invalid');
+    }
+    return {
+      source_node_id: sourceNodeId.data,
+      nested_closure_hash: nestedClosureHash.data,
+      nested_closure: evidence.nested_closure,
+    };
+  });
+  if (
+    nestedGateClosures.some(
+      (evidence, index) =>
+        index > 0 &&
+        (nestedGateClosures[index - 1]?.source_node_id ?? '') >= evidence.source_node_id,
+    )
+  ) {
+    invalid('$.entry_set.nested_gate_closures', 'nested Gate closures must be sorted and unique');
   }
   const disabledBindingPaths = value.disabled_binding_paths.map((candidate, index) => {
     const parsed = CanonicalBindingPathV1Schema.safeParse(candidate);
@@ -350,6 +388,9 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
     entries,
     dependency_intrinsic_policies: policies,
     descendant_binding_entries: descendantBindingEntries,
+    descendant_gate_specs: descendantGateSpecs,
+    nested_gate_closures:
+      nestedGateClosures as PreparedAgentRootBindingEntrySetV1['nested_gate_closures'],
     intrinsic_policy: normalizedRootPolicy,
     aggregate_limits: aggregate.data,
   };

@@ -7,6 +7,7 @@ import {
   ClosureResourceNodeV1Schema,
   CompiledBindingEntryV1Schema,
   CompiledCapabilityClosureV1Schema,
+  CompiledGateSpecEntryV1Schema,
   FlowGraphV1Schema,
   FlowIrV1Schema,
   ProductionPromotionGateDecisionV1Schema,
@@ -18,6 +19,7 @@ const operationHashB = `sha256:${'b'.repeat(64)}`;
 const bindingPath = `bp1.${'a'.repeat(43)}`;
 const rootNodeId = `rn1.${'b'.repeat(43)}`;
 const missingNodeId = `rn1.${'c'.repeat(43)}`;
+const secondBindingPath = `bp1.${'d'.repeat(43)}`;
 
 const rootPin = {
   workspace_id: 'workspace-1',
@@ -26,6 +28,13 @@ const rootPin = {
   resource_version_id: 'agent-release-1',
   contract_hash: hash,
   binding_mode: 'pinned',
+} as const;
+
+const flowPin = {
+  ...rootPin,
+  published_resource_kind: 'FLOW_VERSION',
+  resource_id: 'flow-1',
+  resource_version_id: 'flow-release-1',
 } as const;
 
 const effectivePolicy = {
@@ -568,6 +577,182 @@ describe('Compiled closure reference integrity', () => {
       expect(result.error.message).toContain('unknown dependency node');
       expect(result.error.message).toContain('unknown source node');
     }
+  });
+});
+
+describe('Compiled Flow GateSpec path identity', () => {
+  const gateSegments = (mountId: string) => [
+    { segment_kind: 'root' as const, pin: rootPin },
+    {
+      segment_kind: 'binding' as const,
+      owner: { owner_kind: 'root' as const, pin: rootPin },
+      binding_kind: 'flow' as const,
+      local_binding_id: mountId,
+    },
+    {
+      segment_kind: 'flow_node' as const,
+      owner: { owner_kind: 'published_dependency' as const, pin: flowPin },
+      graph_id: 'root',
+      node_id: 'gate-1',
+    },
+  ];
+  const gate = {
+    schema_version: 'compiled-gate-spec/1' as const,
+    gate_spec_id: 'approval',
+    gate_spec_hash: hash,
+    kind: 'input' as const,
+    decision_schema_hash: hash,
+    approver_policy_ref: 'policy',
+    approver_policy_hash: hash,
+    on_reject: 'fail_run' as const,
+    on_expire: 'cancel_run' as const,
+    protected_operation_contract_hashes: [],
+    source_kind: 'flow_node' as const,
+    source_node_id: missingNodeId,
+    source_binding_path: bindingPath,
+    source_binding_path_segments: gateSegments('mount-a'),
+    source_flow_node_id: 'gate-1',
+  };
+
+  it('requires retained root-to-node segments and an exact final Flow node ID', () => {
+    expect(CompiledGateSpecEntryV1Schema.safeParse(gate).success).toBe(true);
+    const { source_binding_path_segments: _segments, ...withoutSegments } = gate;
+    expect(CompiledGateSpecEntryV1Schema.safeParse(withoutSegments).success).toBe(false);
+    expect(
+      CompiledGateSpecEntryV1Schema.safeParse({
+        ...gate,
+        source_binding_path_segments: gate.source_binding_path_segments.slice(1),
+      }).success,
+    ).toBe(false);
+    expect(
+      CompiledGateSpecEntryV1Schema.safeParse({ ...gate, source_flow_node_id: 'other' }).success,
+    ).toBe(false);
+  });
+
+  it('allows one source Gate per distinct mount but rejects same-mount duplicates and kind flips', () => {
+    const secondGate = {
+      ...gate,
+      source_binding_path: secondBindingPath,
+      source_binding_path_segments: gateSegments('mount-b'),
+    };
+    const closure = {
+      schema_version: 'compiled-capability-closure/1' as const,
+      root: { pin: rootPin, semantic_seed_hash: hash },
+      assembly_pins: [flowPin],
+      bindings: [],
+      gate_specs: [gate, secondGate],
+      resource_nodes: [
+        {
+          node_id: rootNodeId,
+          intrinsic_policy: intrinsicExpression,
+          dependency_manifest_hash: hash,
+          node_role: 'root' as const,
+          pin: rootPin,
+        },
+        {
+          node_id: missingNodeId,
+          intrinsic_policy: intrinsicExpression,
+          dependency_manifest_hash: hash,
+          node_role: 'dependency' as const,
+          pin: flowPin,
+          nested_closure_hash: hash,
+        },
+      ],
+      dependency_edges: [],
+      disabled_binding_paths: [],
+      aggregate_limits: effectivePolicy,
+      closure_hash: hash,
+    };
+    expect(CompiledCapabilityClosureV1Schema.safeParse(closure).success).toBe(true);
+    expect(
+      CompiledCapabilityClosureV1Schema.safeParse({
+        ...closure,
+        gate_specs: [gate, { ...gate }],
+      }).success,
+    ).toBe(false);
+    const {
+      source_binding_path: _path,
+      source_binding_path_segments: _pathSegments,
+      source_flow_node_id: _flowNodeId,
+      ...pathless
+    } = gate;
+    expect(
+      CompiledCapabilityClosureV1Schema.safeParse({
+        ...closure,
+        gate_specs: [{ ...pathless, source_kind: 'agent_release' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a nested Flow Gate that borrows its ancestor Flow as the source', () => {
+    const nestedFlowPin = {
+      ...flowPin,
+      resource_id: 'flow-2',
+      resource_version_id: 'flow-release-2',
+    };
+    const nestedNodeId = `rn1.${'d'.repeat(43)}`;
+    const borrowedGate = {
+      ...gate,
+      source_binding_path_segments: [
+        ...gate.source_binding_path_segments.slice(0, -1),
+        {
+          segment_kind: 'flow_node' as const,
+          owner: { owner_kind: 'published_dependency' as const, pin: flowPin },
+          graph_id: 'root',
+          node_id: 'call-child',
+        },
+        {
+          segment_kind: 'flow_node' as const,
+          owner: { owner_kind: 'published_dependency' as const, pin: nestedFlowPin },
+          graph_id: 'nested',
+          node_id: 'gate-1',
+        },
+      ],
+    };
+    const closure = {
+      schema_version: 'compiled-capability-closure/1' as const,
+      root: { pin: rootPin, semantic_seed_hash: hash },
+      assembly_pins: [flowPin, nestedFlowPin],
+      bindings: [],
+      gate_specs: [borrowedGate],
+      resource_nodes: [
+        {
+          node_id: rootNodeId,
+          intrinsic_policy: intrinsicExpression,
+          dependency_manifest_hash: hash,
+          node_role: 'root' as const,
+          pin: rootPin,
+        },
+        {
+          node_id: missingNodeId,
+          intrinsic_policy: intrinsicExpression,
+          dependency_manifest_hash: hash,
+          node_role: 'dependency' as const,
+          pin: flowPin,
+          nested_closure_hash: hash,
+        },
+        {
+          node_id: nestedNodeId,
+          intrinsic_policy: intrinsicExpression,
+          dependency_manifest_hash: hash,
+          node_role: 'dependency' as const,
+          pin: nestedFlowPin,
+          nested_closure_hash: hash,
+        },
+      ],
+      dependency_edges: [],
+      disabled_binding_paths: [],
+      aggregate_limits: effectivePolicy,
+      closure_hash: hash,
+    };
+    expect(CompiledGateSpecEntryV1Schema.safeParse(borrowedGate).success).toBe(true);
+    expect(
+      CompiledCapabilityClosureV1Schema.safeParse({
+        ...closure,
+        gate_specs: [{ ...borrowedGate, source_node_id: nestedNodeId }],
+      }).success,
+    ).toBe(true);
+    expect(CompiledCapabilityClosureV1Schema.safeParse(closure).success).toBe(false);
   });
 });
 

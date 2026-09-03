@@ -93,12 +93,18 @@ export function prepareCompiledCapabilityClosure(input: unknown): Readonly<Compi
       );
     }
   }
+  for (const gate of parsed.data.gate_specs) {
+    if (gate.source_kind === 'flow_node') {
+      verifyCanonicalBindingPath(gate.source_binding_path, gate.source_binding_path_segments);
+    }
+  }
   assertCanonicalSetOrder(parsed.data.assembly_pins, '$.assembly_pins', publishedResourcePinKey);
   assertCanonicalSetOrder(parsed.data.bindings, '$.bindings', (value) => value.binding_path);
   assertCanonicalSetOrder(
     parsed.data.gate_specs,
     '$.gate_specs',
-    (value) => `${value.source_node_id}\u0000${value.gate_spec_id}`,
+    (value) =>
+      `${value.source_node_id}\u0000${value.source_kind === 'flow_node' ? value.source_binding_path : ''}\u0000${value.gate_spec_id}`,
   );
   assertCanonicalSetOrder(parsed.data.resource_nodes, '$.resource_nodes', (value) => value.node_id);
   assertCanonicalSetOrder(

@@ -181,6 +181,7 @@ type CompiledGateSpecEntryV1 = CompiledGateSpecBaseV1 & (
       source_kind: "flow_node";
       source_node_id: ClosureResourceNodeIdV1;
       source_binding_path: CanonicalBindingPathV1;
+      source_binding_path_segments: BindingPathSegmentV1[];
       source_flow_node_id: string;
     }
 );
@@ -266,7 +267,7 @@ Flow 的 `node_id` 只在所属 graph 内唯一，因此 `flow_node` segment 必
 
 `resource_nodes` 必须包含恰好一个与 `ClosureRootV1.pin` 逐字相等的 root node，以及所有依赖 node。`ClosureResourceNodeV1.node_id` 必须逐字等于 `rn1.<base64url(SHA-256(JCS(pin)))>`；JCS 输入是完整五元 pin（`workspace_id + published_resource_kind + resource_id + resource_version_id + contract_hash`）连同 `binding_mode="pinned"`，不能只用 kind/version UUID。相同 node ID 若解出/关联到不同 canonical pin 必须以 `RESOURCE_NODE_ID_COLLISION` 拒绝发布，不能做跨 Workspace 或跨 catalog 去重。
 
-`gate_specs` 是发布期 Gate 权限边界，不是 UI 元数据。Agent Release 的 `AgentGateSpecV1` 和 Flow node 的 `GateSpecV1` 都必须以 source resource node、canonical Flow source path（如适用）、ID/hash、kind、decision schema hash、approver policy ref/hash、notification hash、disposition 和 protected operation allow-set 写入 `CompiledGateSpecEntryV1`；Agent root spec 不得携带 Flow-only source 字段。`approval_gate_spec` 必须精确命中同 closure 的一条 `kind="approval"` spec，且覆盖该 Binding 的 operation contract；Agent Strategy 只能请求已发布 allow-set 内的 ID/hash。缺失、重复、hash 不符、错 source/kind 或运行时自报策略都 fail closed；运行时只能按当前 epoch 收窄 pinned approver policy，不能替换。
+`gate_specs` 是发布期 Gate 权限边界，不是 UI 元数据。Agent Release 的 `AgentGateSpecV1` 和 Flow node 的 `GateSpecV1` 都必须以 source resource node、canonical Flow source path 及其完整 path segments（如适用）、ID/hash、kind、decision schema hash、approver policy ref/hash、notification hash、disposition 和 protected operation allow-set 写入 `CompiledGateSpecEntryV1`；Agent root spec 不得携带 Flow-only source 字段。Flow Gate 的摘要路径必须由保留的 segments 逐字重算，递归挂载时 compiler 以 parent mount 前缀重新生成摘要；因此同一 Flow Version 的同一 Gate 可以在多个不同 mount path 下各有一条 entry，但同一 mount 内仍唯一。`approval_gate_spec` 必须精确命中同 closure、同 source resource 和同 Flow mount scope（如适用）的一条 `kind="approval"` spec，且覆盖该 Binding 的 operation contract；Agent Strategy 只能请求已发布 allow-set 内的 ID/hash。缺失、重复、hash 不符、错 source/kind、跨 child/mount 借用或运行时自报策略都 fail closed；运行时只能按当前 epoch 收窄 pinned approver policy，不能替换。
 
 ## 4. 编译算法
 

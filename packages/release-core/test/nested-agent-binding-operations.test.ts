@@ -5,19 +5,26 @@ import {
 import { describe, expect, it } from 'vitest';
 import { prepareGraphBoundAgentSubagentCallOperations } from '../src/agent-child-call-operations.js';
 import { prepareAgentSubagentBindingEntries } from '../src/agent-composite-binding-entries.js';
+import { prepareAgentCapabilityClosure } from '../src/agent-capability-closure.js';
+import { prepareAgentGateSpecs } from '../src/agent-gate-specs.js';
 import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
 import {
   prepareAgentRootResourceGraph,
   withinRecursiveResourceGraphCapacity,
 } from '../src/agent-root-resource-graph.js';
 import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
+import { prepareCompiledCapabilityClosure } from '../src/compiled-capability-closure.js';
 import { compareCanonicalStrings, deriveDependencyManifest } from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
 import { canonicalSha256, canonicalSha256ExcludingRootKeys } from '../src/hash.js';
 import { prepareGraphBoundNestedAgentBindingOperations } from '../src/nested-agent-binding-operations.js';
+import { projectNestedGateSpecs } from '../src/nested-gate-spec-projection.js';
 import { prepareOperationContractSource } from '../src/operation-contract-source.js';
 import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js';
-import { withinProjectedBindingCapacity } from '../src/projection-capacity.js';
+import {
+  accumulateProjectedBindingCapacity,
+  withinProjectedBindingCapacity,
+} from '../src/projection-capacity.js';
 import { prepareRootBindingPaths } from '../src/root-binding-paths.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import {
@@ -174,7 +181,7 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
     root: paths.root,
     assembly_pins: assemblyPins,
     bindings,
-    gate_specs: [],
+    gate_specs: prepareAgentGateSpecs(candidate(target)).gate_specs,
     resource_nodes: resourceNodes,
     dependency_edges: [],
     disabled_binding_paths: paths.source_disabled_binding_paths,
@@ -323,6 +330,38 @@ describe('nested Agent Binding operation projection', () => {
   it('accepts the exact projection capacity and rejects one entry above it', () => {
     expect(withinProjectedBindingCapacity(128, 64)).toBe(true);
     expect(withinProjectedBindingCapacity(129, 64)).toBe(false);
+    const firstChildCount = accumulateProjectedBindingCapacity(0, 64, 64);
+    expect(firstChildCount).toBe(4_096);
+    expect(accumulateProjectedBindingCapacity(firstChildCount ?? -1, 64, 64)).toBe(8_192);
+    expect(accumulateProjectedBindingCapacity(firstChildCount ?? -1, 4_097, 1)).toBeUndefined();
+  });
+
+  it('enforces the GateSpec projection bound at 8,192 real projected entries', () => {
+    const value = targetSources();
+    const closure = prepareCompiledCapabilityClosure(compiledClosure(value.target));
+    const targetPath = prepareRootBindingPaths(candidate(value.agent)).bindings.find(
+      (path) => path.binding_id === value.parentBinding.binding_id,
+    );
+    if (targetPath === undefined) throw new Error('fixture parent path is missing');
+    const mount = [
+      ...targetPath.binding_path_segments,
+      { segment_kind: 'subagent_target' as const, target_pin: value.targetPin },
+    ];
+    expect(closure.gate_specs).toHaveLength(2);
+    expect(
+      projectNestedGateSpecs(
+        closure,
+        Array.from({ length: 4_096 }, () => mount),
+        canonicalResourceNodeId(value.targetPin),
+      ),
+    ).toHaveLength(2);
+    expect(() =>
+      projectNestedGateSpecs(
+        closure,
+        Array.from({ length: 4_097 }, () => mount),
+        canonicalResourceNodeId(value.targetPin),
+      ),
+    ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
   });
 
   it('projects child operations onto the parent-prefixed Binding path', () => {
@@ -412,9 +451,32 @@ describe('nested Agent Binding operation projection', () => {
       evidence.candidateGraph,
       candidate(value.agent),
       candidate(value.target),
-      closure,
+      prepareCompiledCapabilityClosure(closure),
     );
     expect(result.dependency_resource_node.intrinsic_policy).toEqual(intrinsicPolicy);
+  });
+
+  it('rewrites source-owned GateSpecs to the graph-committed child node identity', () => {
+    const value = targetSources();
+    const publishedPin = { ...value.targetPin, contract_hash: hashB };
+    const closure = compiledClosure(value.target);
+    const targetPath = prepareRootBindingPaths(candidate(value.agent)).bindings.find(
+      (path) => path.binding_id === value.parentBinding.binding_id,
+    );
+    if (targetPath === undefined) throw new Error('fixture parent path is missing');
+    const projected = projectNestedGateSpecs(
+      prepareCompiledCapabilityClosure(closure),
+      [
+        [
+          ...targetPath.binding_path_segments,
+          { segment_kind: 'subagent_target', target_pin: value.targetPin },
+        ],
+      ],
+      canonicalResourceNodeId(publishedPin),
+    );
+    expect(new Set(projected.map((gate) => gate.source_node_id))).toEqual(
+      new Set([canonicalResourceNodeId(publishedPin)]),
+    );
   });
 
   it('isolates the child operation namespace under two parent mounts', () => {
@@ -454,6 +516,7 @@ describe('nested Agent Binding operation projection', () => {
     expect(new Set(result.projected_binding_entries.map((entry) => entry.binding_path)).size).toBe(
       closure.bindings.length * 2,
     );
+    expect(result.projected_gate_specs).toEqual(closure.gate_specs);
 
     const calls = [
       subagentCall(value.agent),
@@ -483,6 +546,18 @@ describe('nested Agent Binding operation projection', () => {
       calls,
       policy,
     );
+    const alteredSlice = structuredClone(slice);
+    const alteredGate = alteredSlice.descendant_gate_specs[0];
+    if (alteredGate === undefined) throw new Error('projected GateSpec is missing');
+    alteredGate.on_expire = alteredGate.on_expire === 'fail_run' ? 'cancel_run' : 'fail_run';
+    expect(() =>
+      prepareAgentRootBindingEntrySet(
+        candidate(value.agent),
+        evidence.expectedGraph.graph_hash,
+        [alteredSlice],
+        { ...policy, schema_version: 'agent-root-binding-policy-input/1' },
+      ),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
     const entrySet = prepareAgentRootBindingEntrySet(
       candidate(value.agent),
       evidence.expectedGraph.graph_hash,
@@ -490,6 +565,39 @@ describe('nested Agent Binding operation projection', () => {
       { ...policy, schema_version: 'agent-root-binding-policy-input/1' },
     );
     const resourceGraph = prepareAgentRootResourceGraph(evidence.expectedGraph, entrySet);
+    const sealedClosure = prepareAgentCapabilityClosure(
+      candidate(value.agent),
+      evidence.expectedGraph,
+      entrySet,
+    );
+    expect(sealedClosure.gate_specs).toEqual(closure.gate_specs);
+    expect(sealedClosure.resource_nodes).toEqual(resourceGraph.resource_nodes);
+    const missingInputGate = structuredClone(entrySet);
+    (
+      missingInputGate as unknown as {
+        descendant_gate_specs: typeof missingInputGate.descendant_gate_specs;
+      }
+    ).descendant_gate_specs = missingInputGate.descendant_gate_specs.slice(1);
+    expect(() =>
+      prepareAgentCapabilityClosure(
+        candidate(value.agent),
+        evidence.expectedGraph,
+        missingInputGate,
+      ),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+    const missingGateClosure = structuredClone(entrySet);
+    (
+      missingGateClosure as unknown as {
+        nested_gate_closures: typeof missingGateClosure.nested_gate_closures;
+      }
+    ).nested_gate_closures = [];
+    expect(() =>
+      prepareAgentCapabilityClosure(
+        candidate(value.agent),
+        evidence.expectedGraph,
+        missingGateClosure,
+      ),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
     const internalTargets = new Set<string>(
       evidence.expectedGraph.nodes
         .filter((node) =>
@@ -523,6 +631,58 @@ describe('nested Agent Binding operation projection', () => {
         ),
       ).toEqual(expectedSourcePaths);
     }
+  });
+
+  it('rejects a resealed child closure that omits source-owned GateSpecs', () => {
+    const value = prepared();
+    const draft = { ...value.closure, gate_specs: [], closure_hash: hashA };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(candidate(value.agent)).root,
+      value.targetPin,
+      closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+    );
+    expect(() =>
+      prepareGraphBoundNestedAgentBindingOperations(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        candidate(value.agent),
+        candidate(value.target),
+        closure,
+      ),
+    ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
+  });
+
+  it('rejects a resealed child closure with altered source-owned GateSpec content', () => {
+    const value = prepared();
+    const gateSpecs = structuredClone(value.closure.gate_specs);
+    const gate = gateSpecs[0];
+    if (gate === undefined) throw new Error('fixture GateSpec is missing');
+    gate.approver_policy_ref = 'altered-policy';
+    const draft = { ...value.closure, gate_specs: gateSpecs, closure_hash: hashA };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(candidate(value.agent)).root,
+      value.targetPin,
+      closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+    );
+    expect(() =>
+      prepareGraphBoundNestedAgentBindingOperations(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        candidate(value.agent),
+        candidate(value.target),
+        closure,
+      ),
+    ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
   });
 
   it('rejects a missing direct child Binding even with a recomputed closure hash', () => {
@@ -911,6 +1071,13 @@ describe('nested Agent Binding operation projection', () => {
     expect(() => assemble(duplicateProjectedNode)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
 
     const wrongRoleNode = structuredClone(slice);
+    (
+      wrongRoleNode as unknown as {
+        dependency_resource_nodes: typeof wrongRoleNode.dependency_resource_nodes;
+      }
+    ).dependency_resource_nodes = wrongRoleNode.dependency_resource_nodes.map((node) => ({
+      ...node,
+    }));
     const wrongRoleDependency = wrongRoleNode.dependency_resource_nodes.find(
       (node) => node.node_id !== canonicalResourceNodeId(value.targetPin),
     );
@@ -920,6 +1087,13 @@ describe('nested Agent Binding operation projection', () => {
     expect(() => assemble(wrongRoleNode)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
 
     const wrongNodeId = structuredClone(slice);
+    (
+      wrongNodeId as unknown as {
+        dependency_resource_nodes: typeof wrongNodeId.dependency_resource_nodes;
+      }
+    ).dependency_resource_nodes = wrongNodeId.dependency_resource_nodes.map((node) => ({
+      ...node,
+    }));
     const wrongIdentityDependency = wrongNodeId.dependency_resource_nodes.find(
       (node) => node.node_id !== canonicalResourceNodeId(value.targetPin),
     );
@@ -936,6 +1110,13 @@ describe('nested Agent Binding operation projection', () => {
     expect(() => assemble(wrongNodeId)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
 
     const wrongRecursiveCommitment = structuredClone(slice);
+    (
+      wrongRecursiveCommitment as unknown as {
+        dependency_resource_nodes: typeof wrongRecursiveCommitment.dependency_resource_nodes;
+      }
+    ).dependency_resource_nodes = wrongRecursiveCommitment.dependency_resource_nodes.map(
+      (node) => ({ ...node }),
+    );
     const nonRootDependency = wrongRecursiveCommitment.dependency_resource_nodes.find(
       (node) => node.node_id !== canonicalResourceNodeId(value.targetPin),
     );
@@ -993,7 +1174,7 @@ describe('nested Agent Binding operation projection', () => {
     swappedDependency.dependency_resource_node.pin.resource_id = 'swapped-agent-dependency';
     (swappedDependency.dependency_resource_node as unknown as { node_id: string }).node_id =
       canonicalResourceNodeId(swappedDependency.dependency_resource_node.pin);
-    expect(() => assemble(swappedDependency)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+    expect(() => assemble(swappedDependency)).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
 
     const disabledValue = minimalPrepared(false);
     const disabledPolicy = compositePolicy(disabledValue.agent, disabledValue.closure);

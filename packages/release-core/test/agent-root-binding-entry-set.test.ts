@@ -1,7 +1,10 @@
 import { AgentExecutableSourceV1Schema } from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
 
-import { prepareNonRecursiveAgentCapabilityClosure } from '../src/agent-capability-closure.js';
+import {
+  prepareNonRecursiveAgentCapabilityClosure,
+  verifyAgentClosureApprovalCoverage,
+} from '../src/agent-capability-closure.js';
 import { prepareGraphBoundAgentLeafBindingEntrySet } from '../src/agent-leaf-binding-entries.js';
 import {
   mergeDependencyIntrinsicPolicyEvidence,
@@ -28,10 +31,18 @@ function candidate(document: unknown) {
   return { schema_version: 'executable-source-candidate/1', workspace_id: workspaceId, document };
 }
 
-function fixture(disabled = false, secondMount = false) {
+function fixture(disabled = false, secondMount = false, approval = false) {
   const dependency = leafCandidate(
     secondMount ? 'KNOWLEDGE_INDEX_GENERATION' : 'PLUGIN_TOOL_RELEASE',
   );
+  if (approval) {
+    record(dependency.document.operation).approval_required = true;
+    const operations = record(dependency.document.tool_list).operations;
+    if (!Array.isArray(operations) || operations[0] === undefined) {
+      throw new Error('fixture tool-list operation is missing');
+    }
+    record(operations[0]).approval_required = true;
+  }
   const leaf = prepareLeafResourceSource(dependency);
   const agent = richAgentSource();
   const binding = agent.capability_bindings.find((item) =>
@@ -55,6 +66,13 @@ function fixture(disabled = false, secondMount = false) {
     ) as typeof binding.output_schema;
   }
   binding.data_classification = 'internal';
+  if (approval) {
+    binding.side_effect = {
+      ...binding.side_effect,
+      approval: 'required',
+      approval_gate_spec_id: 'approval',
+    };
+  }
   const credentials = record(dependency.document.requirements).credential_requirements as unknown[];
   if (credentials.length === 0) delete binding.credential_requirement;
   else {
@@ -98,10 +116,17 @@ function fixture(disabled = false, secondMount = false) {
   }
   agent.capability_bindings = bindings;
   agent.strategy.allowed_capability_binding_ids = bindings.map((item) => item.binding_id);
-  agent.strategy.allowed_gate_spec_ids = [];
+  agent.strategy.allowed_gate_spec_ids = approval ? ['approval'] : [];
   agent.instruction_skill_bindings = [];
   agent.public_capability_handles = [];
-  agent.gate_specs = [];
+  if (approval) {
+    const gate = agent.gate_specs.find((item) => item.gate_spec_id === 'approval');
+    if (gate === undefined) throw new Error('fixture approval GateSpec is missing');
+    gate.protected_operation_contract_hashes = [leaf.operation_contract.contract_hash];
+    agent.gate_specs = [gate];
+  } else {
+    agent.gate_specs = [];
+  }
   const parsedAgent = AgentExecutableSourceV1Schema.safeParse(agent);
   if (!parsedAgent.success) throw new Error(JSON.stringify(parsedAgent.error.issues));
   const root = candidate(agent);
@@ -122,7 +147,7 @@ function fixture(disabled = false, secondMount = false) {
     egress: requirements.egress,
     readable_data_classification_ceiling: 'restricted',
     output_data_classification: 'public',
-    side_effect: { maximum_class: 'unsafe', approval: 'none' },
+    side_effect: { maximum_class: 'unsafe', approval: approval ? 'required' : 'none' },
     operation_contract_hashes: [leaf.operation_contract.contract_hash],
     max_calls: 100,
     max_depth: 100,
@@ -705,8 +730,8 @@ describe('Agent root direct resource-graph assembly', () => {
 });
 
 describe('non-recursive Agent capability closure assembly', () => {
-  function prepared(disabled = false) {
-    const value = fixture(disabled);
+  function prepared(disabled = false, approval = false) {
+    const value = fixture(disabled, false, approval);
     const entrySet = prepareAgentRootBindingEntrySet(
       value.root,
       value.graph.graph_hash,
@@ -734,6 +759,79 @@ describe('non-recursive Agent capability closure assembly', () => {
     expect(result.resource_nodes).toHaveLength(value.graph.nodes.length);
     expect(result.closure_hash).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('joins a required Binding to one exact same-root approval GateSpec', () => {
+    const value = prepared(false, true);
+    const result = prepareNonRecursiveAgentCapabilityClosure(
+      value.root,
+      value.graph,
+      value.entrySet,
+    );
+    expect(result.bindings[0]?.approval_gate_spec).toEqual({
+      gate_spec_id: 'approval',
+      gate_spec_hash: result.gate_specs[0]?.gate_spec_hash,
+    });
+    expect(result.gate_specs[0]?.protected_operation_contract_hashes).toEqual([
+      result.bindings[0]?.operation_contracts[0]?.contract_hash,
+    ]);
+  });
+
+  it.each([
+    ['unknown id', { gate_spec_id: 'other', gate_spec_hash: undefined }],
+    ['wrong hash', { gate_spec_id: undefined, gate_spec_hash: `sha256:${'f'.repeat(64)}` }],
+  ])('rejects a required Binding with %s instead of its exact GateSpec', (_name, drift) => {
+    const value = prepared(false, true);
+    const entry = value.entrySet.entries[0];
+    if (entry?.approval_gate_spec === undefined) throw new Error('fixture approval is missing');
+    const entrySet = structuredClone(value.entrySet);
+    const mutable = entrySet.entries[0];
+    if (mutable?.approval_gate_spec === undefined) throw new Error('fixture approval is missing');
+    mutable.approval_gate_spec = {
+      gate_spec_id: drift.gate_spec_id ?? entry.approval_gate_spec.gate_spec_id,
+      gate_spec_hash: drift.gate_spec_hash ?? entry.approval_gate_spec.gate_spec_hash,
+    };
+    expect(() =>
+      prepareNonRecursiveAgentCapabilityClosure(value.root, value.graph, entrySet),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+  });
+
+  it('rejects a required Binding when its exact Gate omits the protected operation', () => {
+    const value = prepared(false, true);
+    const result = prepareNonRecursiveAgentCapabilityClosure(
+      value.root,
+      value.graph,
+      value.entrySet,
+    );
+    const graph = prepareAgentRootResourceGraph(value.graph, value.entrySet);
+    const gates = structuredClone(result.gate_specs);
+    const gate = gates[0];
+    if (gate === undefined) throw new Error('fixture approval Gate is missing');
+    gate.protected_operation_contract_hashes = [`sha256:${'f'.repeat(64)}`];
+    expect(() => verifyAgentClosureApprovalCoverage(result.bindings, gates, graph)).toThrow(
+      'COMPILED_CAPABILITY_CLOSURE_INVALID',
+    );
+
+    const wrongSource = structuredClone(result.gate_specs);
+    const dependencyNode = graph.resource_nodes.find((node) => node.node_role === 'dependency');
+    if (wrongSource[0] === undefined || dependencyNode === undefined) {
+      throw new Error('fixture Gate source dependency is missing');
+    }
+    wrongSource[0].source_node_id = dependencyNode.node_id;
+    expect(() => verifyAgentClosureApprovalCoverage(result.bindings, wrongSource, graph)).toThrow(
+      'COMPILED_CAPABILITY_CLOSURE_INVALID',
+    );
+
+    const wrongKind = structuredClone(result.gate_specs);
+    if (wrongKind[0] === undefined) throw new Error('fixture Gate is missing');
+    (wrongKind[0] as unknown as { source_kind: string }).source_kind = 'flow_node';
+    expect(() =>
+      verifyAgentClosureApprovalCoverage(
+        result.bindings,
+        wrongKind as typeof result.gate_specs,
+        graph,
+      ),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
   });
 
   it('retains disabled Binding evidence without granting aggregate authority', () => {

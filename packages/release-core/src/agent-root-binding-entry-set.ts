@@ -1,8 +1,11 @@
 import {
   type CapabilityBindingV1,
   type CapabilityRequirementExpressionV1,
+  BindingPathSegmentV1Schema,
   CanonicalBindingPathV1Schema,
   CompiledBindingEntryV1Schema,
+  CompiledGateSpecEntryV1Schema,
+  type CompiledCapabilityClosureV1,
   ClosureResourceNodeV1Schema,
   ContractHashSchema,
   type EffectiveCapabilityPolicyV1,
@@ -20,13 +23,16 @@ import {
 } from './capability-policy.js';
 import { canonicalJsonBytes } from './canonical-json.js';
 import { canonicalBindingPath, canonicalResourceNodeId } from './closure-identity.js';
+import { prepareNestedCapabilityDependency } from './compiled-capability-closure.js';
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
 import { canonicalSha256 } from './hash.js';
+import { projectNestedGateSpecs } from './nested-gate-spec-projection.js';
 import { prepareRootBindingPaths } from './root-binding-paths.js';
 
 type CompiledBindingEntryV1 = ReturnType<typeof CompiledBindingEntryV1Schema.parse>;
+type CompiledGateSpecEntryV1 = ReturnType<typeof CompiledGateSpecEntryV1Schema.parse>;
 
 interface RequirementExpressionByPath {
   readonly binding_path: `bp1.${string}`;
@@ -86,7 +92,15 @@ interface ParsedSlice {
   readonly dependency_intrinsic_policies: readonly DependencyIntrinsicPolicyEvidence[];
   readonly descendant_binding_entries: readonly CompiledBindingEntryV1[];
   readonly descendant_disabled_binding_paths: readonly `bp1.${string}`[];
+  readonly descendant_gate_specs: readonly CompiledGateSpecEntryV1[];
+  readonly nested_gate_closures: readonly NestedGateClosureEvidenceV1[];
   readonly root?: unknown;
+}
+
+export interface NestedGateClosureEvidenceV1 {
+  readonly source_node_id: string;
+  readonly nested_closure_hash: string;
+  readonly nested_closure: CompiledCapabilityClosureV1;
 }
 
 export interface PreparedAgentRootBindingEntrySetV1 {
@@ -98,6 +112,8 @@ export interface PreparedAgentRootBindingEntrySetV1 {
   readonly disabled_binding_paths: readonly `bp1.${string}`[];
   readonly dependency_intrinsic_policies: readonly DependencyIntrinsicPolicyEvidence[];
   readonly descendant_binding_entries: readonly CompiledBindingEntryV1[];
+  readonly descendant_gate_specs: readonly CompiledGateSpecEntryV1[];
+  readonly nested_gate_closures: readonly NestedGateClosureEvidenceV1[];
   readonly intrinsic_policy: CapabilityRequirementExpressionV1;
   readonly aggregate_limits: EffectiveCapabilityPolicyV1;
 }
@@ -188,6 +204,35 @@ function parseCanonicalPaths(value: unknown, path: string, maxCount = 256): `bp1
     notClosed(path);
   }
   return paths;
+}
+
+function gateIdentity(gate: CompiledGateSpecEntryV1): string {
+  return `${gate.source_node_id}\u0000${gate.source_kind === 'flow_node' ? gate.source_binding_path : ''}\u0000${gate.gate_spec_id}`;
+}
+
+function parseGateSpecs(value: unknown, path: string): CompiledGateSpecEntryV1[] {
+  if (!Array.isArray(value) || value.length > 8_192) notClosed(path);
+  const gates = value.map((candidate, index) => {
+    const parsed = CompiledGateSpecEntryV1Schema.safeParse(candidate);
+    if (!parsed.success) notClosed(`${path}[${index}]`);
+    if (
+      parsed.data.source_kind === 'flow_node' &&
+      canonicalBindingPath(parsed.data.source_binding_path_segments) !==
+        parsed.data.source_binding_path
+    ) {
+      notClosed(`${path}[${index}].source_binding_path`);
+    }
+    return parsed.data;
+  });
+  if (
+    gates.some((gate, index) => {
+      const previous = gates[index - 1];
+      return previous !== undefined && gateIdentity(previous) >= gateIdentity(gate);
+    })
+  ) {
+    notClosed(path);
+  }
+  return gates;
 }
 
 function parseDependencyIntrinsicPolicies(
@@ -312,6 +357,8 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
       ),
       descendant_binding_entries: [],
       descendant_disabled_binding_paths: [],
+      descendant_gate_specs: [],
+      nested_gate_closures: [],
     };
   }
   if (slice.schema_version === 'graph-bound-skill-pack-leaf-binding-entry-set/1') {
@@ -406,6 +453,8 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
       ].sort((left, right) => compareCanonicalStrings(left.node_id, right.node_id)),
       descendant_binding_entries: memberEntries,
       descendant_disabled_binding_paths: descendantDisabledBindingPaths,
+      descendant_gate_specs: [],
+      nested_gate_closures: [],
     };
   }
   if (slice.schema_version === 'prepared-agent-composite-binding-entries/1') {
@@ -416,11 +465,13 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
         'dependency_kind',
         'graph_hash',
         'nested_closure_hash',
+        'nested_closure',
         'dependency_resource_node',
         'dependency_resource_nodes',
         'entries',
         'descendant_binding_entries',
         'descendant_disabled_binding_paths',
+        'descendant_gate_specs',
         'requirement_expressions',
       ],
       path,
@@ -440,6 +491,15 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
     if (dependencyNode.data.pin.published_resource_kind !== dependencyKind) {
       notClosed(`${path}.dependency_resource_node.pin`);
     }
+    const nestedDependency = prepareNestedCapabilityDependency(
+      {
+        node_id: dependencyNode.data.node_id,
+        pin: dependencyNode.data.pin,
+        dependency_manifest_hash: dependencyNode.data.dependency_manifest_hash,
+        nested_closure_hash: dependencyNode.data.nested_closure_hash,
+      },
+      slice.nested_closure,
+    );
     const dependencyNodeId = canonicalResourceNodeId(dependencyNode.data.pin);
     if (dependencyNode.data.node_id !== dependencyNodeId) {
       notClosed(`${path}.dependency_resource_node.node_id`);
@@ -448,6 +508,14 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
       slice.dependency_resource_nodes,
       `${path}.dependency_resource_nodes`,
     );
+    const descendantGateSpecs = parseGateSpecs(
+      slice.descendant_gate_specs,
+      `${path}.descendant_gate_specs`,
+    );
+    const dependencyNodeIds = new Set(dependencyNodes.map((node) => node.node_id));
+    if (descendantGateSpecs.some((gate) => !dependencyNodeIds.has(gate.source_node_id))) {
+      notClosed(`${path}.descendant_gate_specs`);
+    }
     const projectedRootNode = dependencyNodes.find((node) => node.node_id === dependencyNodeId);
     if (
       projectedRootNode === undefined ||
@@ -471,6 +539,25 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
       )
     ) {
       notClosed(`${path}.entries`);
+    }
+    const gateMountPaths = parentEntries.map((entry) =>
+      dependencyKind === 'FLOW_VERSION'
+        ? entry.binding_path_segments
+        : [
+            ...entry.binding_path_segments,
+            BindingPathSegmentV1Schema.parse({
+              segment_kind: 'subagent_target',
+              target_pin: nestedDependency.closure.root.pin,
+            }),
+          ],
+    );
+    const expectedGateSpecs = projectNestedGateSpecs(
+      nestedDependency.closure,
+      gateMountPaths,
+      dependencyNode.data.node_id,
+    );
+    if (!canonicalJsonBytes(expectedGateSpecs).equals(canonicalJsonBytes(descendantGateSpecs))) {
+      notClosed(`${path}.descendant_gate_specs`);
     }
     const descendantEntries = parseEntries(
       slice.descendant_binding_entries,
@@ -565,6 +652,14 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
       })),
       descendant_binding_entries: descendantEntries,
       descendant_disabled_binding_paths: descendantDisabledBindingPaths,
+      descendant_gate_specs: descendantGateSpecs,
+      nested_gate_closures: [
+        {
+          source_node_id: dependencyNode.data.node_id,
+          nested_closure_hash: nestedClosureHash.data,
+          nested_closure: nestedDependency.closure,
+        },
+      ],
     };
   }
   return notClosed(`${path}.schema_version`);
@@ -589,6 +684,7 @@ export function prepareAgentRootBindingEntrySet(
   let descendantCount = 0;
   let descendantDisabledCount = 0;
   let dependencyResourceNodeCount = 0;
+  let descendantGateSpecCount = 0;
   for (const [index, snapshot] of snapshots.entries()) {
     const slice = record(snapshot, `$.slices[${index}]`);
     const descendants =
@@ -608,15 +704,26 @@ export function prepareAgentRootBindingEntrySet(
       slice.schema_version === 'prepared-agent-composite-binding-entries/1'
         ? slice.dependency_resource_nodes
         : [];
-    if (!Array.isArray(descendants) || !Array.isArray(disabled) || !Array.isArray(resourceNodes))
+    const gateSpecs =
+      slice.schema_version === 'prepared-agent-composite-binding-entries/1'
+        ? slice.descendant_gate_specs
+        : [];
+    if (
+      !Array.isArray(descendants) ||
+      !Array.isArray(disabled) ||
+      !Array.isArray(resourceNodes) ||
+      !Array.isArray(gateSpecs)
+    )
       notClosed(`$.slices[${index}]`);
     descendantCount += descendants.length;
     descendantDisabledCount += disabled.length;
     dependencyResourceNodeCount += resourceNodes.length;
+    descendantGateSpecCount += gateSpecs.length;
     if (
       descendantCount > 8_192 ||
       descendantDisabledCount > 8_192 ||
-      dependencyResourceNodeCount > 8_192
+      dependencyResourceNodeCount > 8_192 ||
+      descendantGateSpecCount > 8_192
     ) {
       notClosed('$.descendant_binding_entries');
     }
@@ -702,6 +809,32 @@ export function prepareAgentRootBindingEntrySet(
   ) {
     notClosed('$.descendant_binding_entries');
   }
+  const descendantGateSpecsByIdentity = new Map<string, CompiledGateSpecEntryV1>();
+  for (const gate of slices.flatMap((slice) => slice.descendant_gate_specs)) {
+    const identity = gateIdentity(gate);
+    const existing = descendantGateSpecsByIdentity.get(identity);
+    if (existing !== undefined && !canonicalJsonBytes(existing).equals(canonicalJsonBytes(gate))) {
+      notClosed('$.descendant_gate_specs');
+    }
+    descendantGateSpecsByIdentity.set(identity, gate);
+  }
+  const descendantGateSpecs = [...descendantGateSpecsByIdentity.entries()]
+    .sort(([left], [right]) => compareCanonicalStrings(left, right))
+    .map(([, gate]) => gate);
+  const nestedGateClosuresByNode = new Map<string, NestedGateClosureEvidenceV1>();
+  for (const evidence of slices.flatMap((slice) => slice.nested_gate_closures)) {
+    const existing = nestedGateClosuresByNode.get(evidence.source_node_id);
+    if (
+      existing !== undefined &&
+      !canonicalJsonBytes(existing).equals(canonicalJsonBytes(evidence))
+    ) {
+      notClosed('$.nested_gate_closures');
+    }
+    nestedGateClosuresByNode.set(evidence.source_node_id, evidence);
+  }
+  const nestedGateClosures = [...nestedGateClosuresByNode.values()].sort((left, right) =>
+    compareCanonicalStrings(left.source_node_id, right.source_node_id),
+  );
   const descendantDisabledPaths = new Set(
     slices.flatMap((slice) => slice.descendant_disabled_binding_paths),
   );
@@ -774,6 +907,8 @@ export function prepareAgentRootBindingEntrySet(
     disabled_binding_paths: disabledBindingPaths,
     dependency_intrinsic_policies: dependencyIntrinsicPolicies,
     descendant_binding_entries: descendantBindingEntries,
+    descendant_gate_specs: descendantGateSpecs,
+    nested_gate_closures: nestedGateClosures,
     intrinsic_policy: intrinsicPolicy,
     aggregate_limits: aggregateLimits,
   });

@@ -14,6 +14,8 @@ import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
 import { prepareGraphBoundAgentFlowPaths } from './graph-bound-direct-paths.js';
 import { withinProjectedBindingCapacity } from './projection-capacity.js';
+import { prepareFlowGateSpecs } from './agent-gate-specs.js';
+import { projectNestedGateSpecs, verifyDirectGateSpecs } from './nested-gate-spec-projection.js';
 import { prepareFlowNodePaths } from './root-binding-paths.js';
 
 interface ProjectedFlowBindingOperationV1 {
@@ -28,12 +30,14 @@ export interface PreparedNestedFlowBindingOperationsV1 {
   readonly schema_version: 'prepared-nested-flow-binding-operations/1';
   readonly graph_hash: `sha256:${string}`;
   readonly nested_closure_hash: string;
+  readonly nested_closure: ReturnType<typeof prepareNestedCapabilityDependency>['closure'];
   readonly dependency_resource_node: ReturnType<
     typeof prepareNestedCapabilityDependency
   >['resource_node'];
   readonly projected_resource_nodes: readonly ReturnType<
     typeof prepareNestedCapabilityDependency
   >['resource_node'][];
+  readonly projected_gate_specs: ReturnType<typeof projectNestedGateSpecs>;
   readonly binding_operations: readonly ProjectedFlowBindingOperationV1[];
   readonly projected_binding_entries: readonly {
     readonly parent_binding_path: `bp1.${string}`;
@@ -103,6 +107,7 @@ export function prepareGraphBoundNestedFlowBindingOperations(
     nestedClosureInput,
   );
   const nestedClosure = nestedDependency.closure;
+  verifyDirectGateSpecs(nestedClosure, prepareFlowGateSpecs(dependencyInput).gate_specs);
   const childSource = prepareExecutableSource(dependencyInput);
   const childNodes = prepareFlowNodePaths(dependencyInput);
   if (!sameJson(childNodes.root.pin, nestedClosure.root.pin)) {
@@ -287,13 +292,20 @@ export function prepareGraphBoundNestedFlowBindingOperations(
   ) {
     mismatch('$.nested_closure.resource_nodes', 'projected resource nodes are not canonical');
   }
+  const projectedGateSpecs = projectNestedGateSpecs(
+    nestedClosure,
+    projectedParents.map((parentBinding) => parentBinding.binding_path_segments),
+    nestedDependency.resource_node.node_id,
+  );
 
   return deepFreezeJson({
     schema_version: 'prepared-nested-flow-binding-operations/1',
     graph_hash: graphBound.graph_binding.graph_hash,
     nested_closure_hash: nestedClosure.closure_hash,
+    nested_closure: nestedClosure,
     dependency_resource_node: nestedDependency.resource_node,
     projected_resource_nodes: projectedResourceNodes,
+    projected_gate_specs: projectedGateSpecs,
     binding_operations: bindingOperations.sort((left, right) =>
       compareCanonicalStrings(left.binding_path, right.binding_path),
     ),

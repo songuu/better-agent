@@ -13,6 +13,8 @@ import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.j
 import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
 import { prepareGraphBoundInternalSubagentPaths } from './graph-bound-direct-paths.js';
+import { prepareAgentGateSpecs } from './agent-gate-specs.js';
+import { projectNestedGateSpecs, verifyDirectGateSpecs } from './nested-gate-spec-projection.js';
 import { withinProjectedBindingCapacity } from './projection-capacity.js';
 import { prepareRootBindingPaths } from './root-binding-paths.js';
 
@@ -20,12 +22,14 @@ export interface PreparedNestedAgentBindingOperationsV1 {
   readonly schema_version: 'prepared-nested-agent-binding-operations/1';
   readonly graph_hash: `sha256:${string}`;
   readonly nested_closure_hash: string;
+  readonly nested_closure: ReturnType<typeof prepareNestedCapabilityDependency>['closure'];
   readonly dependency_resource_node: ReturnType<
     typeof prepareNestedCapabilityDependency
   >['resource_node'];
   readonly projected_resource_nodes: readonly ReturnType<
     typeof prepareNestedCapabilityDependency
   >['resource_node'][];
+  readonly projected_gate_specs: ReturnType<typeof projectNestedGateSpecs>;
   readonly binding_operations: readonly {
     readonly binding_id: string;
     readonly binding_kind: CapabilityBindingV1['kind'];
@@ -78,6 +82,7 @@ export function prepareGraphBoundNestedAgentBindingOperations(
     nestedClosureInput,
   );
   const nestedClosure = nestedDependency.closure;
+  verifyDirectGateSpecs(nestedClosure, prepareAgentGateSpecs(dependencyInput).gate_specs);
   const childSource = prepareExecutableSource(dependencyInput);
   const childRootPaths = prepareRootBindingPaths(dependencyInput);
   if (!sameJson(childRootPaths.root.pin, nestedClosure.root.pin)) {
@@ -252,13 +257,22 @@ export function prepareGraphBoundNestedAgentBindingOperations(
   ) {
     mismatch('$.nested_closure.resource_nodes', 'projected resource nodes are not canonical');
   }
+  const projectedGateSpecs = projectNestedGateSpecs(
+    nestedClosure,
+    projectedParents.map(
+      (parentBinding) => parentBinding.subagent_target?.target_path_segments ?? [],
+    ),
+    nestedDependency.resource_node.node_id,
+  );
 
   return deepFreezeJson({
     schema_version: 'prepared-nested-agent-binding-operations/1',
     graph_hash: graphBound.graph_binding.graph_hash,
     nested_closure_hash: nestedClosure.closure_hash,
+    nested_closure: nestedClosure,
     dependency_resource_node: nestedDependency.resource_node,
     projected_resource_nodes: projectedResourceNodes,
+    projected_gate_specs: projectedGateSpecs,
     binding_operations: bindingOperations.sort((left, right) =>
       compareCanonicalStrings(left.binding_path, right.binding_path),
     ),

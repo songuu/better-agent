@@ -33,8 +33,10 @@ export interface PreparedAgentCompositeBindingEntriesV1 {
   readonly dependency_kind: 'AGENT_RELEASE' | 'FLOW_VERSION';
   readonly graph_hash: `sha256:${string}`;
   readonly nested_closure_hash: string;
+  readonly nested_closure: PreparedAgentChildCallOperationsV1['nested_closure'];
   readonly dependency_resource_node: PreparedAgentChildCallOperationsV1['dependency_resource_node'];
   readonly dependency_resource_nodes: PreparedAgentChildCallOperationsV1['projected_resource_nodes'];
+  readonly descendant_gate_specs: PreparedAgentChildCallOperationsV1['projected_gate_specs'];
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly descendant_binding_entries: readonly CompiledBindingEntryV1[];
   readonly descendant_disabled_binding_paths: readonly `bp1.${string}`[];
@@ -325,8 +327,10 @@ function prepareEntries(
     dependency_kind: projection.dependency_kind,
     graph_hash: projection.graph_hash,
     nested_closure_hash: projection.nested_closure_hash,
+    nested_closure: projection.nested_closure,
     dependency_resource_node: projection.dependency_resource_node,
     dependency_resource_nodes: projection.projected_resource_nodes,
+    descendant_gate_specs: projection.projected_gate_specs,
     entries,
     descendant_binding_entries: descendantEntries,
     descendant_disabled_binding_paths: descendantDisabledPaths,

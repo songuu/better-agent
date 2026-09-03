@@ -1,7 +1,12 @@
-import type { PublishedResourcePinV1 } from '@better-agent/domain-contracts';
+import {
+  CapabilityRequirementExpressionV1Schema,
+  type PublishedResourcePinV1,
+} from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
+import { verifyAgentClosureApprovalCoverage } from '../src/agent-capability-closure.js';
 import { prepareGraphBoundAgentFlowCallOperations } from '../src/agent-child-call-operations.js';
 import { prepareAgentFlowBindingEntries } from '../src/agent-composite-binding-entries.js';
+import { prepareFlowGateSpecs } from '../src/agent-gate-specs.js';
 import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
 import { prepareAgentRootResourceGraph } from '../src/agent-root-resource-graph.js';
 import { canonicalResourceNodeId, createClosureIdentityRegistry } from '../src/closure-identity.js';
@@ -56,7 +61,40 @@ const emptyPolicy = {
 
 function sources(secondMount = false, disabled = false) {
   const pluginPin = makePluginPin();
-  const flow = { ...makeFlowIr(), resources: [pluginPin] };
+  const flow = structuredClone({ ...makeFlowIr(), resources: [pluginPin] }) as unknown as {
+    resources: PublishedResourcePinV1[];
+    entry_graph: {
+      nodes: Record<string, unknown>[];
+      edges: Record<string, unknown>[];
+    };
+    [key: string]: unknown;
+  };
+  flow.entry_graph.nodes[1] = {
+    node_id: 'output-1',
+    key: 'output',
+    type: 'human_gate',
+    inputs: {},
+    output_schema: { type: 'object' },
+    config: {
+      gate: {
+        schema_version: 'human-gate/1',
+        gate_spec_id: 'flow-input',
+        kind: 'approval',
+        decision_schema: { type: 'object' },
+        decision_schema_hash: hashA,
+        approver_policy_ref: 'flow-policy',
+        approver_policy_hash: hashB,
+        expires_after_seconds: 30,
+        on_reject: 'fail_run',
+        on_expire: 'cancel_run',
+        gate_spec_hash: hashA,
+        protected_operation_contract_hashes: [hashB],
+      },
+      prompt: {},
+      operation_intent: {},
+      exports: {},
+    },
+  };
   const flowRoot = prepareExecutableSource(executable(flow)).root;
   const flowPin = { ...flowRoot.pin, published_resource_kind: 'FLOW_VERSION' as const };
   const agent = richAgentSource();
@@ -140,7 +178,7 @@ function compiledClosure(flow: ReturnType<typeof sources>['flow']) {
     root: paths.root,
     assembly_pins: assemblyPins,
     bindings: [binding],
-    gate_specs: [],
+    gate_specs: prepareFlowGateSpecs(executable(flow)).gate_specs,
     resource_nodes: resourceNodes,
     dependency_edges: [],
     disabled_binding_paths: [],
@@ -317,6 +355,71 @@ describe('nested Flow Binding operation projection', () => {
     expect(new Set(result.projected_binding_entries.map((entry) => entry.binding_path)).size).toBe(
       value.closure.bindings.length * 2,
     );
+    expect(result.projected_gate_specs).toHaveLength(2);
+    expect(
+      new Set(
+        result.projected_gate_specs
+          .filter((gate) => gate.source_kind === 'flow_node')
+          .map((gate) => gate.source_binding_path),
+      ).size,
+    ).toBe(2);
+    const parentPaths = prepareRootBindingPaths(executable(value.agent)).bindings.filter(
+      (path) => path.binding_kind === 'flow',
+    );
+    for (const gate of result.projected_gate_specs) {
+      if (gate.source_kind !== 'flow_node') throw new Error('expected projected Flow gate');
+      expect(gate.source_node_id).toBe(canonicalResourceNodeId(value.flowPin));
+      const parent = parentPaths.find((path) =>
+        path.binding_path_segments.every(
+          (segment, index) =>
+            JSON.stringify(segment) === JSON.stringify(gate.source_binding_path_segments[index]),
+        ),
+      );
+      expect(parent).toBeDefined();
+      const boundary =
+        gate.source_binding_path_segments[parent?.binding_path_segments.length ?? -1];
+      expect(boundary).toMatchObject({
+        segment_kind: 'flow_node',
+        owner: { owner_kind: 'published_dependency' },
+      });
+    }
+    const binding = structuredClone(result.projected_binding_entries[0]?.entry);
+    const operationHash = binding?.operation_contracts[0]?.contract_hash;
+    if (binding === undefined || operationHash === undefined) {
+      throw new Error('projected Flow operation is missing');
+    }
+    const wrongMountGate = result.projected_gate_specs.find(
+      (gate) =>
+        gate.source_kind === 'flow_node' &&
+        JSON.stringify(
+          gate.source_binding_path_segments.slice(0, parentPaths[0]?.binding_path_segments.length),
+        ) !==
+          JSON.stringify(
+            binding.binding_path_segments.slice(0, parentPaths[0]?.binding_path_segments.length),
+          ),
+    );
+    if (wrongMountGate === undefined) throw new Error('second-mount Gate is missing');
+    binding.approval_gate_spec = {
+      gate_spec_id: wrongMountGate.gate_spec_id,
+      gate_spec_hash: wrongMountGate.gate_spec_hash,
+    };
+    const gate = { ...wrongMountGate, protected_operation_contract_hashes: [operationHash] };
+    const rootSource = prepareExecutableSource(executable(value.agent));
+    const resourceNodes = [
+      {
+        node_id: canonicalResourceNodeId(rootSource.root.pin),
+        intrinsic_policy: CapabilityRequirementExpressionV1Schema.parse(
+          emptyCapabilityRequirementExpression,
+        ),
+        dependency_manifest_hash: rootSource.dependency_manifest.manifest_hash,
+        node_role: 'root' as const,
+        pin: rootSource.root.pin,
+      },
+      ...result.projected_resource_nodes,
+    ].sort((left, right) => compareCanonicalStrings(left.node_id, right.node_id));
+    expect(() =>
+      verifyAgentClosureApprovalCoverage([binding], [gate], { resource_nodes: resourceNodes }),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
   });
 
   it('keeps parent sibling paths but does not copy Flow operations onto them', () => {
@@ -389,6 +492,86 @@ describe('nested Flow Binding operation projection', () => {
         value.closure,
       ),
     ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
+  });
+
+  it('rejects a resealed Flow closure that omits source-owned GateSpecs', () => {
+    const value = prepared();
+    const draft = { ...value.closure, gate_specs: [], closure_hash: hashA };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(executable(value.agent)).root,
+      value.flowPin,
+      closure.closure_hash,
+      value.pluginPin,
+    );
+    expect(() =>
+      prepareGraphBoundNestedFlowBindingOperations(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        executable(value.agent),
+        executable(value.flow),
+        closure,
+      ),
+    ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
+  });
+
+  it('rejects a resealed Flow closure with altered source-owned GateSpec content', () => {
+    const value = prepared();
+    const gateSpecs = structuredClone(value.closure.gate_specs);
+    const gate = gateSpecs[0];
+    if (gate === undefined) throw new Error('fixture Flow GateSpec is missing');
+    gate.on_expire = 'fail_run';
+    const draft = { ...value.closure, gate_specs: gateSpecs, closure_hash: hashA };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(executable(value.agent)).root,
+      value.flowPin,
+      closure.closure_hash,
+      value.pluginPin,
+    );
+    expect(() =>
+      prepareGraphBoundNestedFlowBindingOperations(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        executable(value.agent),
+        executable(value.flow),
+        closure,
+      ),
+    ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
+  });
+
+  it('rejects a resealed Flow GateSpec whose digest path disagrees with retained segments', () => {
+    const value = prepared();
+    const gateSpecs = structuredClone(value.closure.gate_specs);
+    const gate = gateSpecs[0];
+    if (gate?.source_kind !== 'flow_node') throw new Error('fixture Flow GateSpec is missing');
+    gate.source_binding_path = `bp1.${'A'.repeat(43)}`;
+    const draft = { ...value.closure, gate_specs: gateSpecs, closure_hash: hashA };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(executable(value.agent)).root,
+      value.flowPin,
+      closure.closure_hash,
+      value.pluginPin,
+    );
+    expect(() =>
+      prepareGraphBoundNestedFlowBindingOperations(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        executable(value.agent),
+        executable(value.flow),
+        closure,
+      ),
+    ).toThrow('CLOSURE_IDENTITY_MISMATCH');
   });
 
   it('rejects a graph manifest that omits the Flow source dependency', () => {

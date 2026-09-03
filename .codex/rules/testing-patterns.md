@@ -26,6 +26,7 @@
 - 同一个 graph-bound wrapper 形态仍要为 Flow/internal Agent/external A2A 各跑真实 source adapter：前两者断言 nested seal 保留，A2A 断言 terminal node 没有该字段，防止泛型组合抹平 target-kind 语义。
 - Agent GateSpec projection 测试必须独立规范 protected operation hash 集合，并断言 root gate 不含 Flow-only source path/node；直接拿未规范化 source 数组比较会把合法 canonical sorting 误判为漂移。
 - Flow GateSpec 测试必须穿透真实 human-gate source parse 和 path compiler，并断言 resource node、opaque full path、node ID 三者同时存在；duplicate gate fixture 若在 source schema 更早失败也属于正确 fail-closed，不应强迫后层错误码覆盖前层。
+- 递归 GateSpec 回归必须同时覆盖集合遗漏、内容漂移、ancestor Flow source 借权、双挂载跨 scope 借权、operation/source/kind approval join，以及真实投影函数的 8,192/+1 容量边界；只测共享乘法 helper 不能锁住生产 guard。
 - Binding approval coverage 用四类负例保护：operation intrinsic approval 与 Binding none 冲突、required approval 空集合、重复 operation pin、Gate protected set 缺项。正例必须断言输出 Gate ID/hash 来自同一 prepared Agent source，而非调用方自报。
 - Leaf Binding operation collector 必须对 Knowledge/Database/Plugin/A2A 四类真实 verifier 参数化，并额外断言未命中的 sibling path 仍存在且 operation set 为空；只测试命中项会漏掉 positional operation 泄漏。
 - Pack route/operation 测试要构造两个 exposed aliases 指向同一 member operation：routes 必须保留两条，Binding operation pins 必须按 contract hash 去重为一条，防止错误地把“调用入口”和“执行合同”当成同一集合。

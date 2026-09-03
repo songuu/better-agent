@@ -152,7 +152,7 @@ export function prepareFlowGateSpecs(rootInput: unknown): PreparedFlowGateSpecsV
       seenGateIds.add(gate.gate_spec_id);
       const sourcePath = nodes.find(
         (node) => node.graph_id === graph_id && node.node_id === node_id,
-      )?.source_path;
+      );
       if (sourcePath === undefined) notClosed();
       const parsed = CompiledGateSpecEntryV1Schema.safeParse({
         schema_version: 'compiled-gate-spec/1',
@@ -170,7 +170,8 @@ export function prepareFlowGateSpecs(rootInput: unknown): PreparedFlowGateSpecsV
         protected_operation_contract_hashes: gate.protected_operation_contract_hashes,
         source_kind: 'flow_node',
         source_node_id: sourceNodeId,
-        source_binding_path: sourcePath,
+        source_binding_path: sourcePath.source_path,
+        source_binding_path_segments: sourcePath.source_path_segments,
         source_flow_node_id: node_id,
       });
       if (!parsed.success) notClosed();

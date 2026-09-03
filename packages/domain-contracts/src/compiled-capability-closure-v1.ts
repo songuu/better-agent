@@ -401,6 +401,7 @@ export const CompiledGateSpecEntryV1Schema = z
       source_kind: z.literal('flow_node'),
       source_node_id: ClosureResourceNodeIdV1Schema,
       source_binding_path: CanonicalBindingPathV1Schema,
+      source_binding_path_segments: z.array(BindingPathSegmentV1Schema).min(2),
       source_flow_node_id: NonEmptyStringSchema,
     }),
   ])
@@ -415,7 +416,29 @@ export const CompiledGateSpecEntryV1Schema = z
         'approval gate set must be non-empty',
       );
     }
+    if (gate.source_kind === 'flow_node') {
+      const first = gate.source_binding_path_segments[0];
+      const last = gate.source_binding_path_segments.at(-1);
+      if (first?.segment_kind !== 'root') {
+        addCustomIssue(
+          ctx,
+          ['source_binding_path_segments'],
+          'a Flow gate source path must start with a root segment',
+        );
+      }
+      if (last?.segment_kind !== 'flow_node' || last.node_id !== gate.source_flow_node_id) {
+        addCustomIssue(
+          ctx,
+          ['source_binding_path_segments'],
+          'a Flow gate source path must end at its exact Flow node',
+        );
+      }
+    }
   });
+
+function gateSpecSourceIdentity(gate: z.infer<typeof CompiledGateSpecEntryV1Schema>): string {
+  return `${gate.source_node_id}\u0000${gate.source_kind === 'flow_node' ? gate.source_binding_path : ''}\u0000${gate.gate_spec_id}`;
+}
 
 export const ClosureResourceNodeV1Schema = z
   .union([
@@ -565,6 +588,19 @@ function sameRootPin(
   );
 }
 
+function sameVersionIdentity(
+  left: z.infer<typeof ClosureRootPinV1Schema> | z.infer<typeof PublishedResourcePinV1Schema>,
+  right: z.infer<typeof ClosureRootPinV1Schema> | z.infer<typeof PublishedResourcePinV1Schema>,
+): boolean {
+  return (
+    left.workspace_id === right.workspace_id &&
+    left.published_resource_kind === right.published_resource_kind &&
+    left.resource_id === right.resource_id &&
+    left.resource_version_id === right.resource_version_id &&
+    left.binding_mode === right.binding_mode
+  );
+}
+
 export const CompiledCapabilityClosureV1Schema = z
   .strictObject({
     schema_version: z.literal('compiled-capability-closure/1'),
@@ -587,9 +623,7 @@ export const CompiledCapabilityClosureV1Schema = z
     if (!hasUniqueBy(closure.resource_nodes, (node) => node.node_id)) {
       addCustomIssue(ctx, ['resource_nodes'], 'resource node ids must be unique');
     }
-    if (
-      !hasUniqueBy(closure.gate_specs, (gate) => `${gate.source_node_id}\u0000${gate.gate_spec_id}`)
-    ) {
+    if (!hasUniqueBy(closure.gate_specs, gateSpecSourceIdentity)) {
       addCustomIssue(ctx, ['gate_specs'], 'gate spec source identities must be unique');
     }
 
@@ -606,6 +640,7 @@ export const CompiledCapabilityClosureV1Schema = z
     }
 
     const nodeIds = new Set(closure.resource_nodes.map((node) => node.node_id));
+    const nodesById = new Map(closure.resource_nodes.map((node) => [node.node_id, node]));
     for (const binding of closure.bindings) {
       for (const dependencyNodeId of binding.dependency_node_ids) {
         if (!nodeIds.has(dependencyNodeId)) {
@@ -618,12 +653,40 @@ export const CompiledCapabilityClosureV1Schema = z
       }
     }
     for (const gate of closure.gate_specs) {
-      if (!nodeIds.has(gate.source_node_id)) {
+      const sourceNode = nodesById.get(gate.source_node_id);
+      if (sourceNode === undefined) {
         addCustomIssue(
           ctx,
           ['gate_specs'],
           `gate ${gate.gate_spec_id} references an unknown source node`,
         );
+        continue;
+      }
+      if (
+        (gate.source_kind === 'agent_release' &&
+          sourceNode.pin.published_resource_kind !== 'AGENT_RELEASE') ||
+        (gate.source_kind === 'flow_node' &&
+          sourceNode.pin.published_resource_kind !== 'FLOW_VERSION')
+      ) {
+        addCustomIssue(ctx, ['gate_specs'], 'gate source kind must match its resource node kind');
+      }
+      if (gate.source_kind === 'flow_node') {
+        const rootSegment = gate.source_binding_path_segments[0];
+        const terminalFlowSegment = gate.source_binding_path_segments.at(-1);
+        const ownsSource =
+          terminalFlowSegment?.segment_kind === 'flow_node' &&
+          sameVersionIdentity(terminalFlowSegment.owner.pin, sourceNode.pin);
+        if (
+          rootSegment?.segment_kind !== 'root' ||
+          !sameRootPin(rootSegment.pin, closure.root.pin) ||
+          !ownsSource
+        ) {
+          addCustomIssue(
+            ctx,
+            ['gate_specs'],
+            'Flow gate path must be rooted in this closure and its terminal Flow node must be owned by the source',
+          );
+        }
       }
     }
     for (const edge of closure.dependency_edges) {
