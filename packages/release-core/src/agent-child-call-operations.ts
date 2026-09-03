@@ -42,6 +42,7 @@ export interface PreparedAgentChildCallOperationsV1 {
   readonly graph_hash: `sha256:${string}`;
   readonly nested_closure_hash: string;
   readonly dependency_resource_node: NestedProjection['dependency_resource_node'];
+  readonly projected_resource_nodes: NestedProjection['projected_resource_nodes'];
   readonly binding_operations: readonly {
     readonly binding_id: string;
     readonly binding_kind: CapabilityBindingV1['kind'];
@@ -166,6 +167,7 @@ function prepare(
     graph_hash: projection.graph_hash,
     nested_closure_hash: projection.nested_closure_hash,
     dependency_resource_node: projection.dependency_resource_node,
+    projected_resource_nodes: projection.projected_resource_nodes,
     projected_binding_entries: projection.projected_binding_entries,
     binding_operations: projection.binding_operations
       .map((entry) => {

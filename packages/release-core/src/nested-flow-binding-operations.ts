@@ -31,6 +31,9 @@ export interface PreparedNestedFlowBindingOperationsV1 {
   readonly dependency_resource_node: ReturnType<
     typeof prepareNestedCapabilityDependency
   >['resource_node'];
+  readonly projected_resource_nodes: readonly ReturnType<
+    typeof prepareNestedCapabilityDependency
+  >['resource_node'][];
   readonly binding_operations: readonly ProjectedFlowBindingOperationV1[];
   readonly projected_binding_entries: readonly {
     readonly parent_binding_path: `bp1.${string}`;
@@ -272,12 +275,25 @@ export function prepareGraphBoundNestedFlowBindingOperations(
       'projected Flow Binding namespace is not bounded and unique',
     );
   }
+  const projectedResourceNodes = nestedClosure.resource_nodes
+    .map((node) => (node.node_role === 'root' ? nestedDependency.resource_node : node))
+    .sort((left, right) => compareCanonicalStrings(left.node_id, right.node_id));
+  if (
+    projectedResourceNodes.some(
+      (node, index) =>
+        node.node_role !== 'dependency' ||
+        (index > 0 && (projectedResourceNodes[index - 1]?.node_id ?? '') >= node.node_id),
+    )
+  ) {
+    mismatch('$.nested_closure.resource_nodes', 'projected resource nodes are not canonical');
+  }
 
   return deepFreezeJson({
     schema_version: 'prepared-nested-flow-binding-operations/1',
     graph_hash: graphBound.graph_binding.graph_hash,
     nested_closure_hash: nestedClosure.closure_hash,
     dependency_resource_node: nestedDependency.resource_node,
+    projected_resource_nodes: projectedResourceNodes,
     binding_operations: bindingOperations.sort((left, right) =>
       compareCanonicalStrings(left.binding_path, right.binding_path),
     ),

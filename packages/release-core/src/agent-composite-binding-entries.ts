@@ -34,6 +34,7 @@ export interface PreparedAgentCompositeBindingEntriesV1 {
   readonly graph_hash: `sha256:${string}`;
   readonly nested_closure_hash: string;
   readonly dependency_resource_node: PreparedAgentChildCallOperationsV1['dependency_resource_node'];
+  readonly dependency_resource_nodes: PreparedAgentChildCallOperationsV1['projected_resource_nodes'];
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly descendant_binding_entries: readonly CompiledBindingEntryV1[];
   readonly descendant_disabled_binding_paths: readonly `bp1.${string}`[];
@@ -325,6 +326,7 @@ function prepareEntries(
     graph_hash: projection.graph_hash,
     nested_closure_hash: projection.nested_closure_hash,
     dependency_resource_node: projection.dependency_resource_node,
+    dependency_resource_nodes: projection.projected_resource_nodes,
     entries,
     descendant_binding_entries: descendantEntries,
     descendant_disabled_binding_paths: descendantDisabledPaths,

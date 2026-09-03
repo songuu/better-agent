@@ -33,6 +33,21 @@ import {
 type ResourceNode = ReturnType<typeof ClosureResourceNodeV1Schema.parse>;
 type DependencyEdge = ReturnType<typeof ClosureDependencyEdgeV1Schema.parse>;
 type Pin = ReturnType<typeof PublishedResourcePinV1Schema.parse>;
+const maximumClosureGraphEntries = 8_192;
+
+export function withinRecursiveResourceGraphCapacity(
+  bindingEdgeCount: number,
+  typedSourcePathCounts: readonly number[],
+): boolean {
+  if (!Number.isSafeInteger(bindingEdgeCount) || bindingEdgeCount < 0) return false;
+  let total = bindingEdgeCount;
+  for (const count of typedSourcePathCounts) {
+    if (!Number.isSafeInteger(count) || count < 0 || total > maximumClosureGraphEntries - count)
+      return false;
+    total += count;
+  }
+  return total <= maximumClosureGraphEntries;
+}
 
 export interface PreparedAgentRootResourceGraphV1 {
   readonly schema_version: 'prepared-agent-root-resource-graph/1';
@@ -250,12 +265,32 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
   const policies = value.dependency_intrinsic_policies.map((candidate, index) => {
     const path = `$.entry_set.dependency_intrinsic_policies[${index}]`;
     const evidence = record(candidate, path);
-    if (!exactKeys(evidence, ['node_id', 'pin', 'intrinsic_policy'])) {
+    if (
+      !exactKeys(
+        evidence,
+        ['node_id', 'pin', 'intrinsic_policy'],
+        ['dependency_manifest_hash', 'nested_closure_hash'],
+      )
+    ) {
       invalid(path, 'dependency policy evidence is not closed');
     }
     const pin = PublishedResourcePinV1Schema.safeParse(evidence.pin);
     const policy = CapabilityRequirementExpressionV1Schema.safeParse(evidence.intrinsic_policy);
-    if (!pin.success || !policy.success) invalid(path, 'dependency policy evidence is invalid');
+    const manifestHash =
+      evidence.dependency_manifest_hash === undefined
+        ? undefined
+        : ContractHashSchema.safeParse(evidence.dependency_manifest_hash);
+    const nestedHash =
+      evidence.nested_closure_hash === undefined
+        ? undefined
+        : ContractHashSchema.safeParse(evidence.nested_closure_hash);
+    if (
+      !pin.success ||
+      !policy.success ||
+      manifestHash?.success === false ||
+      nestedHash?.success === false
+    )
+      invalid(path, 'dependency policy evidence is invalid');
     const nodeId = canonicalResourceNodeId(pin.data);
     const normalized = normalizeCapabilityRequirementExpression(policy.data);
     if (
@@ -264,7 +299,13 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
     ) {
       invalid(path, 'dependency policy identity or canonical form does not match');
     }
-    return { node_id: nodeId, pin: pin.data, intrinsic_policy: normalized };
+    return {
+      node_id: nodeId,
+      pin: pin.data,
+      intrinsic_policy: normalized,
+      ...(manifestHash === undefined ? {} : { dependency_manifest_hash: manifestHash.data }),
+      ...(nestedHash === undefined ? {} : { nested_closure_hash: nestedHash.data }),
+    };
   });
   if (
     policies.some(
@@ -314,7 +355,7 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
   };
 }
 
-/** Assemble direct Agent and complete leaf-Pack resource facts; other recursion stays fail-closed. */
+/** Assemble direct and recursively projected resource facts from verified Binding provenance. */
 export function prepareAgentRootResourceGraph(
   graphInput: unknown,
   entrySetInput: unknown,
@@ -376,11 +417,18 @@ export function prepareAgentRootResourceGraph(
     const evidence = policiesByNode.get(node.node_id);
     if (
       evidence === undefined ||
-      !canonicalJsonBytes(evidence.pin).equals(canonicalJsonBytes(node.pin))
+      !canonicalJsonBytes(evidence.pin).equals(canonicalJsonBytes(node.pin)) ||
+      (node.pin.published_resource_kind === 'AGENT_RELEASE' ||
+      node.pin.published_resource_kind === 'FLOW_VERSION'
+        ? evidence.dependency_manifest_hash !== node.dependency_manifest_hash ||
+          evidence.nested_closure_hash !== node.nested_closure_hash
+        : evidence.nested_closure_hash !== undefined ||
+          (evidence.dependency_manifest_hash !== undefined &&
+            evidence.dependency_manifest_hash !== node.dependency_manifest_hash))
     ) {
       invalid(
         '$.entry_set.dependency_intrinsic_policies',
-        'dependency policy pin does not match graph',
+        `dependency policy commitment does not match graph node ${node.node_id}: ${String(evidence?.dependency_manifest_hash)} / ${node.dependency_manifest_hash}; ${String(evidence?.nested_closure_hash)} / ${String(node.nested_closure_hash)}`,
       );
     }
     const parsed = ClosureResourceNodeV1Schema.safeParse({
@@ -402,28 +450,45 @@ export function prepareAgentRootResourceGraph(
   const graphEdgeKeys = new Set(
     graph.edges.map((edge) => `${edge.from_node_id}\u0000${edge.to_node_id}`),
   );
+  const allBindingEntries = [...entrySet.entries, ...entrySet.descendant_binding_entries];
+  if (allBindingEntries.length > maximumClosureGraphEntries) {
+    invalid('$.dependency_edges', 'Binding edge projection exceeds the closure limit');
+  }
+  const bindingEntryByPath = new Map(
+    allBindingEntries.map((entry) => [entry.binding_path, entry] as const),
+  );
   const dependencyEdges: DependencyEdge[] = [];
   for (const entry of entrySet.descendant_binding_entries) {
     const lastSegment = entry.binding_path_segments.at(-1);
     const targetNodeId = entry.dependency_node_ids[0];
+    const ownerPin =
+      lastSegment?.segment_kind === 'skill_pack_member'
+        ? lastSegment.owner_pin
+        : (lastSegment?.segment_kind === 'binding' || lastSegment?.segment_kind === 'flow_node') &&
+            lastSegment.owner.owner_kind === 'published_dependency'
+          ? lastSegment.owner.pin
+          : undefined;
+    let ownerEntry: (typeof allBindingEntries)[number] | undefined;
+    for (let length = 1; length < entry.binding_path_segments.length; length += 1) {
+      const prefixPath = canonicalBindingPath(entry.binding_path_segments.slice(0, length));
+      ownerEntry = bindingEntryByPath.get(prefixPath) ?? ownerEntry;
+    }
     if (
-      lastSegment?.segment_kind !== 'skill_pack_member' ||
-      lastSegment.local_member_binding_id !== entry.binding_id ||
+      ownerPin === undefined ||
+      ownerEntry === undefined ||
+      !canonicalJsonBytes(ownerPin).equals(canonicalJsonBytes(ownerEntry.target)) ||
+      (lastSegment?.segment_kind === 'skill_pack_member' &&
+        lastSegment.local_member_binding_id !== entry.binding_id) ||
+      (lastSegment?.segment_kind === 'binding' &&
+        lastSegment.local_binding_id !== entry.binding_id) ||
       canonicalBindingPath(entry.binding_path_segments) !== entry.binding_path ||
       entry.dependency_node_ids.length !== 1 ||
       targetNodeId === undefined ||
-      targetNodeId !== canonicalResourceNodeId(entry.target) ||
-      !(
-        entry.binding_kind === 'knowledge' ||
-        entry.binding_kind === 'database' ||
-        entry.binding_kind === 'plugin' ||
-        (entry.binding_kind === 'subagent' &&
-          entry.target.published_resource_kind === 'A2A_AGENT_RELEASE')
-      )
+      targetNodeId !== canonicalResourceNodeId(entry.target)
     ) {
       invalid('$.dependency_edges', 'descendant Binding shape is unsupported');
     }
-    const fromNodeId = canonicalResourceNodeId(lastSegment.owner_pin);
+    const fromNodeId = canonicalResourceNodeId(ownerPin);
     if (!graphEdgeKeys.has(`${fromNodeId}\u0000${targetNodeId}`)) {
       invalid('$.dependency_edges', 'descendant Binding edge is absent from the pinned graph');
     }
@@ -457,6 +522,23 @@ export function prepareAgentRootResourceGraph(
     }),
   );
   const rootSourcePath = canonicalBindingPath([{ segment_kind: 'root', pin: entrySet.root.pin }]);
+  const sourcePathsByNode = new Map<string, Set<`bp1.${string}`>>([
+    [graph.root_node_id, new Set([rootSourcePath])],
+  ]);
+  for (const entry of allBindingEntries) {
+    const sourceNodeId = canonicalResourceNodeId(entry.target);
+    const sourcePath =
+      entry.target.published_resource_kind === 'AGENT_RELEASE'
+        ? canonicalBindingPath([
+            ...entry.binding_path_segments,
+            { segment_kind: 'subagent_target', target_pin: entry.target },
+          ])
+        : (entry.binding_path as `bp1.${string}`);
+    const paths = sourcePathsByNode.get(sourceNodeId) ?? new Set<`bp1.${string}`>();
+    paths.add(sourcePath);
+    sourcePathsByNode.set(sourceNodeId, paths);
+  }
+  const typedSourcePathCounts: number[] = [];
   for (const edge of graph.edges) {
     if (
       dependencyEdges.some(
@@ -465,21 +547,39 @@ export function prepareAgentRootResourceGraph(
       )
     )
       continue;
-    if (edge.from_node_id !== graph.root_node_id) {
-      invalid('$.dependency_edges', 'recursive or unclaimed graph edge requires more provenance');
-    }
+    typedSourcePathCounts.push(sourcePathsByNode.get(edge.from_node_id)?.size ?? 0);
+  }
+  if (!withinRecursiveResourceGraphCapacity(dependencyEdges.length, typedSourcePathCounts)) {
+    invalid('$.dependency_edges', 'recursive edge projection exceeds the closure limit');
+  }
+  for (const edge of graph.edges) {
+    if (
+      dependencyEdges.some(
+        (candidate) =>
+          candidate.from_node_id === edge.from_node_id && candidate.to_node_id === edge.to_node_id,
+      )
+    )
+      continue;
     const target = graph.nodes.find((node) => node.node_id === edge.to_node_id);
-    if (target === undefined || !assemblyOnlyKinds.has(target.pin.published_resource_kind)) {
+    const sourcePaths = sourcePathsByNode.get(edge.from_node_id);
+    if (
+      target === undefined ||
+      !assemblyOnlyKinds.has(target.pin.published_resource_kind) ||
+      sourcePaths === undefined ||
+      sourcePaths.size === 0
+    ) {
       invalid('$.dependency_edges', 'capability graph edge has no Binding provenance');
     }
-    dependencyEdges.push(
-      ClosureDependencyEdgeV1Schema.parse({
-        from_node_id: graph.root_node_id,
-        to_node_id: edge.to_node_id,
-        relation: 'typed_internal_dependency',
-        source_path: rootSourcePath,
-      }),
-    );
+    for (const sourcePath of sourcePaths) {
+      dependencyEdges.push(
+        ClosureDependencyEdgeV1Schema.parse({
+          from_node_id: edge.from_node_id,
+          to_node_id: edge.to_node_id,
+          relation: 'typed_internal_dependency',
+          source_path: sourcePath,
+        }),
+      );
+    }
   }
   dependencyEdges.sort(
     (left, right) =>

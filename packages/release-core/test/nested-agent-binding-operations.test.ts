@@ -6,6 +6,10 @@ import { describe, expect, it } from 'vitest';
 import { prepareGraphBoundAgentSubagentCallOperations } from '../src/agent-child-call-operations.js';
 import { prepareAgentSubagentBindingEntries } from '../src/agent-composite-binding-entries.js';
 import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
+import {
+  prepareAgentRootResourceGraph,
+  withinRecursiveResourceGraphCapacity,
+} from '../src/agent-root-resource-graph.js';
 import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
 import { compareCanonicalStrings, deriveDependencyManifest } from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
@@ -112,7 +116,15 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
     ...assemblyPins.map((pin) => ({
       node_id: canonicalResourceNodeId(pin),
       intrinsic_policy: emptyCapabilityRequirementExpression,
-      dependency_manifest_hash: hashA,
+      dependency_manifest_hash: deriveDependencyManifest(
+        {
+          workspace_id: pin.workspace_id,
+          published_resource_kind: pin.published_resource_kind,
+          resource_id: pin.resource_id,
+          resource_version_id: pin.resource_version_id,
+        },
+        [],
+      ).manifest_hash,
       node_role: 'dependency' as const,
       pin,
       ...(pin.published_resource_kind === 'AGENT_RELEASE' ||
@@ -302,6 +314,12 @@ function compositePolicy(
 }
 
 describe('nested Agent Binding operation projection', () => {
+  it('bounds recursive graph edge fan-out at the exact closure limit', () => {
+    expect(withinRecursiveResourceGraphCapacity(8_190, [1, 1])).toBe(true);
+    expect(withinRecursiveResourceGraphCapacity(8_190, [1, 2])).toBe(false);
+    expect(withinRecursiveResourceGraphCapacity(0, [Number.MAX_SAFE_INTEGER])).toBe(false);
+  });
+
   it('accepts the exact projection capacity and rejects one entry above it', () => {
     expect(withinProjectedBindingCapacity(128, 64)).toBe(true);
     expect(withinProjectedBindingCapacity(129, 64)).toBe(false);
@@ -403,8 +421,15 @@ describe('nested Agent Binding operation projection', () => {
     const value = targetSources();
     const second = structuredClone(value.parentBinding);
     second.binding_id = 'subagent-second';
-    value.agent.capability_bindings.push(second);
-    value.agent.strategy.allowed_capability_binding_ids.push(second.binding_id);
+    value.agent.capability_bindings = [value.parentBinding, second];
+    value.agent.strategy.allowed_capability_binding_ids = [
+      value.parentBinding.binding_id,
+      second.binding_id,
+    ];
+    value.agent.strategy.allowed_gate_spec_ids = [];
+    value.agent.instruction_skill_bindings = [];
+    value.agent.public_capability_handles = [];
+    value.agent.gate_specs = [];
     const closure = compiledClosure(value.target);
     const root = prepareExecutableSource(candidate(value.agent)).root;
     const evidence = graph(
@@ -429,6 +454,75 @@ describe('nested Agent Binding operation projection', () => {
     expect(new Set(result.projected_binding_entries.map((entry) => entry.binding_path)).size).toBe(
       closure.bindings.length * 2,
     );
+
+    const calls = [
+      subagentCall(value.agent),
+      { ...subagentCall(value.agent), binding_id: second.binding_id },
+    ];
+    const firstPolicy = compositePolicy(value.agent, closure);
+    const secondPath = prepareRootBindingPaths(candidate(value.agent)).bindings.find(
+      (item) => item.binding_id === second.binding_id,
+    );
+    if (secondPath === undefined) throw new Error('second SubAgent path is missing');
+    const policy = {
+      ...firstPolicy,
+      binding_ceilings: [
+        ...firstPolicy.binding_ceilings,
+        {
+          binding_path: secondPath.binding_path,
+          ceiling: firstPolicy.binding_ceilings[0]?.ceiling,
+        },
+      ].sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path)),
+    };
+    const slice = prepareAgentSubagentBindingEntries(
+      evidence.expectedGraph,
+      evidence.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      closure,
+      calls,
+      policy,
+    );
+    const entrySet = prepareAgentRootBindingEntrySet(
+      candidate(value.agent),
+      evidence.expectedGraph.graph_hash,
+      [slice],
+      { ...policy, schema_version: 'agent-root-binding-policy-input/1' },
+    );
+    const resourceGraph = prepareAgentRootResourceGraph(evidence.expectedGraph, entrySet);
+    const internalTargets = new Set<string>(
+      evidence.expectedGraph.nodes
+        .filter((node) =>
+          ['INSTRUCTION_SKILL_RELEASE', 'AGENT_STRATEGY_RELEASE'].includes(
+            node.pin.published_resource_kind,
+          ),
+        )
+        .map((node) => node.node_id),
+    );
+    const typedEdges = resourceGraph.dependency_edges.filter(
+      (edge) =>
+        edge.from_node_id === canonicalResourceNodeId(value.targetPin) &&
+        edge.relation === 'typed_internal_dependency' &&
+        internalTargets.has(edge.to_node_id),
+    );
+    const expectedSourcePaths = new Set(
+      slice.entries.map((entry) =>
+        canonicalBindingPath([
+          ...entry.binding_path_segments,
+          { segment_kind: 'subagent_target', target_pin: entry.target },
+        ]),
+      ),
+    );
+    expect(typedEdges).toHaveLength(internalTargets.size * 2);
+    for (const targetNodeId of internalTargets) {
+      expect(
+        new Set(
+          typedEdges
+            .filter((edge) => edge.to_node_id === targetNodeId)
+            .map((edge) => edge.source_path),
+        ),
+      ).toEqual(expectedSourcePaths);
+    }
   });
 
   it('rejects a missing direct child Binding even with a recomputed closure hash', () => {
@@ -742,6 +836,142 @@ describe('nested Agent Binding operation projection', () => {
     expect(result.entries).toEqual(slice.entries);
     expect(result.descendant_binding_entries).toEqual(slice.descendant_binding_entries);
     expect(Object.isFrozen(result.descendant_binding_entries)).toBe(true);
+    const resourceGraph = prepareAgentRootResourceGraph(value.expectedGraph, result);
+    expect(resourceGraph.resource_nodes).toHaveLength(value.expectedGraph.nodes.length);
+    const projectedTarget = result.descendant_binding_entries[0];
+    expect(
+      resourceGraph.dependency_edges.some(
+        (edge) =>
+          edge.from_node_id === canonicalResourceNodeId(value.targetPin) &&
+          edge.to_node_id === projectedTarget?.dependency_node_ids[0] &&
+          edge.source_path === projectedTarget.binding_path,
+      ),
+    ).toBe(true);
+
+    const strippedNestedCommitment = structuredClone(result);
+    const recursiveEvidence = strippedNestedCommitment.dependency_intrinsic_policies.find(
+      (evidence) => evidence.node_id === canonicalResourceNodeId(value.targetPin),
+    );
+    if (recursiveEvidence === undefined) throw new Error('recursive policy evidence is missing');
+    delete (recursiveEvidence as unknown as { nested_closure_hash?: string }).nested_closure_hash;
+    expect(() =>
+      prepareAgentRootResourceGraph(value.expectedGraph, strippedNestedCommitment),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+
+    const mismatchedSliceClosureHash = structuredClone(slice);
+    (mismatchedSliceClosureHash as unknown as { nested_closure_hash: string }).nested_closure_hash =
+      slice.nested_closure_hash === hashA ? hashB : hashA;
+    expect(() => assemble(mismatchedSliceClosureHash)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+    const invalidSliceClosureHash = structuredClone(slice);
+    (invalidSliceClosureHash as unknown as { nested_closure_hash: string }).nested_closure_hash =
+      'not-a-hash';
+    expect(() => assemble(invalidSliceClosureHash)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+    const missingProjectedRootClosureHash = structuredClone(slice);
+    const projectedRoot = missingProjectedRootClosureHash.dependency_resource_nodes.find(
+      (node) => node.node_id === canonicalResourceNodeId(value.targetPin),
+    );
+    if (projectedRoot === undefined) throw new Error('fixture projected root node is missing');
+    delete (projectedRoot as unknown as { nested_closure_hash?: string }).nested_closure_hash;
+    expect(() => assemble(missingProjectedRootClosureHash)).toThrow(
+      'CLOSURE_BINDING_ENTRY_NOT_CLOSED',
+    );
+
+    const missingProjectedNode = structuredClone(slice);
+    (
+      missingProjectedNode as unknown as { dependency_resource_nodes: unknown[] }
+    ).dependency_resource_nodes = missingProjectedNode.dependency_resource_nodes.slice(0, -1);
+    expect(() =>
+      prepareAgentRootResourceGraph(value.expectedGraph, assemble(missingProjectedNode)),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+
+    const reorderedProjectedNodes = structuredClone(slice);
+    (
+      reorderedProjectedNodes as unknown as { dependency_resource_nodes: unknown[] }
+    ).dependency_resource_nodes = Array.from(
+      reorderedProjectedNodes.dependency_resource_nodes,
+    ).reverse();
+    expect(() => assemble(reorderedProjectedNodes)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+
+    const duplicateProjectedNode = structuredClone(slice);
+    const duplicateNode = duplicateProjectedNode.dependency_resource_nodes.find(
+      (node) => node.node_id !== canonicalResourceNodeId(value.targetPin),
+    );
+    if (duplicateNode === undefined) throw new Error('fixture non-root resource node is missing');
+    (
+      duplicateProjectedNode as unknown as { dependency_resource_nodes: unknown[] }
+    ).dependency_resource_nodes = [
+      ...duplicateProjectedNode.dependency_resource_nodes,
+      duplicateNode,
+    ].sort((left, right) =>
+      compareCanonicalStrings(
+        (left as { node_id: string }).node_id,
+        (right as { node_id: string }).node_id,
+      ),
+    );
+    expect(() => assemble(duplicateProjectedNode)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+
+    const wrongRoleNode = structuredClone(slice);
+    const wrongRoleDependency = wrongRoleNode.dependency_resource_nodes.find(
+      (node) => node.node_id !== canonicalResourceNodeId(value.targetPin),
+    );
+    if (wrongRoleDependency === undefined)
+      throw new Error('fixture non-root resource node is missing');
+    (wrongRoleDependency as unknown as { node_role: string }).node_role = 'root';
+    expect(() => assemble(wrongRoleNode)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+
+    const wrongNodeId = structuredClone(slice);
+    const wrongIdentityDependency = wrongNodeId.dependency_resource_nodes.find(
+      (node) => node.node_id !== canonicalResourceNodeId(value.targetPin),
+    );
+    if (wrongIdentityDependency === undefined)
+      throw new Error('fixture non-root resource node is missing');
+    (wrongIdentityDependency as unknown as { node_id: string }).node_id = `rn1.${'A'.repeat(43)}`;
+    (
+      wrongNodeId as unknown as {
+        dependency_resource_nodes: typeof wrongNodeId.dependency_resource_nodes;
+      }
+    ).dependency_resource_nodes = Array.from(wrongNodeId.dependency_resource_nodes).sort(
+      (left, right) => compareCanonicalStrings(left.node_id, right.node_id),
+    );
+    expect(() => assemble(wrongNodeId)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+
+    const wrongRecursiveCommitment = structuredClone(slice);
+    const nonRootDependency = wrongRecursiveCommitment.dependency_resource_nodes.find(
+      (node) => node.node_id !== canonicalResourceNodeId(value.targetPin),
+    );
+    if (nonRootDependency === undefined) {
+      throw new Error('fixture non-root dependency resource node is missing');
+    }
+    (
+      nonRootDependency as unknown as { dependency_manifest_hash: string }
+    ).dependency_manifest_hash =
+      nonRootDependency.dependency_manifest_hash === hashA ? hashB : hashA;
+    expect(() =>
+      prepareAgentRootResourceGraph(value.expectedGraph, assemble(wrongRecursiveCommitment)),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+
+    const wrongDescendantOwner = structuredClone(slice);
+    const wrongOwnerEntry = wrongDescendantOwner.descendant_binding_entries[0];
+    const wrongOwnerSegment = wrongOwnerEntry?.binding_path_segments.at(-1);
+    if (
+      wrongOwnerEntry === undefined ||
+      wrongOwnerSegment?.segment_kind !== 'binding' ||
+      wrongOwnerSegment.owner.owner_kind !== 'published_dependency'
+    ) {
+      throw new Error('fixture projected descendant owner is missing');
+    }
+    wrongOwnerSegment.owner.pin.resource_id = 'wrong-descendant-owner';
+    wrongOwnerEntry.binding_path = canonicalBindingPath(wrongOwnerEntry.binding_path_segments);
+    (
+      wrongDescendantOwner as unknown as {
+        descendant_binding_entries: typeof wrongDescendantOwner.descendant_binding_entries;
+      }
+    ).descendant_binding_entries = Array.from(wrongDescendantOwner.descendant_binding_entries).sort(
+      (left, right) => compareCanonicalStrings(left.binding_path, right.binding_path),
+    );
+    expect(() =>
+      prepareAgentRootResourceGraph(value.expectedGraph, assemble(wrongDescendantOwner)),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
 
     const wrongDigest = structuredClone(slice);
     const wrongDigestEntry = wrongDigest.descendant_binding_entries[0];

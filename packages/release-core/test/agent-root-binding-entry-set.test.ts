@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 
 import { prepareNonRecursiveAgentCapabilityClosure } from '../src/agent-capability-closure.js';
 import { prepareGraphBoundAgentLeafBindingEntrySet } from '../src/agent-leaf-binding-entries.js';
-import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
+import {
+  mergeDependencyIntrinsicPolicyEvidence,
+  prepareAgentRootBindingEntrySet,
+} from '../src/agent-root-binding-entry-set.js';
 import { prepareAgentRootResourceGraph } from '../src/agent-root-resource-graph.js';
 import {
   canonicalEmptyCapabilityRequirementExpression,
@@ -186,6 +189,79 @@ function rootPolicy(value: ReturnType<typeof fixture>) {
 }
 
 describe('Agent root Binding entry-set assembly', () => {
+  it('merges direct and recursively committed evidence for one shared leaf node', () => {
+    const value = fixture(false, true);
+    const direct = value.slice.prepared_entries.dependency_intrinsic_policies[0];
+    if (direct === undefined) throw new Error('fixture direct dependency evidence is missing');
+    const graphNode = value.graph.nodes.find((node) => node.node_id === direct.node_id);
+    if (graphNode === undefined) throw new Error('fixture graph node is missing');
+    const committed = {
+      ...direct,
+      dependency_manifest_hash: graphNode.dependency_manifest_hash,
+    };
+    expect(mergeDependencyIntrinsicPolicyEvidence(direct, committed)).toEqual(committed);
+    expect(mergeDependencyIntrinsicPolicyEvidence(committed, direct)).toEqual(committed);
+    const conflictingManifest = {
+      ...committed,
+      dependency_manifest_hash: `sha256:${'a'.repeat(64)}`,
+    };
+    const conflictingNested = { ...committed, nested_closure_hash: `sha256:${'a'.repeat(64)}` };
+    const otherNested = { ...committed, nested_closure_hash: `sha256:${'b'.repeat(64)}` };
+    expect(() => mergeDependencyIntrinsicPolicyEvidence(committed, conflictingManifest)).toThrow(
+      'CLOSURE_BINDING_ENTRY_NOT_CLOSED',
+    );
+    expect(() => mergeDependencyIntrinsicPolicyEvidence(conflictingNested, otherNested)).toThrow(
+      'CLOSURE_BINDING_ENTRY_NOT_CLOSED',
+    );
+    expect(() =>
+      mergeDependencyIntrinsicPolicyEvidence(committed, {
+        ...direct,
+        pin: { ...direct.pin, resource_id: 'different-shared-leaf' },
+      }),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+    expect(() =>
+      mergeDependencyIntrinsicPolicyEvidence(committed, {
+        ...direct,
+        intrinsic_policy: canonicalEmptyCapabilityRequirementExpression(),
+      }),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+
+    const slices = value.slice.prepared_entries.entries.map((entry, index) => {
+      const slice = structuredClone(value.slice);
+      const expression = slice.prepared_entries.requirement_expressions.find(
+        (item) => item.binding_path === entry.binding_path,
+      );
+      if (expression === undefined) throw new Error('fixture requirement expression is missing');
+      (
+        slice.prepared_entries as unknown as {
+          entries: unknown[];
+          requirement_expressions: unknown[];
+        }
+      ).entries = [entry];
+      (
+        slice.prepared_entries as unknown as { requirement_expressions: unknown[] }
+      ).requirement_expressions = [expression];
+      if (index === 1) {
+        (
+          slice.prepared_entries as unknown as {
+            dependency_intrinsic_policies: unknown[];
+          }
+        ).dependency_intrinsic_policies = [committed];
+      }
+      return slice;
+    });
+    for (const orderedSlices of [slices, [...slices].reverse()]) {
+      const result = prepareAgentRootBindingEntrySet(
+        value.root,
+        value.graph.graph_hash,
+        orderedSlices,
+        rootPolicy(value),
+      );
+      expect(result.entries).toHaveLength(2);
+      expect(result.dependency_intrinsic_policies).toEqual([committed]);
+    }
+  });
+
   it('joins one exact graph-bound root namespace with retained intrinsic demand', () => {
     const value = fixture();
     const result = prepareAgentRootBindingEntrySet(

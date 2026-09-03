@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { prepareGraphBoundAgentFlowCallOperations } from '../src/agent-child-call-operations.js';
 import { prepareAgentFlowBindingEntries } from '../src/agent-composite-binding-entries.js';
 import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
+import { prepareAgentRootResourceGraph } from '../src/agent-root-resource-graph.js';
 import { canonicalResourceNodeId, createClosureIdentityRegistry } from '../src/closure-identity.js';
 import {
   compareCanonicalStrings,
@@ -97,6 +98,12 @@ function compiledClosure(flow: ReturnType<typeof sources>['flow']) {
     },
   };
   const assemblyPins = normalizeDependencyPins(workspaceId, flow.resources);
+  const targetOwner = {
+    workspace_id: target.workspace_id,
+    published_resource_kind: target.published_resource_kind,
+    resource_id: target.resource_id,
+    resource_version_id: target.resource_version_id,
+  };
   const binding = {
     binding_path_encoding_version: 'binding-path-lp-utf8/1' as const,
     binding_path: sourcePath.source_path,
@@ -123,7 +130,7 @@ function compiledClosure(flow: ReturnType<typeof sources>['flow']) {
     {
       node_id: canonicalResourceNodeId(target),
       intrinsic_policy: emptyCapabilityRequirementExpression,
-      dependency_manifest_hash: hashA,
+      dependency_manifest_hash: deriveDependencyManifest(targetOwner, []).manifest_hash,
       node_role: 'dependency' as const,
       pin: target,
     },
@@ -675,6 +682,17 @@ describe('nested Flow Binding operation projection', () => {
     expect(result.entries).toEqual(slice.entries);
     expect(result.descendant_binding_entries).toEqual(slice.descendant_binding_entries);
     expect(Object.isFrozen(result.descendant_binding_entries)).toBe(true);
+    const resourceGraph = prepareAgentRootResourceGraph(value.expectedGraph, result);
+    expect(resourceGraph.resource_nodes).toHaveLength(value.expectedGraph.nodes.length);
+    const projectedTarget = result.descendant_binding_entries[0];
+    expect(
+      resourceGraph.dependency_edges.some(
+        (edge) =>
+          edge.from_node_id === canonicalResourceNodeId(value.flowPin) &&
+          edge.to_node_id === projectedTarget?.dependency_node_ids[0] &&
+          edge.source_path === projectedTarget.binding_path,
+      ),
+    ).toBe(true);
 
     const outsideParent = structuredClone(slice);
     const injected = outsideParent.descendant_binding_entries[0];

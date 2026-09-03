@@ -33,10 +33,50 @@ interface RequirementExpressionByPath {
   readonly expression: CapabilityRequirementExpressionV1;
 }
 
-interface DependencyIntrinsicPolicyEvidence {
+export interface DependencyIntrinsicPolicyEvidence {
   readonly node_id: ReturnType<typeof canonicalResourceNodeId>;
   readonly pin: ReturnType<typeof PublishedResourcePinV1Schema.parse>;
   readonly intrinsic_policy: CapabilityRequirementExpressionV1;
+  readonly dependency_manifest_hash?: string;
+  readonly nested_closure_hash?: string;
+}
+
+export function mergeDependencyIntrinsicPolicyEvidence(
+  existing: DependencyIntrinsicPolicyEvidence | undefined,
+  evidence: DependencyIntrinsicPolicyEvidence,
+): DependencyIntrinsicPolicyEvidence {
+  if (existing === undefined) return evidence;
+  if (
+    !canonicalJsonBytes({
+      node_id: existing.node_id,
+      pin: existing.pin,
+      intrinsic_policy: existing.intrinsic_policy,
+    }).equals(
+      canonicalJsonBytes({
+        node_id: evidence.node_id,
+        pin: evidence.pin,
+        intrinsic_policy: evidence.intrinsic_policy,
+      }),
+    ) ||
+    (existing.dependency_manifest_hash !== undefined &&
+      evidence.dependency_manifest_hash !== undefined &&
+      existing.dependency_manifest_hash !== evidence.dependency_manifest_hash) ||
+    (existing.nested_closure_hash !== undefined &&
+      evidence.nested_closure_hash !== undefined &&
+      existing.nested_closure_hash !== evidence.nested_closure_hash)
+  ) {
+    notClosed('$.dependency_intrinsic_policies');
+  }
+  const dependencyManifestHash =
+    existing.dependency_manifest_hash ?? evidence.dependency_manifest_hash;
+  const nestedClosureHash = existing.nested_closure_hash ?? evidence.nested_closure_hash;
+  return {
+    ...evidence,
+    ...(dependencyManifestHash === undefined
+      ? {}
+      : { dependency_manifest_hash: dependencyManifestHash }),
+    ...(nestedClosureHash === undefined ? {} : { nested_closure_hash: nestedClosureHash }),
+  };
 }
 
 interface ParsedSlice {
@@ -161,7 +201,10 @@ function parseDependencyIntrinsicPolicies(
   const policies = value.map((candidate, index) => {
     const itemPath = `${path}[${index}]`;
     const item = record(candidate, itemPath);
-    exactKeys(item, ['node_id', 'pin', 'intrinsic_policy'], itemPath);
+    exactKeys(item, ['node_id', 'pin', 'intrinsic_policy'], itemPath, [
+      'dependency_manifest_hash',
+      'nested_closure_hash',
+    ]);
     const pin = PublishedResourcePinV1Schema.safeParse(item.pin);
     if (!pin.success || !accepts(pin.data.published_resource_kind)) notClosed(`${itemPath}.pin`);
     const nodeId = canonicalResourceNodeId(pin.data);
@@ -170,7 +213,26 @@ function parseDependencyIntrinsicPolicies(
     if (!canonicalJsonBytes(intrinsicPolicy).equals(canonicalJsonBytes(item.intrinsic_policy))) {
       notClosed(`${itemPath}.intrinsic_policy`);
     }
-    return { node_id: nodeId, pin: pin.data, intrinsic_policy: intrinsicPolicy };
+    const dependencyManifestHash =
+      item.dependency_manifest_hash === undefined
+        ? undefined
+        : ContractHashSchema.safeParse(item.dependency_manifest_hash);
+    const nestedClosureHash =
+      item.nested_closure_hash === undefined
+        ? undefined
+        : ContractHashSchema.safeParse(item.nested_closure_hash);
+    if (dependencyManifestHash?.success === false || nestedClosureHash?.success === false) {
+      notClosed(itemPath);
+    }
+    return {
+      node_id: nodeId,
+      pin: pin.data,
+      intrinsic_policy: intrinsicPolicy,
+      ...(dependencyManifestHash === undefined
+        ? {}
+        : { dependency_manifest_hash: dependencyManifestHash.data }),
+      ...(nestedClosureHash === undefined ? {} : { nested_closure_hash: nestedClosureHash.data }),
+    };
   });
   if (
     policies.some(
@@ -179,6 +241,25 @@ function parseDependencyIntrinsicPolicies(
   )
     notClosed(path);
   return policies;
+}
+
+function parseDependencyResourceNodes(value: unknown, path: string) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8_192) notClosed(path);
+  const nodes = value.map((candidate, index) => {
+    const parsed = ClosureResourceNodeV1Schema.safeParse(candidate);
+    if (
+      !parsed.success ||
+      parsed.data.node_role !== 'dependency' ||
+      parsed.data.node_id !== canonicalResourceNodeId(parsed.data.pin)
+    ) {
+      notClosed(`${path}[${index}]`);
+    }
+    return parsed.data;
+  });
+  if (nodes.some((node, index) => index > 0 && (nodes[index - 1]?.node_id ?? '') >= node.node_id)) {
+    notClosed(path);
+  }
+  return nodes;
 }
 
 function parseSlice(input: unknown, index: number): ParsedSlice {
@@ -336,6 +417,7 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
         'graph_hash',
         'nested_closure_hash',
         'dependency_resource_node',
+        'dependency_resource_nodes',
         'entries',
         'descendant_binding_entries',
         'descendant_disabled_binding_paths',
@@ -346,7 +428,13 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
     const dependencyKind = slice.dependency_kind;
     if (dependencyKind !== 'FLOW_VERSION' && dependencyKind !== 'AGENT_RELEASE') notClosed(path);
     const dependencyNode = ClosureResourceNodeV1Schema.safeParse(slice.dependency_resource_node);
-    if (!dependencyNode.success || dependencyNode.data.node_role !== 'dependency') {
+    const nestedClosureHash = ContractHashSchema.safeParse(slice.nested_closure_hash);
+    if (
+      !dependencyNode.success ||
+      !nestedClosureHash.success ||
+      dependencyNode.data.node_role !== 'dependency' ||
+      dependencyNode.data.nested_closure_hash !== nestedClosureHash.data
+    ) {
       notClosed(`${path}.dependency_resource_node`);
     }
     if (dependencyNode.data.pin.published_resource_kind !== dependencyKind) {
@@ -355,6 +443,17 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
     const dependencyNodeId = canonicalResourceNodeId(dependencyNode.data.pin);
     if (dependencyNode.data.node_id !== dependencyNodeId) {
       notClosed(`${path}.dependency_resource_node.node_id`);
+    }
+    const dependencyNodes = parseDependencyResourceNodes(
+      slice.dependency_resource_nodes,
+      `${path}.dependency_resource_nodes`,
+    );
+    const projectedRootNode = dependencyNodes.find((node) => node.node_id === dependencyNodeId);
+    if (
+      projectedRootNode === undefined ||
+      !canonicalJsonBytes(projectedRootNode).equals(canonicalJsonBytes(dependencyNode.data))
+    ) {
+      notClosed(`${path}.dependency_resource_nodes`);
     }
     const parentEntries = parseEntries(
       slice.entries,
@@ -455,13 +554,15 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
         slice.requirement_expressions,
         `${path}.requirement_expressions`,
       ),
-      dependency_intrinsic_policies: [
-        {
-          node_id: dependencyNodeId,
-          pin: dependencyNode.data.pin,
-          intrinsic_policy: dependencyNode.data.intrinsic_policy,
-        },
-      ],
+      dependency_intrinsic_policies: dependencyNodes.map((node) => ({
+        node_id: canonicalResourceNodeId(node.pin),
+        pin: node.pin,
+        intrinsic_policy: node.intrinsic_policy,
+        dependency_manifest_hash: node.dependency_manifest_hash,
+        ...(node.nested_closure_hash === undefined
+          ? {}
+          : { nested_closure_hash: node.nested_closure_hash }),
+      })),
       descendant_binding_entries: descendantEntries,
       descendant_disabled_binding_paths: descendantDisabledBindingPaths,
     };
@@ -487,6 +588,7 @@ export function prepareAgentRootBindingEntrySet(
   }
   let descendantCount = 0;
   let descendantDisabledCount = 0;
+  let dependencyResourceNodeCount = 0;
   for (const [index, snapshot] of snapshots.entries()) {
     const slice = record(snapshot, `$.slices[${index}]`);
     const descendants =
@@ -502,10 +604,20 @@ export function prepareAgentRootBindingEntrySet(
           ? record(slice.prepared_entries, `$.slices[${index}].prepared_entries`)
               .policy_disabled_binding_paths
           : [];
-    if (!Array.isArray(descendants) || !Array.isArray(disabled)) notClosed(`$.slices[${index}]`);
+    const resourceNodes =
+      slice.schema_version === 'prepared-agent-composite-binding-entries/1'
+        ? slice.dependency_resource_nodes
+        : [];
+    if (!Array.isArray(descendants) || !Array.isArray(disabled) || !Array.isArray(resourceNodes))
+      notClosed(`$.slices[${index}]`);
     descendantCount += descendants.length;
     descendantDisabledCount += disabled.length;
-    if (descendantCount > 8_192 || descendantDisabledCount > 8_192) {
+    dependencyResourceNodeCount += resourceNodes.length;
+    if (
+      descendantCount > 8_192 ||
+      descendantDisabledCount > 8_192 ||
+      dependencyResourceNodeCount > 8_192
+    ) {
       notClosed('$.descendant_binding_entries');
     }
   }
@@ -570,12 +682,10 @@ export function prepareAgentRootBindingEntrySet(
   const dependencyPoliciesByNode = new Map<string, DependencyIntrinsicPolicyEvidence>();
   for (const evidence of slices.flatMap((slice) => slice.dependency_intrinsic_policies)) {
     const existing = dependencyPoliciesByNode.get(evidence.node_id);
-    if (
-      existing !== undefined &&
-      !canonicalJsonBytes(existing).equals(canonicalJsonBytes(evidence))
-    )
-      notClosed('$.dependency_intrinsic_policies');
-    dependencyPoliciesByNode.set(evidence.node_id, evidence);
+    dependencyPoliciesByNode.set(
+      evidence.node_id,
+      mergeDependencyIntrinsicPolicyEvidence(existing, evidence),
+    );
   }
   const dependencyIntrinsicPolicies = [...dependencyPoliciesByNode.values()].sort((left, right) =>
     compareCanonicalStrings(left.node_id, right.node_id),
