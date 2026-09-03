@@ -16,6 +16,7 @@ export * from './leaf-resource-source.js';
 export * from './operation-contract-source.js';
 export * from './pinned-dependency-graph.js';
 export * from './publishable-resource.js';
+export * from './resolved-plan.js';
 export * from './schema-validated-source.js';
 export * from './skill-pack-leaf-binding-entries.js';
 export * from './skill-pack-source.js';

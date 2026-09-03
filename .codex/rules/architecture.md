@@ -110,6 +110,13 @@
 - A nested Agent/Flow Binding is recompiled, not copied: project every descendant beneath the exact parent mount, then resolve its retained requirement expression under Workspace, root, mount and child-effective ceilings. Disabled ancestors close over descendants; unavailable entries retain operation/Gate identity but have no principal, credential, egress or numeric budget. Reproject every embedded Pack route path and hash. A downstream root assembler must reverify canonical bytes, strict typed parentage and parent-target/dependency-pin equality before retaining the entry.
 - A recursive Gate directory crossing an `unknown` final boundary must retain graph-bound child closures so the consumer can replay the exact projection under every direct mount. A caller-recomputable aggregate hash cannot prove omission resistance. Flow Gate ownership is the terminal `flow_node` owner, and approval joins require the same source, same parent-mount scope and complete operation coverage.
 
+## Typed ResolvedPlan admission
+
+- Join source semantic seed, closure hash and published compiled pin as separate commitments. A public Plan verifier needs the expected hash from a trusted committed admission receipt, not the untrusted Plan itself.
+- Actual credential material identity binds id/version/provider/audience/scopes/mode/subject/handle/fingerprint to its exact epoch tuple; Release grants bind Workspace, authenticated principal and the complete target pin. Hash consistency is not transaction/registry provenance.
+- Source-disabled forced bindings create no execution obligation; policy denial of a source-enabled forced binding still fails admission. Required call order is mount-local and input Gates must have the exact owning source. Replay source obligations at every final unknown boundary.
+- Optional capability manifests are not unconditional caller grants. Active assembly matches exact node/path; root Strategy/Instruction obligations also derive from independently rehashed source, so missing graph edges cannot erase them. Bound repeated output evidence before JCS allocation.
+
 ## Public Web entry publication
 
 - A public gateway card is the final discovery record, not proof that an application exists. Register it only after the same-origin application runtime is running under its canonical path, its health endpoint passes through the public proxy, and browser acceptance confirms the route. Packaging a server or rendering a static shell is insufficient.

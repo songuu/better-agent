@@ -26,6 +26,9 @@ import {
   withinProjectedBindingCapacity,
 } from '../src/projection-capacity.js';
 import { prepareRootBindingPaths } from '../src/root-binding-paths.js';
+import { bindingAdmissionEvidence } from '../src/required-binding-call.js';
+import { resolveExecutionPlan, verifyResolvedExecutionPlan } from '../src/resolved-plan.js';
+import { compiledAgentAdmission } from './resolved-plan-compiler-fixtures.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import {
   callCapabilityRequirements,
@@ -161,6 +164,7 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
         binding_path_segments: path.binding_path_segments,
         binding_id: path.binding_id,
         binding_kind: path.binding_kind,
+        ...bindingAdmissionEvidence(source),
         target: source.pin,
         config_schema_version: source.config.schema_version,
         config_hash: canonicalSha256(source.config),
@@ -479,159 +483,347 @@ describe('nested Agent Binding operation projection', () => {
     );
   });
 
-  it('isolates the child operation namespace under two parent mounts', () => {
-    const value = targetSources();
-    const second = structuredClone(value.parentBinding);
-    second.binding_id = 'subagent-second';
-    value.agent.capability_bindings = [value.parentBinding, second];
-    value.agent.strategy.allowed_capability_binding_ids = [
-      value.parentBinding.binding_id,
-      second.binding_id,
-    ];
-    value.agent.strategy.allowed_gate_spec_ids = [];
-    value.agent.instruction_skill_bindings = [];
-    value.agent.public_capability_handles = [];
-    value.agent.gate_specs = [];
-    const closure = compiledClosure(value.target);
-    const root = prepareExecutableSource(candidate(value.agent)).root;
-    const evidence = graph(
-      root,
-      value.targetPin,
-      closure.closure_hash,
-      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
-    );
-    const result = prepareGraphBoundNestedAgentBindingOperations(
-      evidence.expectedGraph,
-      evidence.candidateGraph,
-      candidate(value.agent),
-      candidate(value.target),
-      closure,
-    );
-    const nestedPlugins = result.binding_operations.filter(
-      (binding) => binding.binding_id === 'plugin' && binding.operation_contracts.length === 1,
-    );
-    expect(nestedPlugins).toHaveLength(2);
-    expect(nestedPlugins[0]?.binding_path).not.toBe(nestedPlugins[1]?.binding_path);
-    expect(result.projected_binding_entries).toHaveLength(closure.bindings.length * 2);
-    expect(new Set(result.projected_binding_entries.map((entry) => entry.binding_path)).size).toBe(
-      closure.bindings.length * 2,
-    );
-    expect(result.projected_gate_specs).toEqual(closure.gate_specs);
+  it.each(['enabled', 'source-disabled', 'large-gate-fanout'] as const)(
+    'isolates two parent mounts with %s forced knowledge',
+    (mode) => {
+      const value = targetSources();
+      const knowledge = value.target.capability_bindings.find(
+        (binding) => binding.kind === 'knowledge',
+      );
+      if (knowledge?.kind !== 'knowledge' || knowledge.config.selection !== 'force')
+        throw new Error('forced knowledge fixture missing');
+      if (mode === 'source-disabled') knowledge.enabled = false;
+      if (mode === 'large-gate-fanout') {
+        const gate = value.target.gate_specs.find((item) => item.gate_spec_id === 'input');
+        if (gate === undefined) throw new Error('input gate missing');
+        gate.approver_policy_ref = 'x'.repeat(65_536);
+        knowledge.config.forced_execution.on_timeout = 'ask_user';
+        knowledge.config.forced_execution.on_timeout_gate_spec = {
+          gate_spec_id: gate.gate_spec_id,
+          gate_spec_hash: gate.gate_spec_hash,
+        };
+        for (let index = 1; index < 129; index += 1) {
+          const copy = structuredClone(knowledge);
+          if (copy.config.selection !== 'force') throw new Error('forced configuration missing');
+          copy.binding_id = `forced-${index}`;
+          copy.config.forced_execution.order = index;
+          delete copy.credential_requirement;
+          value.target.capability_bindings.push(copy);
+        }
+      }
+      value.targetPin = {
+        ...prepareExecutableSource(candidate(value.target)).root.pin,
+        published_resource_kind: 'AGENT_RELEASE' as const,
+      };
+      value.parentBinding.pin = value.targetPin;
+      const second = structuredClone(value.parentBinding);
+      second.binding_id = 'subagent-second';
+      value.agent.capability_bindings = [value.parentBinding, second];
+      value.agent.strategy.allowed_capability_binding_ids = [
+        value.parentBinding.binding_id,
+        second.binding_id,
+      ];
+      value.agent.strategy.allowed_gate_spec_ids = [];
+      value.agent.instruction_skill_bindings = [];
+      value.agent.public_capability_handles = [];
+      value.agent.gate_specs = [];
+      const closure = compiledClosure(value.target);
+      const root = prepareExecutableSource(candidate(value.agent)).root;
+      const evidence = graph(
+        root,
+        value.targetPin,
+        closure.closure_hash,
+        prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+      );
+      const result = prepareGraphBoundNestedAgentBindingOperations(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        candidate(value.agent),
+        candidate(value.target),
+        closure,
+      );
+      const nestedPlugins = result.binding_operations.filter(
+        (binding) => binding.binding_id === 'plugin' && binding.operation_contracts.length === 1,
+      );
+      expect(nestedPlugins).toHaveLength(2);
+      expect(nestedPlugins[0]?.binding_path).not.toBe(nestedPlugins[1]?.binding_path);
+      expect(result.projected_binding_entries).toHaveLength(closure.bindings.length * 2);
+      expect(
+        new Set(result.projected_binding_entries.map((entry) => entry.binding_path)).size,
+      ).toBe(closure.bindings.length * 2);
+      expect(result.projected_gate_specs).toEqual(closure.gate_specs);
 
-    const calls = [
-      subagentCall(value.agent),
-      { ...subagentCall(value.agent), binding_id: second.binding_id },
-    ];
-    const firstPolicy = compositePolicy(value.agent, closure);
-    const secondPath = prepareRootBindingPaths(candidate(value.agent)).bindings.find(
-      (item) => item.binding_id === second.binding_id,
-    );
-    if (secondPath === undefined) throw new Error('second SubAgent path is missing');
-    const policy = {
-      ...firstPolicy,
-      binding_ceilings: [
-        ...firstPolicy.binding_ceilings,
-        {
-          binding_path: secondPath.binding_path,
-          ceiling: firstPolicy.binding_ceilings[0]?.ceiling,
-        },
-      ].sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path)),
-    };
-    const slice = prepareAgentSubagentBindingEntries(
-      evidence.expectedGraph,
-      evidence.candidateGraph,
-      candidate(value.agent),
-      candidate(value.target),
-      closure,
-      calls,
-      policy,
-    );
-    const alteredSlice = structuredClone(slice);
-    const alteredGate = alteredSlice.descendant_gate_specs[0];
-    if (alteredGate === undefined) throw new Error('projected GateSpec is missing');
-    alteredGate.on_expire = alteredGate.on_expire === 'fail_run' ? 'cancel_run' : 'fail_run';
-    expect(() =>
-      prepareAgentRootBindingEntrySet(
+      const calls = [
+        subagentCall(value.agent),
+        { ...subagentCall(value.agent), binding_id: second.binding_id },
+      ];
+      const firstPolicy = compositePolicy(value.agent, closure);
+      const secondPath = prepareRootBindingPaths(candidate(value.agent)).bindings.find(
+        (item) => item.binding_id === second.binding_id,
+      );
+      if (secondPath === undefined) throw new Error('second SubAgent path is missing');
+      const policy = {
+        ...firstPolicy,
+        binding_ceilings: [
+          ...firstPolicy.binding_ceilings,
+          {
+            binding_path: secondPath.binding_path,
+            ceiling: firstPolicy.binding_ceilings[0]?.ceiling,
+          },
+        ].sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path)),
+      };
+      const slice = prepareAgentSubagentBindingEntries(
+        evidence.expectedGraph,
+        evidence.candidateGraph,
+        candidate(value.agent),
+        candidate(value.target),
+        closure,
+        calls,
+        policy,
+      );
+      const alteredSlice = structuredClone(slice);
+      const alteredGate = alteredSlice.descendant_gate_specs[0];
+      if (alteredGate === undefined) throw new Error('projected GateSpec is missing');
+      alteredGate.on_expire = alteredGate.on_expire === 'fail_run' ? 'cancel_run' : 'fail_run';
+      expect(() =>
+        prepareAgentRootBindingEntrySet(
+          candidate(value.agent),
+          evidence.expectedGraph.graph_hash,
+          [alteredSlice],
+          { ...policy, schema_version: 'agent-root-binding-policy-input/1' },
+        ),
+      ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+      const entrySet = prepareAgentRootBindingEntrySet(
         candidate(value.agent),
         evidence.expectedGraph.graph_hash,
-        [alteredSlice],
+        [slice],
         { ...policy, schema_version: 'agent-root-binding-policy-input/1' },
-      ),
-    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
-    const entrySet = prepareAgentRootBindingEntrySet(
-      candidate(value.agent),
-      evidence.expectedGraph.graph_hash,
-      [slice],
-      { ...policy, schema_version: 'agent-root-binding-policy-input/1' },
-    );
-    const resourceGraph = prepareAgentRootResourceGraph(evidence.expectedGraph, entrySet);
-    const sealedClosure = prepareAgentCapabilityClosure(
-      candidate(value.agent),
-      evidence.expectedGraph,
-      entrySet,
-    );
-    expect(sealedClosure.gate_specs).toEqual(closure.gate_specs);
-    expect(sealedClosure.resource_nodes).toEqual(resourceGraph.resource_nodes);
-    const missingInputGate = structuredClone(entrySet);
-    (
-      missingInputGate as unknown as {
-        descendant_gate_specs: typeof missingInputGate.descendant_gate_specs;
-      }
-    ).descendant_gate_specs = missingInputGate.descendant_gate_specs.slice(1);
-    expect(() =>
-      prepareAgentCapabilityClosure(
+      );
+      const resourceGraph = prepareAgentRootResourceGraph(evidence.expectedGraph, entrySet);
+      const sealedClosure = prepareAgentCapabilityClosure(
         candidate(value.agent),
         evidence.expectedGraph,
-        missingInputGate,
-      ),
-    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
-    const missingGateClosure = structuredClone(entrySet);
-    (
-      missingGateClosure as unknown as {
-        nested_gate_closures: typeof missingGateClosure.nested_gate_closures;
+        entrySet,
+      );
+      expect(sealedClosure.gate_specs).toEqual(closure.gate_specs);
+      expect(sealedClosure.resource_nodes).toEqual(resourceGraph.resource_nodes);
+      const admission = compiledAgentAdmission(candidate(value.agent), sealedClosure);
+      if (mode === 'large-gate-fanout') {
+        expect(() => resolveExecutionPlan(admission)).toThrow(/CAPABILITY_CLOSURE_LIMIT_EXCEEDED/);
+        return;
       }
-    ).nested_gate_closures = [];
-    expect(() =>
-      prepareAgentCapabilityClosure(
-        candidate(value.agent),
-        evidence.expectedGraph,
-        missingGateClosure,
-      ),
-    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
-    const internalTargets = new Set<string>(
-      evidence.expectedGraph.nodes
-        .filter((node) =>
-          ['INSTRUCTION_SKILL_RELEASE', 'AGENT_STRATEGY_RELEASE'].includes(
-            node.pin.published_resource_kind,
-          ),
+      const plan = resolveExecutionPlan(admission);
+      if (mode === 'source-disabled') {
+        expect(plan.required_calls).toEqual([]);
+        expect(
+          sealedClosure.bindings
+            .filter((binding) => binding.binding_id === 'knowledge')
+            .every(
+              (binding) =>
+                binding.admission_requirement === 'optional' && binding.required_call === undefined,
+            ),
+        ).toBe(true);
+        return;
+      }
+      expect(plan.root_release.contract_hash).not.toBe(sealedClosure.root.semantic_seed_hash);
+      expect(verifyResolvedExecutionPlan(plan, plan.plan_hash)).toEqual(plan);
+      expect(plan.required_calls).toHaveLength(2);
+      expect(plan.required_calls.map((call) => call.order)).toEqual([0, 0]);
+      expect(new Set(plan.required_calls.map((call) => call.execution_scope_path)).size).toBe(2);
+      expect(plan.required_calls.every((call) => call.on_empty_gate?.kind === 'input')).toBe(true);
+      const firstMount = slice.entries[0];
+      if (firstMount === undefined) throw new Error('first mount missing');
+      const oneMountPaths = sealedClosure.bindings
+        .filter(
+          (binding) =>
+            canonicalBindingPath(
+              binding.binding_path_segments.slice(0, firstMount.binding_path_segments.length),
+            ) === firstMount.binding_path &&
+            !sealedClosure.disabled_binding_paths.includes(binding.binding_path),
         )
-        .map((node) => node.node_id),
-    );
-    const typedEdges = resourceGraph.dependency_edges.filter(
-      (edge) =>
-        edge.from_node_id === canonicalResourceNodeId(value.targetPin) &&
-        edge.relation === 'typed_internal_dependency' &&
-        internalTargets.has(edge.to_node_id),
-    );
-    const expectedSourcePaths = new Set(
-      slice.entries.map((entry) =>
-        canonicalBindingPath([
-          ...entry.binding_path_segments,
-          { segment_kind: 'subagent_target', target_pin: entry.target },
-        ]),
-      ),
-    );
-    expect(typedEdges).toHaveLength(internalTargets.size * 2);
-    for (const targetNodeId of internalTargets) {
+        .map((binding) => binding.binding_path);
       expect(
-        new Set(
-          typedEdges
-            .filter((edge) => edge.to_node_id === targetNodeId)
-            .map((edge) => edge.source_path),
+        resolveExecutionPlan(
+          compiledAgentAdmission(candidate(value.agent), sealedClosure, oneMountPaths),
+        ).required_calls,
+      ).toHaveLength(1);
+      expect(
+        resolveExecutionPlan(compiledAgentAdmission(candidate(value.agent), sealedClosure, []))
+          .required_calls,
+      ).toEqual([]);
+      const withoutOptionalAuthority = compiledAgentAdmission(
+        candidate(value.agent),
+        sealedClosure,
+        [],
+      );
+      const rootAssemblyPins = prepareExecutableSource(
+        candidate(value.agent),
+      ).dependency_manifest.dependencies.filter((pin) =>
+        ['AGENT_STRATEGY_RELEASE', 'INSTRUCTION_SKILL_RELEASE'].includes(
+          pin.published_resource_kind,
         ),
-      ).toEqual(expectedSourcePaths);
-    }
-  });
+      );
+      const rootAssemblyNodeIds = new Set<string>(rootAssemblyPins.map(canonicalResourceNodeId));
+      const optionalNodes = sealedClosure.resource_nodes.filter(
+        (node) => node.node_role !== 'root' && !rootAssemblyNodeIds.has(node.node_id),
+      );
+      const optionalIds = new Set(optionalNodes.map((node) => node.pin.resource_version_id));
+      const optionalGrantKeys = new Set<string>(
+        optionalNodes.map((node) =>
+          canonicalSha256({
+            schema_version: 'release-grant-identity/1',
+            workspace_id: workspaceId,
+            authenticated_principal:
+              withoutOptionalAuthority.admission_snapshot.authenticated_principal,
+            target: node.pin,
+          }),
+        ),
+      );
+      const minimalEpochs = withoutOptionalAuthority.authorization_decision.epoch_sources.filter(
+        (source) =>
+          !optionalIds.has(source.source_id) && !optionalGrantKeys.has(source.source_subkey),
+      );
+      const minimalDecision = {
+        ...withoutOptionalAuthority.authorization_decision,
+        epoch_sources: minimalEpochs,
+      };
+      minimalDecision.decision_hash = canonicalSha256ExcludingRootKeys(minimalDecision, [
+        'decision_hash',
+      ]);
+      expect(
+        resolveExecutionPlan({
+          ...withoutOptionalAuthority,
+          authorization_decision: minimalDecision,
+          expected_authorization_epoch_sources: minimalEpochs,
+        }).enabled_bindings,
+      ).toEqual([]);
+      for (const pin of rootAssemblyPins) {
+        const epochs = minimalEpochs.filter(
+          (source) =>
+            !(
+              source.source_kind === 'published_release_state' &&
+              source.source_id === pin.resource_version_id
+            ),
+        );
+        const missingRootAssembly = { ...minimalDecision, epoch_sources: epochs };
+        missingRootAssembly.decision_hash = canonicalSha256ExcludingRootKeys(missingRootAssembly, [
+          'decision_hash',
+        ]);
+        expect(() =>
+          resolveExecutionPlan({
+            ...withoutOptionalAuthority,
+            authorization_decision: missingRootAssembly,
+            expected_authorization_epoch_sources: epochs,
+          }),
+        ).toThrow(/published_release_state/);
+      }
+      for (const node of sealedClosure.resource_nodes.filter((item) =>
+        ['INSTRUCTION_SKILL_RELEASE', 'AGENT_STRATEGY_RELEASE'].includes(
+          item.pin.published_resource_kind,
+        ),
+      )) {
+        const epochs = admission.authorization_decision.epoch_sources.filter(
+          (source) =>
+            !(
+              source.source_kind === 'published_release_state' &&
+              source.source_id === node.pin.resource_version_id
+            ),
+        );
+        const revoked = { ...admission.authorization_decision, epoch_sources: epochs };
+        revoked.decision_hash = canonicalSha256ExcludingRootKeys(revoked, ['decision_hash']);
+        expect(() =>
+          resolveExecutionPlan({
+            ...admission,
+            authorization_decision: revoked,
+            expected_authorization_epoch_sources: epochs,
+          }),
+        ).toThrow(/published_release_state/);
+      }
+      const childOnly = sealedClosure.bindings
+        .filter((binding) => binding.admission_requirement === 'forced')
+        .map((binding) => binding.binding_path);
+      expect(() =>
+        resolveExecutionPlan(
+          compiledAgentAdmission(candidate(value.agent), sealedClosure, childOnly),
+        ),
+      ).toThrow(/enabled parent mount/);
+      const weakenedEntrySet = structuredClone(entrySet) as unknown as {
+        descendant_binding_entries: Record<string, unknown>[];
+      };
+      const forcedEntry = weakenedEntrySet.descendant_binding_entries.find(
+        (entry) => entry.admission_requirement === 'forced',
+      );
+      if (forcedEntry === undefined) throw new Error('missing projected forced Binding');
+      forcedEntry.admission_requirement = 'optional';
+      delete forcedEntry.required_call;
+      expect(() =>
+        prepareAgentCapabilityClosure(
+          candidate(value.agent),
+          evidence.expectedGraph,
+          weakenedEntrySet,
+        ),
+      ).toThrow(/exact committed child evidence/);
+      const missingInputGate = structuredClone(entrySet);
+      (
+        missingInputGate as unknown as {
+          descendant_gate_specs: typeof missingInputGate.descendant_gate_specs;
+        }
+      ).descendant_gate_specs = missingInputGate.descendant_gate_specs.slice(1);
+      expect(() =>
+        prepareAgentCapabilityClosure(
+          candidate(value.agent),
+          evidence.expectedGraph,
+          missingInputGate,
+        ),
+      ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+      const missingGateClosure = structuredClone(entrySet);
+      (
+        missingGateClosure as unknown as {
+          nested_gate_closures: typeof missingGateClosure.nested_gate_closures;
+        }
+      ).nested_gate_closures = [];
+      expect(() =>
+        prepareAgentCapabilityClosure(
+          candidate(value.agent),
+          evidence.expectedGraph,
+          missingGateClosure,
+        ),
+      ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+      const internalTargets = new Set<string>(
+        evidence.expectedGraph.nodes
+          .filter((node) =>
+            ['INSTRUCTION_SKILL_RELEASE', 'AGENT_STRATEGY_RELEASE'].includes(
+              node.pin.published_resource_kind,
+            ),
+          )
+          .map((node) => node.node_id),
+      );
+      const typedEdges = resourceGraph.dependency_edges.filter(
+        (edge) =>
+          edge.from_node_id === canonicalResourceNodeId(value.targetPin) &&
+          edge.relation === 'typed_internal_dependency' &&
+          internalTargets.has(edge.to_node_id),
+      );
+      const expectedSourcePaths = new Set(
+        slice.entries.map((entry) =>
+          canonicalBindingPath([
+            ...entry.binding_path_segments,
+            { segment_kind: 'subagent_target', target_pin: entry.target },
+          ]),
+        ),
+      );
+      expect(typedEdges).toHaveLength(internalTargets.size * 2);
+      for (const targetNodeId of internalTargets) {
+        expect(
+          new Set(
+            typedEdges
+              .filter((edge) => edge.to_node_id === targetNodeId)
+              .map((edge) => edge.source_path),
+          ),
+        ).toEqual(expectedSourcePaths);
+      }
+    },
+  );
 
   it('rejects a resealed child closure that omits source-owned GateSpecs', () => {
     const value = prepared();
@@ -654,7 +846,42 @@ describe('nested Agent Binding operation projection', () => {
         candidate(value.target),
         closure,
       ),
-    ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
+    ).toThrow(/NESTED_CAPABILITY_CLOSURE_MISMATCH|ask_user requires/);
+  });
+
+  it('rejects resealed forced-to-optional and local call-policy drift against the true child source', () => {
+    const value = prepared();
+    for (const change of ['optional', 'order', 'disposition']) {
+      const draft = structuredClone(value.closure) as unknown as {
+        bindings: Record<string, unknown>[];
+        closure_hash: string;
+      };
+      const entry = draft.bindings.find((binding) => binding.binding_id === 'knowledge');
+      if (entry === undefined) throw new Error('missing forced fixture Binding');
+      const call = entry.required_call as Record<string, unknown>;
+      if (change === 'optional') {
+        entry.admission_requirement = 'optional';
+        delete entry.required_call;
+      }
+      if (change === 'order') call.order = 99;
+      if (change === 'disposition') call.on_timeout = 'continue_without_context';
+      draft.closure_hash = canonicalSha256ExcludingRootKeys(draft, ['closure_hash']);
+      const evidence = graph(
+        prepareExecutableSource(candidate(value.agent)).root,
+        value.targetPin,
+        draft.closure_hash,
+        prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+      );
+      expect(() =>
+        prepareGraphBoundNestedAgentBindingOperations(
+          evidence.expectedGraph,
+          evidence.candidateGraph,
+          candidate(value.agent),
+          candidate(value.target),
+          draft,
+        ),
+      ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
+    }
   });
 
   it('rejects a resealed child closure with altered source-owned GateSpec content', () => {
@@ -926,6 +1153,7 @@ describe('nested Agent Binding operation projection', () => {
     expect(CompiledBindingEntryV1Schema.safeParse(entry).success).toBe(true);
     expect(entry).toMatchObject({
       binding_kind: 'subagent',
+      admission_requirement: 'optional',
       source_contract_hash: value.targetPin.contract_hash,
       dependency_node_ids: [canonicalResourceNodeId(result.dependency_resource_node.pin)],
       effective_policy: {
@@ -1152,7 +1380,7 @@ describe('nested Agent Binding operation projection', () => {
     );
     expect(() =>
       prepareAgentRootResourceGraph(value.expectedGraph, assemble(wrongDescendantOwner)),
-    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+    ).toThrow(/COMPILED_CAPABILITY_CLOSURE_INVALID|CLOSURE_BINDING_ENTRY_NOT_CLOSED/);
 
     const wrongDigest = structuredClone(slice);
     const wrongDigestEntry = wrongDigest.descendant_binding_entries[0];

@@ -29,6 +29,7 @@ import { prepareGraphBoundDependencyFanout } from './pinned-graph-slice.js';
 import { prepareAgentSkillPackDependencyPaths } from './root-binding-paths.js';
 import { prepareSkillPackOperationRoutes } from './skill-pack-operation-routes.js';
 import { prepareSkillPackSource } from './skill-pack-source.js';
+import { bindingAdmissionEvidence } from './required-binding-call.js';
 
 type CompiledBindingEntryV1 = ReturnType<typeof CompiledBindingEntryV1Schema.parse>;
 type PathCeiling = { readonly binding_path: string; readonly ceiling: unknown };
@@ -362,6 +363,7 @@ export function prepareSkillPackLeafBindingEntrySet(
         binding_path_segments: mount.binding_path_segments,
         binding_id: packBinding.binding_id,
         binding_kind: packBinding.kind,
+        ...bindingAdmissionEvidence(packBinding),
         target: packBinding.pin,
         config_schema_version: packBinding.config.schema_version,
         config_hash: canonicalSha256(packBinding.config),
@@ -435,6 +437,7 @@ export function prepareSkillPackLeafBindingEntrySet(
           binding_path_segments: memberPath.member_binding_path_segments,
           binding_id: member.binding_id,
           binding_kind: member.kind,
+          ...bindingAdmissionEvidence(member),
           target: member.pin,
           config_schema_version: member.config.schema_version,
           config_hash: canonicalSha256(member.config),

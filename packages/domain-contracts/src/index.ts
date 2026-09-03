@@ -20,6 +20,7 @@ export * from './leaf-resource-source-v1.js';
 export * from './operation-contract-source-v1.js';
 export * from './primitives.js';
 export * from './retention-v1.js';
+export * from './resolved-plan-v1.js';
 export * from './skill-pack-source-v1.js';
 export * from './registry.js';
 export * from './run-event-outbox-v1.js';

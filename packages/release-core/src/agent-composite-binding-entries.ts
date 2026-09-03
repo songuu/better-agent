@@ -1,5 +1,4 @@
 import {
-  type CapabilityPolicyCeilingV1,
   type CapabilityBindingV1,
   type CapabilityRequirementExpressionV1,
   CompiledBindingEntryV1Schema,
@@ -25,6 +24,8 @@ import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
 import { canonicalSha256 } from './hash.js';
 import { prepareRootBindingPaths } from './root-binding-paths.js';
+import { bindingAdmissionEvidence } from './required-binding-call.js';
+import { effectivePolicyAsCeiling } from './effective-policy-ceiling.js';
 
 type CompiledBindingEntryV1 = ReturnType<typeof CompiledBindingEntryV1Schema.parse>;
 
@@ -51,30 +52,6 @@ function notClosed(
   reason = 'composite Binding inputs do not form one exact closed path projection',
 ): never {
   throw new ReleaseCoreError('CLOSURE_BINDING_ENTRY_NOT_CLOSED', path, reason);
-}
-
-function effectivePolicyAsCeiling(policy: EffectiveCapabilityPolicyV1): CapabilityPolicyCeilingV1 {
-  const allowances = new Map<string, CapabilityPolicyCeilingV1['credential_allowances'][number]>();
-  for (const requirement of policy.credential_requirements) {
-    const key = `${requirement.provider_id}\u0000${requirement.audience}`;
-    const current = allowances.get(key);
-    allowances.set(key, {
-      provider_id: requirement.provider_id,
-      audience: requirement.audience,
-      allowed_scopes: [
-        ...new Set([...(current?.allowed_scopes ?? []), ...requirement.required_scopes]),
-      ].sort(),
-      principal_modes: [
-        ...new Set([...(current?.principal_modes ?? []), ...requirement.allowed_principal_modes]),
-      ].sort(),
-    });
-  }
-  const { credential_requirements: _requirements, ...shape } = policy;
-  return {
-    schema_version: 'capability-policy-ceiling/1',
-    credential_allowances: [...allowances.values()],
-    ...shape,
-  };
 }
 
 function unavailableDescendantPolicy(entry: CompiledBindingEntryV1): EffectiveCapabilityPolicyV1 {
@@ -201,6 +178,7 @@ function prepareEntries(
         binding_path_segments: path.binding_path_segments,
         binding_id: binding.binding_id,
         binding_kind: binding.kind,
+        ...bindingAdmissionEvidence(binding),
         target: binding.pin,
         config_schema_version: binding.config.schema_version,
         config_hash: canonicalSha256(binding.config),

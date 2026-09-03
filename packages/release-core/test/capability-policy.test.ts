@@ -582,6 +582,7 @@ describe('policy compilation composition', () => {
       binding_path_segments: [{ segment_kind: 'root', pin }],
       binding_id: 'tool',
       binding_kind: 'plugin',
+      admission_requirement: 'optional',
       target: { ...pin, published_resource_kind: 'PLUGIN_TOOL_RELEASE' },
       config_schema_version: 'plugin-binding/1',
       config_hash: hashA,

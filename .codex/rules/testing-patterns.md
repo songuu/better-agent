@@ -1,5 +1,8 @@
 # Testing patterns
 
+- Credential authority-axis mutations must update their material epoch evidence so a later stale-vector guard cannot hide removed provider/audience/scope/mode/subject checks. Rotation/revocation tests deliberately retain the old vector as a separate case.
+- Admission integration must use different semantic/published hashes, truly remove unselected optional grants, retain mandatory root assembly grants, and test source-disabled versus policy-denied forced paths. Shared Gate output budgets require exact/+1 pre-hash tests plus actual recursive compiler fanout.
+
 - 准入门 mutation 至少覆盖 missing、duplicate、reorder、extra、skip/todo、timeout、output overflow、cleanup failure、link identity 与 interpreter injection。
 - CI 安全测试应解析 YAML 并验证闭集对象；正则只用于精确版式补充，不能承担语义解析。
 - 数据库清理回归必须证明首次失败仍尝试所有目标、保留 registry、重试成功后才删除 registry。

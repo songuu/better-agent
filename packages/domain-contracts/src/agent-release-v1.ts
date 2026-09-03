@@ -184,13 +184,30 @@ export const AsyncChildPolicyV1Schema = z.strictObject({
   terminal_outcome_map: G1JoinChildTerminalOutcomeMapV1Schema,
 });
 
-const forcedExecutionSchema = z.strictObject({
-  order: NonNegativeIntegerSchema,
-  output_injection: z.enum(['before_role_context', 'before_current_user_input']),
-  on_empty: z.enum(['fail_closed', 'continue_without_context', 'ask_user']),
-  on_timeout: z.enum(['fail_closed', 'continue_without_context', 'ask_user']),
-  on_authorization_denied: z.literal('fail_closed'),
-});
+export const ForcedExecutionV1Schema = z
+  .strictObject({
+    order: NonNegativeIntegerSchema,
+    output_injection: z.enum(['before_role_context', 'before_current_user_input']),
+    on_empty: z.enum(['fail_closed', 'continue_without_context', 'ask_user']),
+    on_timeout: z.enum(['fail_closed', 'continue_without_context', 'ask_user']),
+    on_authorization_denied: z.literal('fail_closed'),
+    on_empty_gate_spec: z
+      .strictObject({ gate_spec_id: NonEmptyStringSchema, gate_spec_hash: ContractHashSchema })
+      .optional(),
+    on_timeout_gate_spec: z
+      .strictObject({ gate_spec_id: NonEmptyStringSchema, gate_spec_hash: ContractHashSchema })
+      .optional(),
+  })
+  .superRefine((call, ctx) => {
+    for (const branch of ['on_empty', 'on_timeout'] as const) {
+      if ((call[branch] === 'ask_user') !== (call[`${branch}_gate_spec`] !== undefined))
+        addCustomIssue(
+          ctx,
+          [`${branch}_gate_spec`],
+          'ask_user requires an exact GateSpec pin; other dispositions forbid it',
+        );
+    }
+  });
 
 export const KnowledgeBindingConfigV1Schema = z.union([
   z.strictObject({
@@ -204,7 +221,7 @@ export const KnowledgeBindingConfigV1Schema = z.union([
     selection: z.literal('force'),
     query_contract_hash: ContractHashSchema,
     metadata_filter_policy_hash: ContractHashSchema,
-    forced_execution: forcedExecutionSchema,
+    forced_execution: ForcedExecutionV1Schema,
   }),
 ]);
 
@@ -637,6 +654,25 @@ function validateAgentExecutableBody(
     release.gate_specs.filter((gate) => gate.kind === 'approval').map((gate) => gate.gate_spec_id),
   );
   for (const binding of release.capability_bindings) {
+    if (binding.kind === 'knowledge' && binding.config.selection === 'force') {
+      for (const branch of ['on_empty_gate_spec', 'on_timeout_gate_spec'] as const) {
+        const pin = binding.config.forced_execution[branch];
+        if (
+          pin !== undefined &&
+          !release.gate_specs.some(
+            (gate) =>
+              gate.kind === 'input' &&
+              gate.gate_spec_id === pin.gate_spec_id &&
+              gate.gate_spec_hash === pin.gate_spec_hash,
+          )
+        )
+          addCustomIssue(
+            ctx,
+            ['capability_bindings'],
+            'forced ask_user branch requires an exact same-release input GateSpec',
+          );
+      }
+    }
     if (
       binding.side_effect.approval === 'required' &&
       !approvalGates.has(binding.side_effect.approval_gate_spec_id)

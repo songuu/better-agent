@@ -3,6 +3,7 @@ import {
   ClosureRootV1Schema,
   CompiledBindingEntryV1Schema,
   type CompiledCapabilityClosureV1,
+  type CapabilityBindingV1,
 } from '@better-agent/domain-contracts';
 import { prepareAgentGateSpecs } from './agent-gate-specs.js';
 import type { PreparedAgentRootBindingEntrySetV1 } from './agent-root-binding-entry-set.js';
@@ -19,6 +20,10 @@ import { prepareExecutableSource } from './executable-source.js';
 import { canonicalSha256ExcludingRootKeys } from './hash.js';
 import { projectNestedGateSpecs } from './nested-gate-spec-projection.js';
 import { accumulateProjectedBindingCapacity } from './projection-capacity.js';
+import {
+  bindingAdmissionEvidence,
+  verifyProjectedBindingAdmission,
+} from './required-binding-call.js';
 
 function notClosed(path: string, reason: string): never {
   throw new ReleaseCoreError('COMPILED_CAPABILITY_CLOSURE_INVALID', path, reason);
@@ -262,6 +267,11 @@ function verifyNestedGateDirectory(
       mountPaths.length,
       nested.closure.gate_specs.length,
     );
+    verifyProjectedBindingAdmission(
+      nested.closure,
+      mountPaths,
+      entrySet.descendant_binding_entries,
+    );
     if (nextProjectedGateCount === undefined) {
       notClosed(
         '$.entry_set.nested_gate_closures',
@@ -303,6 +313,24 @@ export function prepareAgentCapabilityClosure(
     notClosed('$.root', 'non-recursive Agent closure assembly requires an Agent root');
   }
   const entrySet = parseRetainedEntrySet(entrySetInput);
+  const sourceBindings = (
+    source.preimage.document as unknown as { capability_bindings: CapabilityBindingV1[] }
+  ).capability_bindings;
+  if (sourceBindings.length !== entrySet.entries.length)
+    notClosed('$.entry_set.entries', 'root Binding set is incomplete');
+  for (const binding of sourceBindings) {
+    const entry = entrySet.entries.find((candidate) => candidate.binding_id === binding.binding_id);
+    if (
+      entry === undefined ||
+      !canonicalJsonBytes(bindingAdmissionEvidence(binding)).equals(
+        canonicalJsonBytes({
+          admission_requirement: entry.admission_requirement,
+          ...(entry.required_call === undefined ? {} : { required_call: entry.required_call }),
+        }),
+      )
+    )
+      notClosed('$.entry_set.entries', 'root Binding admission differs from its exact source');
+  }
   const resourceGraph = prepareAgentRootResourceGraph(graphInput, entrySetInput);
   verifyNestedGateDirectory(entrySet, resourceGraph);
   const gateSpecs = prepareAgentGateSpecs(rootInput);

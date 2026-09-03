@@ -58,6 +58,7 @@ export function richAgentSource() {
           order: 0,
           output_injection: 'before_role_context',
           on_empty: 'ask_user',
+          on_empty_gate_spec: { gate_spec_id: 'input', gate_spec_hash: hashA },
           on_timeout: 'fail_closed',
           on_authorization_denied: 'fail_closed',
         },

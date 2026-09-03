@@ -17,6 +17,7 @@ import { prepareAgentGateSpecs } from './agent-gate-specs.js';
 import { projectNestedGateSpecs, verifyDirectGateSpecs } from './nested-gate-spec-projection.js';
 import { withinProjectedBindingCapacity } from './projection-capacity.js';
 import { prepareRootBindingPaths } from './root-binding-paths.js';
+import { bindingAdmissionEvidence } from './required-binding-call.js';
 
 export interface PreparedNestedAgentBindingOperationsV1 {
   readonly schema_version: 'prepared-nested-agent-binding-operations/1';
@@ -118,10 +119,18 @@ export function prepareGraphBoundNestedAgentBindingOperations(
   >();
   for (const childPath of childRootPaths.bindings) {
     const entry = closureBindings.get(childPath.binding_path);
+    const sourceBinding = (
+      childSource.preimage.document as unknown as { capability_bindings: CapabilityBindingV1[] }
+    ).capability_bindings.find((binding) => binding.binding_id === childPath.binding_id);
     if (
       entry === undefined ||
       entry.binding_id !== childPath.binding_id ||
-      entry.binding_kind !== childPath.binding_kind
+      entry.binding_kind !== childPath.binding_kind ||
+      sourceBinding === undefined ||
+      !sameJson(bindingAdmissionEvidence(sourceBinding), {
+        admission_requirement: entry.admission_requirement,
+        ...(entry.required_call === undefined ? {} : { required_call: entry.required_call }),
+      })
     ) {
       mismatch(
         `$.nested_closure.bindings.${childPath.binding_path}`,

@@ -146,6 +146,8 @@ interface CompiledBindingEntryV1 {
   binding_path_segments: [BindingPathSegmentV1, ...BindingPathSegmentV1[]];
   binding_id: string;
   binding_kind: BindingKind;
+  admission_requirement: "optional" | "forced";
+  required_call?: ForcedExecutionV1; // iff source-enabled forced; replay exact source evidence
   target: PublishedResourcePin;
   config_schema_version: string;
   config_hash: string;
@@ -384,6 +386,17 @@ Flow/internal-Agent composite Binding entry 只接受已验证的 parent call pr
 
 - `ResolvedAgentPlan`/`RunPlan` 必须固定 `closure_hash`，并把 closure 与调用主体、类型化 admission profile/entry grant、当前 credential/resource grant、数据分类和顶层预算再取一次交集。Agent 使用固定 `AgentDeploymentRevisionV1 + AgentDeploymentEntryGrantV1`，顶层 Flow 使用固定 `FlowDeploymentRevisionV1 + FlowDeploymentEntryGrantV1 + FlowAdmissionProfileV1`，Agent 内嵌 Flow 继承父 Plan 的准入上限；三者不得借用 Workspace 默认 credential 或互相回退。每个 mapping/grant 都必须通过其 closed discriminator 和 literal kind/principal/audience/channel/scope/cardinality 校验。该过程只能把已发布 `binding_path` 写入 enabled 或 `disabled_binding_paths` 集合并缩小其 policy，不能添加 closure 中没有的 path/target/operation。
 - 准入决策必须记录 `closure_hash + effective_policy_hash + authorization_decision_id + epoch source set`。高风险 forced Binding 被收窄为不可用时必须拒绝整个 Plan，不得交给模型绕过。
+
+#### 5.2.1 本地 typed ResolvedPlan 内核（2026-09-03）
+
+`resolveExecutionPlan` 消费闭集 executable source、compiled closure、类型化 Deployment revision/admission snapshot、authorization decision、独立当前 epoch vector 与数据库事务时钟。source seed、closure hash、最终 published compiled hash 分层连接；decision 必须固定同一 revision、snapshot、closure、activation 和有效期。事务事实的真实来源、锁与持久化由 T6 提供，不能把这些输入暴露为可由客户端自填的准入权限。
+
+- 每个获准 Binding 固定完整 target、operation 集合、effective policy/hash、实际 credential summary 与 mapping hash。credential summary 绑定实际 id/version/provider/audience/scopes/principal mode/subject/handle hash/material fingerprint；其 epoch subkey 是完整 material identity 的版本化 SHA。服务入口不借用用户委托，交互入口不借用后台 service principal。两个 requirement 可共用 provider/audience，ceiling 按该 authority tuple 合并 scopes/modes，而 requirement/mapping 身份仍独立。
+- Release grant 的 subkey 固定 Workspace、authenticated principal 和完整 typed target pin；不能只以 version ID 借用别人的 grant。只对获准 capability 和活动 owner 的 exact node/path 装配边要求权限；根 Strategy/Instruction 同时从独立重算的 source manifest 导出，不能因图漏边或可选项停用而消失。
+- `required_calls` 包含 source node、canonical execution scope、局部 order、失败分支及 exact compiled input Gates；descendant 必须有已获准的每级父 mount。源停用与权限拒绝是两种不同情况，后者不能让仍启用的 forced 义务悄悄消失。
+- 输出在 JCS/hash 之前执行闭包级结构/字节预算，包含最终 `plan_hash` 的成本，防止共享 Gate 在重复调用中放大。`verifyResolvedExecutionPlan(plan, expectedPlanHash)` 的第二个参数必须来自已提交可信 Receipt，不得取自不可信 Plan 本身；还需复验内部 policy/operation/mapping/target 关系。
+
+当前输出是确定性本地内核结果，不证明 publisher seal、权威 registry readback、Run 事务持久化、PG 集成或 host-attested Acceptance 已完成。
 
 ### 5.3 Capability Call 与重验证
 

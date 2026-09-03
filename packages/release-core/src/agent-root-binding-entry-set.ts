@@ -30,6 +30,10 @@ import { prepareExecutableSource } from './executable-source.js';
 import { canonicalSha256 } from './hash.js';
 import { projectNestedGateSpecs } from './nested-gate-spec-projection.js';
 import { prepareRootBindingPaths } from './root-binding-paths.js';
+import {
+  bindingAdmissionEvidence,
+  verifyProjectedBindingAdmission,
+} from './required-binding-call.js';
 
 type CompiledBindingEntryV1 = ReturnType<typeof CompiledBindingEntryV1Schema.parse>;
 type CompiledGateSpecEntryV1 = ReturnType<typeof CompiledGateSpecEntryV1Schema.parse>;
@@ -566,6 +570,11 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
       true,
       8_192,
     );
+    try {
+      verifyProjectedBindingAdmission(nestedDependency.closure, gateMountPaths, descendantEntries);
+    } catch {
+      notClosed(`${path}.descendant_binding_entries`);
+    }
     descendantEntries.forEach((entry, entryIndex) => {
       if (canonicalBindingPath(entry.binding_path_segments) !== entry.binding_path) {
         notClosed(`${path}.descendant_binding_entries[${entryIndex}].binding_path`);
@@ -760,6 +769,11 @@ export function prepareAgentRootBindingEntrySet(
       binding === undefined ||
       path.binding_id !== entry.binding_id ||
       path.binding_kind !== entry.binding_kind ||
+      canonicalSha256(bindingAdmissionEvidence(binding)) !==
+        canonicalSha256({
+          admission_requirement: entry.admission_requirement,
+          ...(entry.required_call === undefined ? {} : { required_call: entry.required_call }),
+        }) ||
       !canonicalJsonBytes(path.binding_path_segments).equals(
         canonicalJsonBytes(entry.binding_path_segments),
       ) ||

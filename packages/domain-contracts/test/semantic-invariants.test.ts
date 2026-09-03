@@ -338,6 +338,7 @@ describe('Compiled closure reference integrity', () => {
     binding_path_segments: [{ segment_kind: 'root', pin: rootPin }],
     binding_id: 'knowledge-1',
     binding_kind: 'knowledge',
+    admission_requirement: 'optional',
     target: {
       workspace_id: 'workspace-1',
       published_resource_kind: 'KNOWLEDGE_INDEX_GENERATION',

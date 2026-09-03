@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-import { BindingKindV1Schema, PublishedResourcePinV1Schema } from './agent-release-v1.js';
+import {
+  BindingKindV1Schema,
+  PublishedResourcePinV1Schema,
+  ForcedExecutionV1Schema,
+} from './agent-release-v1.js';
 import {
   CapabilityRequirementExpressionV1Schema,
   EffectiveCapabilityPolicyV1Schema,
@@ -179,6 +183,8 @@ export const CompiledBindingEntryV1Schema = z
     binding_path_segments: z.array(BindingPathSegmentV1Schema).min(1),
     binding_id: NonEmptyStringSchema,
     binding_kind: BindingKindV1Schema,
+    admission_requirement: z.enum(['optional', 'forced']),
+    required_call: ForcedExecutionV1Schema.optional(),
     target: PublishedResourcePinV1Schema,
     config_schema_version: z.enum([
       'knowledge-binding/1',
@@ -204,6 +210,13 @@ export const CompiledBindingEntryV1Schema = z
     skill_pack_operation_routes: SkillPackRouteSetV1Schema.optional(),
   })
   .superRefine((binding, ctx) => {
+    if ((binding.admission_requirement === 'forced') !== (binding.required_call !== undefined)) {
+      addCustomIssue(
+        ctx,
+        ['required_call'],
+        'forced admission requires exact call-order evidence and optional admission forbids it',
+      );
+    }
     if (binding.binding_path_segments[0]?.segment_kind !== 'root') {
       addCustomIssue(
         ctx,

@@ -148,6 +148,7 @@ function compiledClosure(flow: ReturnType<typeof sources>['flow']) {
     binding_path_segments: sourcePath.source_path_segments,
     binding_id: 'flow',
     binding_kind: 'plugin' as const,
+    admission_requirement: 'optional' as const,
     target,
     config_schema_version: 'plugin-binding/1' as const,
     config_hash: canonicalSha256({ schema_version: 'plugin-binding/1' }),
@@ -725,6 +726,7 @@ describe('nested Flow Binding operation projection', () => {
     expect(result.entries).toHaveLength(1);
     expect(result.entries[0]).toMatchObject({
       binding_kind: 'flow',
+      admission_requirement: 'optional',
       operation_contracts: [prepareOperationContractSource(declaration.operation).pin],
       effective_policy: {
         operation_contract_hashes: [

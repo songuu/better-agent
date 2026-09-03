@@ -527,11 +527,15 @@ interface KnowledgeBindingConfigV1 {
     on_empty: "fail_closed" | "continue_without_context" | "ask_user";
     on_timeout: "fail_closed" | "continue_without_context" | "ask_user";
     on_authorization_denied: "fail_closed";
+    on_empty_gate_spec?: { gate_spec_id: string; gate_spec_hash: string };
+    on_timeout_gate_spec?: { gate_spec_id: string; gate_spec_hash: string };
   };
 }
 ```
 
 `selection="force"` 时根字段必须是 `discoverability="forced"`，`forced_execution` 必填且 `order` 在 Release 内唯一；`selection="on_demand"` 时 `forced_execution` 必须缺失且不得标成 forced。任何 `ask_user` 分支都必须编译为类型化 HumanGate 计划，不得由模型临时生成等待语义。权限拒绝永远 fail closed，不能使用空上下文降级。
+
+每个 `ask_user` 分支必须提供对应的 `*_gate_spec`，逐字指向同一 Agent source 的 input Gate ID/hash；非 ask_user 分支禁止该引用。ResolvedPlan 将该 Gate 的已编译证据固定到 required call，并以 `execution_scope_path + order` 表达挂载内顺序，不要求不同 child/mount 的局部 order 全局唯一。`enabled=false` 仍保留完整源配置/hash，但不产生准入执行义务；源启用而权限收窄不可用的 forced Binding 仍使 Plan fail closed。
 
 | 约束 | 设计要求 |
 |---|---|

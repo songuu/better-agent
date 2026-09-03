@@ -24,6 +24,7 @@ import { canonicalSha256 } from './hash.js';
 import { prepareLeafResourceSource } from './leaf-resource-source.js';
 import { prepareGraphBoundDirectDependencies } from './pinned-graph-slice.js';
 import { prepareRootBindingPaths } from './root-binding-paths.js';
+import { bindingAdmissionEvidence } from './required-binding-call.js';
 
 type CompiledBindingEntryV1 = ReturnType<typeof CompiledBindingEntryV1Schema.parse>;
 
@@ -140,6 +141,7 @@ export function prepareAgentLeafBindingEntries(
         binding_path_segments: compiledPath.binding_path_segments,
         binding_id: binding.binding_id,
         binding_kind: binding.kind,
+        ...bindingAdmissionEvidence(binding),
         target: binding.pin,
         config_schema_version: binding.config.schema_version,
         config_hash: canonicalSha256(binding.config),

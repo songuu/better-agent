@@ -26,6 +26,8 @@ import { prepareRootBindingPaths } from '../src/root-binding-paths.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import { workspaceId } from './fixtures.js';
 import { leafCandidate, record } from './leaf-resource-source-fixtures.js';
+import { compiledAgentAdmission } from './resolved-plan-compiler-fixtures.js';
+import { resolveExecutionPlan } from '../src/resolved-plan.js';
 
 function candidate(document: unknown) {
   return { schema_version: 'executable-source-candidate/1', workspace_id: workspaceId, document };
@@ -116,16 +118,29 @@ function fixture(disabled = false, secondMount = false, approval = false) {
   }
   agent.capability_bindings = bindings;
   agent.strategy.allowed_capability_binding_ids = bindings.map((item) => item.binding_id);
-  agent.strategy.allowed_gate_spec_ids = approval ? ['approval'] : [];
+  const inputGate = agent.gate_specs.find((item) => item.gate_spec_id === 'input');
+  const needsInputGate = bindings.some(
+    (item) =>
+      item.kind === 'knowledge' &&
+      item.config.selection === 'force' &&
+      (item.config.forced_execution.on_empty === 'ask_user' ||
+        item.config.forced_execution.on_timeout === 'ask_user'),
+  );
+  if (needsInputGate && inputGate === undefined)
+    throw new Error('fixture input GateSpec is missing');
+  agent.strategy.allowed_gate_spec_ids = [
+    ...(needsInputGate ? ['input'] : []),
+    ...(approval ? ['approval'] : []),
+  ];
   agent.instruction_skill_bindings = [];
   agent.public_capability_handles = [];
   if (approval) {
     const gate = agent.gate_specs.find((item) => item.gate_spec_id === 'approval');
     if (gate === undefined) throw new Error('fixture approval GateSpec is missing');
     gate.protected_operation_contract_hashes = [leaf.operation_contract.contract_hash];
-    agent.gate_specs = [gate];
+    agent.gate_specs = [...(needsInputGate && inputGate !== undefined ? [inputGate] : []), gate];
   } else {
-    agent.gate_specs = [];
+    agent.gate_specs = needsInputGate && inputGate !== undefined ? [inputGate] : [];
   }
   const parsedAgent = AgentExecutableSourceV1Schema.safeParse(agent);
   if (!parsedAgent.success) throw new Error(JSON.stringify(parsedAgent.error.issues));
@@ -199,7 +214,7 @@ function fixture(disabled = false, secondMount = false, approval = false) {
 function rootPolicy(value: ReturnType<typeof fixture>) {
   const allowNoPrincipal = (ceiling: typeof value.policies.root_ceiling) => ({
     ...ceiling,
-    principal_modes: [...ceiling.principal_modes, 'none'],
+    principal_modes: [...new Set([...ceiling.principal_modes, 'none'])],
   });
   return {
     ...value.policies,
@@ -352,6 +367,33 @@ describe('Agent root Binding entry-set assembly', () => {
       principal_modes: ['none'],
       operation_contract_hashes: [],
     });
+  });
+
+  it('rejects forced admission downgrades and call-policy drift at the root source boundary', () => {
+    const value = fixture(false, true);
+    for (const change of ['optional', 'missing', 'order', 'disposition']) {
+      const slice = structuredClone(value.slice) as unknown as {
+        prepared_entries: { entries: Record<string, unknown>[] };
+      };
+      const entry = slice.prepared_entries.entries[0];
+      if (entry === undefined) throw new Error('missing fixture Binding');
+      const call = entry.required_call as Record<string, unknown>;
+      if (change === 'optional') {
+        entry.admission_requirement = 'optional';
+        delete entry.required_call;
+      }
+      if (change === 'missing') delete entry.required_call;
+      if (change === 'order') call.order = 99;
+      if (change === 'disposition') call.on_timeout = 'continue_without_context';
+      expect(() =>
+        prepareAgentRootBindingEntrySet(
+          value.root,
+          value.graph.graph_hash,
+          [slice],
+          rootPolicy(value),
+        ),
+      ).toThrow();
+    }
   });
 
   it('rejects a root aggregate ceiling that cannot carry the folded demand', () => {
@@ -730,6 +772,26 @@ describe('Agent root direct resource-graph assembly', () => {
 });
 
 describe('non-recursive Agent capability closure assembly', () => {
+  it('does not require source-disabled forced knowledge while retaining its source evidence', () => {
+    const value = fixture(true, true);
+    const entries = prepareAgentRootBindingEntrySet(
+      value.root,
+      value.graph.graph_hash,
+      [value.slice],
+      rootPolicy(value),
+    );
+    const closure = prepareNonRecursiveAgentCapabilityClosure(value.root, value.graph, entries);
+    expect(
+      closure.bindings.every(
+        (binding) =>
+          binding.admission_requirement === 'optional' && binding.required_call === undefined,
+      ),
+    ).toBe(true);
+    const plan = resolveExecutionPlan(compiledAgentAdmission(value.root, closure));
+    expect(plan.required_calls).toEqual([]);
+    expect(plan.disabled_binding_paths).toHaveLength(2);
+  });
+
   function prepared(disabled = false, approval = false) {
     const value = fixture(disabled, false, approval);
     const entrySet = prepareAgentRootBindingEntrySet(

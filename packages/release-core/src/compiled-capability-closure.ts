@@ -16,6 +16,7 @@ import { verifyCanonicalBindingPath, verifyCanonicalResourceNodeId } from './clo
 import { deepFreezeJson, publishedResourcePinKey } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { canonicalSha256ExcludingRootKeys } from './hash.js';
+import { createRequiredBindingCallResolver } from './required-binding-call.js';
 
 type CompiledClosureV1 = ReturnType<typeof CompiledCapabilityClosureV1Schema.parse>;
 type ClosureResourceNodeV1 = ReturnType<typeof ClosureResourceNodeV1Schema.parse>;
@@ -71,7 +72,12 @@ export function prepareCompiledCapabilityClosure(input: unknown): Readonly<Compi
       verifyCapabilityRequirementLimitEnvelope(node.intrinsic_policy, parsed.data.aggregate_limits);
     }
   }
+  const resolveRequiredCall = createRequiredBindingCallResolver(
+    parsed.data.gate_specs,
+    parsed.data.resource_nodes,
+  );
   for (const binding of parsed.data.bindings) {
+    resolveRequiredCall(binding);
     verifyCanonicalBindingPath(binding.binding_path, binding.binding_path_segments);
     const normalizedRequirement = normalizeCapabilityRequirementExpression(
       binding.requirement_expression,

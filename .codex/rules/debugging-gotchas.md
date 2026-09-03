@@ -1,5 +1,8 @@
 # Debugging gotchas
 
+- ResolvedPlan 的局部 forced order 不能全局去重；同 child 多 mount 必须以 execution scope 区分。可选 Binding 存于 assembly manifest 不等于调用者必须有权；但根 Strategy/Instruction 不能随可选 child 一起被删掉授权要求。
+- 当全局 pnpm/exec 解析到与仓库不一致的 Biome 时，使用仓库 `node_modules/.bin/biome.cmd` 或 package script；格式器在无大括号的嵌套循环上出现非幂等换行时，加明确块边界后再检查。
+
 - Windows Docker Desktop 的陈旧 AF_UNIX socket 会表现为 backend 初始化崩溃；先核验日志与精确 runtime 目录，再采用可恢复的目录改名隔离，禁止 factory reset。
 - pnpm 跨盘临时 checkout 必须显式传源仓库 store root；Windows 经 `cmd.exe` 时动态参数必须拒绝命令元字符。
 - 证据文档若在最终 source digest 后回填会改变被验输入；最终运行证据应写入 runner 已排除的控制面 sidecar。

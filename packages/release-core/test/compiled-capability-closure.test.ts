@@ -199,6 +199,7 @@ describe('compiled capability closure verification', () => {
           binding_path_segments: segments,
           binding_id: 'knowledge-1',
           binding_kind: 'knowledge',
+          admission_requirement: 'optional',
           target,
           config_schema_version: 'knowledge-binding/1',
           config_hash: hashA,
