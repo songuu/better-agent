@@ -206,6 +206,7 @@ function graph(
   dependency: PublishedResourcePinV1,
   nestedClosureHash: string,
   dependencies: readonly PublishedResourcePinV1[],
+  rootDependencies: readonly PublishedResourcePinV1[] = [dependency],
 ) {
   const owner = (pin: PublishedResourcePinV1) => ({
     workspace_id: pin.workspace_id,
@@ -216,7 +217,7 @@ function graph(
   const candidateGraph = {
     schema_version: 'pinned-dependency-graph-candidate/1',
     root,
-    root_dependencies: [dependency],
+    root_dependencies: rootDependencies,
     resources: [
       {
         schema_version: 'pinned-dependency-record/1',
@@ -534,6 +535,7 @@ describe('nested Agent Binding operation projection', () => {
         value.targetPin,
         closure.closure_hash,
         prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+        prepareExecutableSource(candidate(value.agent)).dependency_manifest.dependencies,
       );
       const result = prepareGraphBoundNestedAgentBindingOperations(
         evidence.expectedGraph,
@@ -605,6 +607,19 @@ describe('nested Agent Binding operation projection', () => {
         evidence.expectedGraph,
         entrySet,
       );
+      // The Strategy remains reachable through the child, but cannot replace its root edge.
+      const missingRootStrategy = preparePinnedDependencyGraph({
+        ...evidence.candidateGraph,
+        root_dependencies: evidence.candidateGraph.root_dependencies.filter(
+          (pin) => pin.published_resource_kind !== 'AGENT_STRATEGY_RELEASE',
+        ),
+      });
+      expect(() =>
+        prepareAgentCapabilityClosure(candidate(value.agent), missingRootStrategy, {
+          ...entrySet,
+          graph_hash: missingRootStrategy.graph_hash,
+        }),
+      ).toThrow(/root dependency manifest/);
       expect(sealedClosure.gate_specs).toEqual(closure.gate_specs);
       expect(sealedClosure.resource_nodes).toEqual(resourceGraph.resource_nodes);
       const admission = compiledAgentAdmission(candidate(value.agent), sealedClosure);

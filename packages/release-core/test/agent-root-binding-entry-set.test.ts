@@ -33,7 +33,7 @@ function candidate(document: unknown) {
   return { schema_version: 'executable-source-candidate/1', workspace_id: workspaceId, document };
 }
 
-function fixture(disabled = false, secondMount = false, approval = false) {
+function fixture(disabled = false, secondMount = false, approval = false, instructions = false) {
   const dependency = leafCandidate(
     secondMount ? 'KNOWLEDGE_INDEX_GENERATION' : 'PLUGIN_TOOL_RELEASE',
   );
@@ -132,7 +132,12 @@ function fixture(disabled = false, secondMount = false, approval = false) {
     ...(needsInputGate ? ['input'] : []),
     ...(approval ? ['approval'] : []),
   ];
-  agent.instruction_skill_bindings = [];
+  if (!instructions) agent.instruction_skill_bindings = [];
+  else {
+    for (const instruction of agent.instruction_skill_bindings) {
+      instruction.allowed_capability_binding_ids = bindings.map((item) => item.binding_id);
+    }
+  }
   agent.public_capability_handles = [];
   if (approval) {
     const gate = agent.gate_specs.find((item) => item.gate_spec_id === 'approval');
@@ -792,8 +797,8 @@ describe('non-recursive Agent capability closure assembly', () => {
     expect(plan.disabled_binding_paths).toHaveLength(2);
   });
 
-  function prepared(disabled = false, approval = false) {
-    const value = fixture(disabled, false, approval);
+  function prepared(disabled = false, approval = false, instructions = false) {
+    const value = fixture(disabled, false, approval, instructions);
     const entrySet = prepareAgentRootBindingEntrySet(
       value.root,
       value.graph.graph_hash,
@@ -822,6 +827,80 @@ describe('non-recursive Agent capability closure assembly', () => {
     expect(result.closure_hash).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(Object.isFrozen(result)).toBe(true);
   });
+
+  it.each(
+    (['AGENT_STRATEGY_RELEASE', 'INSTRUCTION_SKILL_RELEASE'] as const).flatMap((kind) =>
+      [false, true].flatMap((disabled) =>
+        (['missing', 'extra', 'different-hash'] as const).map((mutation) => ({
+          kind,
+          disabled,
+          mutation,
+        })),
+      ),
+    ),
+  )(
+    'rejects a self-consistent graph with $mutation $kind (source disabled: $disabled)',
+    ({ kind, disabled, mutation }) => {
+      const value = prepared(disabled, false, true);
+      expect(() =>
+        prepareNonRecursiveAgentCapabilityClosure(value.root, value.graph, value.entrySet),
+      ).not.toThrow();
+      const graphCandidate = structuredClone(value.graphCandidate);
+      const assemblyDependency = graphCandidate.root_dependencies.find(
+        (pin) => pin.published_resource_kind === kind,
+      );
+      if (assemblyDependency === undefined)
+        throw new Error('root assembly dependency fixture is missing');
+      if (mutation === 'missing') {
+        graphCandidate.root_dependencies = graphCandidate.root_dependencies.filter(
+          (pin) => pin !== assemblyDependency,
+        );
+        graphCandidate.resources = graphCandidate.resources.filter(
+          (node) =>
+            canonicalResourceNodeId(node.pin) !== canonicalResourceNodeId(assemblyDependency),
+        );
+      } else {
+        const replacement = {
+          ...assemblyDependency,
+          ...(mutation === 'extra'
+            ? {
+                resource_id: '00000000-0000-7000-8000-000000000087',
+                resource_version_id: '00000000-0000-7000-8000-000000000088',
+              }
+            : { contract_hash: `sha256:${'c'.repeat(64)}` }),
+        };
+        if (mutation === 'different-hash') {
+          graphCandidate.root_dependencies = graphCandidate.root_dependencies.filter(
+            (pin) => pin !== assemblyDependency,
+          );
+          graphCandidate.resources = graphCandidate.resources.filter(
+            (node) =>
+              canonicalResourceNodeId(node.pin) !== canonicalResourceNodeId(assemblyDependency),
+          );
+        }
+        graphCandidate.root_dependencies = [...graphCandidate.root_dependencies, replacement];
+        graphCandidate.resources.push({
+          schema_version: 'pinned-dependency-record/1',
+          pin: replacement,
+          publication_state: 'sealed',
+          dependency_manifest: deriveDependencyManifest(
+            {
+              workspace_id: replacement.workspace_id,
+              published_resource_kind: replacement.published_resource_kind,
+              resource_id: replacement.resource_id,
+              resource_version_id: replacement.resource_version_id,
+            },
+            [],
+          ),
+        });
+      }
+      const graph = preparePinnedDependencyGraph(graphCandidate);
+      const entries = { ...value.entrySet, graph_hash: graph.graph_hash };
+      expect(() => prepareNonRecursiveAgentCapabilityClosure(value.root, graph, entries)).toThrow(
+        /root dependency manifest/,
+      );
+    },
+  );
 
   it('joins a required Binding to one exact same-root approval GateSpec', () => {
     const value = prepared(false, true);

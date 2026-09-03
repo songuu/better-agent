@@ -332,6 +332,17 @@ export function prepareAgentCapabilityClosure(
       notClosed('$.entry_set.entries', 'root Binding admission differs from its exact source');
   }
   const resourceGraph = prepareAgentRootResourceGraph(graphInput, entrySetInput);
+  const rootResource = resourceGraph.resource_nodes.find((node) => node.node_role === 'root');
+  // Graph self-consistency alone cannot prove which direct dependencies the source declared.
+  if (
+    rootResource === undefined ||
+    rootResource.dependency_manifest_hash !== source.dependency_manifest.manifest_hash
+  ) {
+    notClosed(
+      '$.resource_nodes.root.dependency_manifest_hash',
+      'root dependency manifest differs from the exact supplied Agent source',
+    );
+  }
   verifyNestedGateDirectory(entrySet, resourceGraph);
   const gateSpecs = prepareAgentGateSpecs(rootInput);
   if (

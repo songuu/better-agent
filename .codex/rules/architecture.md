@@ -112,6 +112,8 @@
 
 ## Typed ResolvedPlan admission
 
+- Final Agent closure assembly must compare the independently source-derived root dependency manifest against the graph root manifest reconstructed from exact direct edges. Self-consistent graph hashes and transitive reachability do not prove source completeness; preserve this join even when every capability Binding is source-disabled. This does not establish registry readback or publication authority.
+
 - Join source semantic seed, closure hash and published compiled pin as separate commitments. A public Plan verifier needs the expected hash from a trusted committed admission receipt, not the untrusted Plan itself.
 - Actual credential material identity binds id/version/provider/audience/scopes/mode/subject/handle/fingerprint to its exact epoch tuple; Release grants bind Workspace, authenticated principal and the complete target pin. Hash consistency is not transaction/registry provenance.
 - Source-disabled forced bindings create no execution obligation; policy denial of a source-enabled forced binding still fails admission. Required call order is mount-local and input Gates must have the exact owning source. Replay source obligations at every final unknown boundary.
