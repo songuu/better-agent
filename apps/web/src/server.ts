@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +25,15 @@ export interface BetterAgentWebOptions {
   readonly buildSha?: string;
   readonly now?: () => Date;
   readonly publicRoot?: string;
+}
+
+export function isInvokedEntrypoint(moduleUrl: URL, invokedPath: string | undefined): boolean {
+  if (invokedPath === undefined) return false;
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(invokedPath);
+  } catch {
+    return false;
+  }
 }
 
 function normalizedBuildSha(value: string | undefined): string {
@@ -165,12 +175,15 @@ export async function startBetterAgentWebServer(): Promise<Server> {
       resolve();
     });
   });
-  process.stdout.write(`Better Agent web listening on http://${host}:${port}${WEB_BASE_PATH}\n`);
+  const address = server.address();
+  const listeningPort = typeof address === 'object' && address !== null ? address.port : port;
+  process.stdout.write(
+    `Better Agent web listening on http://${host}:${listeningPort}${WEB_BASE_PATH}\n`,
+  );
   return server;
 }
 
-const invokedPath = process.argv[1];
-if (invokedPath !== undefined && fileURLToPath(import.meta.url) === invokedPath) {
+if (isInvokedEntrypoint(new URL(import.meta.url), process.argv[1])) {
   startBetterAgentWebServer().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`Better Agent web failed to start: ${message}\n`);

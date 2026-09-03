@@ -171,8 +171,8 @@
     {
       "packageName": "@better-agent/web",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 20,
-      "successMarker": "@better-agent/web:test:       Tests  20 passed (20)"
+      "testCount": 22,
+      "successMarker": "@better-agent/web:test:       Tests  22 passed (22)"
     }
   ],
   "scripts": {
@@ -209,7 +209,7 @@
         "@better-agent/release-core:test:       Tests  982 passed (982)",
         "@better-agent/run-core:test:       Tests  103 passed (103)",
         "@better-agent/test-support:test:       Tests  23 passed (23)",
-        "@better-agent/web:test:       Tests  20 passed (20)"
+        "@better-agent/web:test:       Tests  22 passed (22)"
       ],
       "forbidSkippedOutput": true,
       "timeoutMs": 300000
