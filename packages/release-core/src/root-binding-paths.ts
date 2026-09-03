@@ -2,6 +2,7 @@ import type {
   BindingPathSegmentV1Schema,
   CapabilityBindingV1,
   FlowGraphV1,
+  PublishedResourcePinV1,
 } from '@better-agent/domain-contracts';
 
 import { createClosureIdentityRegistry, type ClosureIdentityRegistry } from './closure-identity.js';
@@ -10,7 +11,11 @@ import {
   deepFreezeJson,
   publishedResourcePinKey,
 } from './dependency-manifest.js';
-import { prepareExecutableSource, type PreparedExecutableSourceV1 } from './executable-source.js';
+import {
+  deriveExecutableCompiledHash,
+  prepareExecutableSource,
+  type PreparedExecutableSourceV1,
+} from './executable-source.js';
 import { ReleaseCoreError } from './errors.js';
 import { prepareLeafResourceSource, verifyLeafResourceBindings } from './leaf-resource-source.js';
 import {
@@ -50,7 +55,7 @@ interface FlowNodePaths {
 
 export interface AgentFlowDependencyPaths {
   readonly root: PreparedExecutableSourceV1['root'];
-  readonly dependency: PreparedExecutableSourceV1['root'];
+  readonly dependency: { readonly pin: PublishedResourcePinV1 };
   readonly bindings: readonly (CompiledRootBindingPathV1 & {
     readonly nodes: readonly CompiledFlowNodePathV1[];
   })[];
@@ -98,7 +103,7 @@ interface CompiledInternalSubagentTargetPathV1 {
 
 export interface AgentInternalSubagentDependencyPaths {
   readonly root: PreparedExecutableSourceV1['root'];
-  readonly dependency: PreparedExecutableSourceV1['root'];
+  readonly dependency: { readonly pin: PublishedResourcePinV1 };
   readonly bindings: readonly (CompiledRootBindingPathV1 & {
     readonly subagent_target?: CompiledInternalSubagentTargetPathV1;
   })[];
@@ -271,6 +276,7 @@ export function prepareFlowNodePaths(input: unknown): FlowNodePaths {
 export function prepareAgentFlowDependencyPaths(
   rootInput: unknown,
   dependencyInput: unknown,
+  dependencyClosureHash: string,
 ): AgentFlowDependencyPaths {
   const rootSource = prepareExecutableSource(rootInput);
   const dependencySource = prepareExecutableSource(dependencyInput);
@@ -295,6 +301,7 @@ export function prepareAgentFlowDependencyPaths(
   };
   const flowPin = {
     ...dependencySource.root.pin,
+    contract_hash: deriveExecutableCompiledHash(dependencyInput, dependencyClosureHash),
     published_resource_kind: 'FLOW_VERSION' as const,
   };
   const targetKey = publishedResourcePinKey(flowPin);
@@ -340,7 +347,7 @@ export function prepareAgentFlowDependencyPaths(
     .sort(compareCanonicalStrings);
   return deepFreezeJson({
     root: rootSource.root,
-    dependency: dependencySource.root,
+    dependency: { pin: flowPin },
     bindings,
     source_disabled_binding_paths,
   });
@@ -438,6 +445,7 @@ export function prepareAgentSkillPackDependencyPaths(
 export function prepareAgentInternalSubagentDependencyPaths(
   rootInput: unknown,
   dependencyInput: unknown,
+  dependencyClosureHash: string,
 ): AgentInternalSubagentDependencyPaths {
   const rootSource = prepareExecutableSource(rootInput);
   const dependencySource = prepareExecutableSource(dependencyInput);
@@ -458,6 +466,7 @@ export function prepareAgentInternalSubagentDependencyPaths(
   };
   const targetPin = {
     ...dependencySource.root.pin,
+    contract_hash: deriveExecutableCompiledHash(dependencyInput, dependencyClosureHash),
     published_resource_kind: 'AGENT_RELEASE' as const,
   };
   const targetKey = publishedResourcePinKey(targetPin);
@@ -540,7 +549,7 @@ export function prepareAgentInternalSubagentDependencyPaths(
   });
   return deepFreezeJson({
     root: rootSource.root,
-    dependency: dependencySource.root,
+    dependency: { pin: targetPin },
     bindings,
     source_disabled_binding_paths: disabledPaths.sort(compareCanonicalStrings),
   });

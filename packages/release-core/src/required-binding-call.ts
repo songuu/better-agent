@@ -1,6 +1,7 @@
 import type {
   CapabilityBindingV1,
   CompiledCapabilityClosureV1,
+  PublishedResourcePinV1,
 } from '@better-agent/domain-contracts';
 import { canonicalBindingPath } from './closure-identity.js';
 import { ReleaseCoreError } from './errors.js';
@@ -21,6 +22,7 @@ export function verifyProjectedBindingAdmission(
   nested: CompiledCapabilityClosureV1,
   mounts: readonly (readonly CompiledCapabilityClosureV1['bindings'][number]['binding_path_segments'][number][])[],
   entries: readonly CompiledCapabilityClosureV1['bindings'][number][],
+  publishedRootPin: PublishedResourcePinV1,
 ) {
   if (mounts.length * nested.bindings.length > 8_192)
     throw new ReleaseCoreError(
@@ -36,7 +38,7 @@ export function verifyProjectedBindingAdmission(
         segment.owner.owner_kind === 'root'
           ? {
               ...segment,
-              owner: { owner_kind: 'published_dependency' as const, pin: nested.root.pin },
+              owner: { owner_kind: 'published_dependency' as const, pin: publishedRootPin },
             }
           : segment,
       );

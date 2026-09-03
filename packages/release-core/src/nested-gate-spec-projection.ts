@@ -2,10 +2,11 @@ import {
   type BindingPathSegmentV1Schema,
   CompiledGateSpecEntryV1Schema,
   type CompiledCapabilityClosureV1,
+  type PublishedResourcePinV1,
 } from '@better-agent/domain-contracts';
 
 import { canonicalJsonBytes } from './canonical-json.js';
-import { canonicalBindingPath } from './closure-identity.js';
+import { canonicalBindingPath, verifyCanonicalResourceNodeId } from './closure-identity.js';
 import { compareCanonicalStrings } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { withinProjectedBindingCapacity } from './projection-capacity.js';
@@ -48,8 +49,9 @@ export function verifyDirectGateSpecs(
 export function projectNestedGateSpecs(
   nestedClosure: NestedGateClosure,
   mountPathSegments: readonly (readonly BindingPathSegmentV1[])[],
-  projectedRootNodeId: string,
+  publishedRoot: { readonly node_id: string; readonly pin: PublishedResourcePinV1 },
 ): readonly CompiledGateSpecEntryV1[] {
+  verifyCanonicalResourceNodeId(publishedRoot.node_id, publishedRoot.pin);
   if (!withinProjectedBindingCapacity(mountPathSegments.length, nestedClosure.gate_specs.length)) {
     mismatch('$.nested_closure.gate_specs', 'projected child GateSpec namespace exceeds its bound');
   }
@@ -58,7 +60,7 @@ export function projectNestedGateSpecs(
   const projected = mountPathSegments.flatMap((mountSegments) =>
     nestedClosure.gate_specs.map((gate) => {
       const sourceNodeId =
-        gate.source_node_id === rootNode.node_id ? projectedRootNodeId : gate.source_node_id;
+        gate.source_node_id === rootNode.node_id ? publishedRoot.node_id : gate.source_node_id;
       if (gate.source_kind === 'agent_release') return { ...gate, source_node_id: sourceNodeId };
       const [rootSegment, ...descendantSegments] = gate.source_binding_path_segments;
       if (
@@ -78,7 +80,7 @@ export function projectNestedGateSpecs(
         ) {
           return {
             ...segment,
-            owner: { owner_kind: 'published_dependency' as const, pin: nestedClosure.root.pin },
+            owner: { owner_kind: 'published_dependency' as const, pin: publishedRoot.pin },
           };
         }
         return segment;

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PublishedResourcePinV1 } from '@better-agent/domain-contracts';
 import {
   deriveDependencyManifest,
+  deriveExecutableCompiledHash,
   prepareExecutableSource,
   prepareLeafResourceSource,
   preparePinnedDependencyGraph,
@@ -50,6 +51,7 @@ describe('graph-bound direct path adapters', () => {
     const flow = nestedFlowSource();
     const flowPin = {
       ...prepareExecutableSource(candidate(flow)).root.pin,
+      contract_hash: deriveExecutableCompiledHash(candidate(flow), hashB),
       published_resource_kind: 'FLOW_VERSION' as const,
     };
     const agent = richAgentSource();
@@ -63,6 +65,7 @@ describe('graph-bound direct path adapters', () => {
       evidence.graphCandidate,
       candidate(agent),
       candidate(flow),
+      hashB,
     );
     expect(result.graph_binding.dependency_node.nested_closure_hash).toBe(hashB);
     expect(result.prepared_paths.bindings.some((item) => item.nodes.length > 0)).toBe(true);
@@ -74,6 +77,7 @@ describe('graph-bound direct path adapters', () => {
     target.agent_release_id = '00000000-0000-7000-8000-000000000099';
     const targetPin = {
       ...prepareExecutableSource(candidate(target)).root.pin,
+      contract_hash: deriveExecutableCompiledHash(candidate(target), hashB),
       published_resource_kind: 'AGENT_RELEASE' as const,
     };
     const agent = richAgentSource();
@@ -89,6 +93,7 @@ describe('graph-bound direct path adapters', () => {
       evidence.graphCandidate,
       candidate(agent),
       candidate(target),
+      hashB,
     );
     expect(result.graph_binding.dependency_node.nested_closure_hash).toBe(hashB);
     expect(result.prepared_paths.bindings.some((item) => item.subagent_target !== undefined)).toBe(

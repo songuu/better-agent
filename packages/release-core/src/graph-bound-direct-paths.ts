@@ -31,11 +31,12 @@ export function prepareGraphBoundAgentFlowPaths(
   graphCandidate: unknown,
   rootInput: unknown,
   dependencyInput: unknown,
+  dependencyClosureHash: string,
 ) {
   return bind(
     expectedGraph,
     graphCandidate,
-    prepareAgentFlowDependencyPaths(rootInput, dependencyInput),
+    prepareAgentFlowDependencyPaths(rootInput, dependencyInput, dependencyClosureHash),
   );
 }
 
@@ -44,11 +45,12 @@ export function prepareGraphBoundInternalSubagentPaths(
   graphCandidate: unknown,
   rootInput: unknown,
   dependencyInput: unknown,
+  dependencyClosureHash: string,
 ) {
   return bind(
     expectedGraph,
     graphCandidate,
-    prepareAgentInternalSubagentDependencyPaths(rootInput, dependencyInput),
+    prepareAgentInternalSubagentDependencyPaths(rootInput, dependencyInput, dependencyClosureHash),
   );
 }
 

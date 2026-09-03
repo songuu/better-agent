@@ -258,7 +258,7 @@ function verifyNestedGateDirectory(
             ...entry.binding_path_segments,
             BindingPathSegmentV1Schema.parse({
               segment_kind: 'subagent_target',
-              target_pin: nested.closure.root.pin,
+              target_pin: node.pin,
             }),
           ],
     );
@@ -271,6 +271,7 @@ function verifyNestedGateDirectory(
       nested.closure,
       mountPaths,
       entrySet.descendant_binding_entries,
+      node.pin,
     );
     if (nextProjectedGateCount === undefined) {
       notClosed(
@@ -279,7 +280,7 @@ function verifyNestedGateDirectory(
       );
     }
     projectedGateCount = nextProjectedGateCount;
-    for (const gate of projectNestedGateSpecs(nested.closure, mountPaths, node.node_id)) {
+    for (const gate of projectNestedGateSpecs(nested.closure, mountPaths, node)) {
       const identity = gateIdentity(gate);
       const existing = expectedByIdentity.get(identity);
       if (

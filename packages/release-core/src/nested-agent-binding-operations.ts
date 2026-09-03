@@ -8,7 +8,10 @@ import type {
 
 import { canonicalJsonBytes } from './canonical-json.js';
 import { canonicalBindingPath } from './closure-identity.js';
-import { prepareNestedCapabilityDependency } from './compiled-capability-closure.js';
+import {
+  prepareCompiledCapabilityClosure,
+  prepareNestedCapabilityDependency,
+} from './compiled-capability-closure.js';
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
@@ -72,15 +75,17 @@ export function prepareGraphBoundNestedAgentBindingOperations(
   dependencyInput: unknown,
   nestedClosureInput: unknown,
 ): PreparedNestedAgentBindingOperationsV1 {
+  const verifiedClosure = prepareCompiledCapabilityClosure(nestedClosureInput);
   const graphBound = prepareGraphBoundInternalSubagentPaths(
     expectedGraph,
     graphCandidate,
     rootInput,
     dependencyInput,
+    verifiedClosure.closure_hash,
   );
   const nestedDependency = prepareNestedCapabilityDependency(
     graphBound.graph_binding.dependency_node,
-    nestedClosureInput,
+    verifiedClosure,
   );
   const nestedClosure = nestedDependency.closure;
   verifyDirectGateSpecs(nestedClosure, prepareAgentGateSpecs(dependencyInput).gate_specs);
@@ -209,7 +214,7 @@ export function prepareGraphBoundNestedAgentBindingOperations(
             ...segment,
             owner: {
               owner_kind: 'published_dependency' as const,
-              pin: nestedClosure.root.pin,
+              pin: nestedDependency.resource_node.pin,
             },
           };
         }
@@ -271,7 +276,7 @@ export function prepareGraphBoundNestedAgentBindingOperations(
     projectedParents.map(
       (parentBinding) => parentBinding.subagent_target?.target_path_segments ?? [],
     ),
-    nestedDependency.resource_node.node_id,
+    nestedDependency.resource_node,
   );
 
   return deepFreezeJson({

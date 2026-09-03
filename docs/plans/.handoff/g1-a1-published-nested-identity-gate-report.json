@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "architecture-gate-report/2",
+  "sourceManifest": {
+    "digest": "sha256:f9de67f8615d73338ab1bf46308479b71af79c4656ea7337998db209f882c65c",
+    "fileCount": 458,
+    "totalBytes": 6666075
+  },
+  "controlPlaneManifest": {
+    "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "fileCount": 0,
+    "totalBytes": 0
+  },
+  "gateManifest": "sha256:bb43af4582605a33a58178339f6f12bb5efea93d3066728099b040e8d2c7fc11",
+  "gates": [
+    {
+      "id": "mutation",
+      "status": "pass",
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 8223,
+      "stdoutBytes": 7579,
+      "stdoutSha256": "sha256:0a1ddb948801fcab703bdfbf0f5c58f981d1fbebb5a93c18a5e4e2e28ca63865",
+      "stderrBytes": 0,
+      "stderrSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error": null
+    },
+    {
+      "id": "quality",
+      "status": "pass",
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 289469,
+      "stdoutBytes": 81018,
+      "stdoutSha256": "sha256:a669bacd777eb95292dfe25ba42e1a8373465cef8831fcdadc5d10caaa7c845a",
+      "stderrBytes": 6952,
+      "stderrSha256": "sha256:1f607e0613a34a1e2ad96c7689e5126cdac08ea1a94f3900ee8f0e8e4a924d14",
+      "error": null
+    },
+    {
+      "id": "postgres16",
+      "status": "pass",
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 839843,
+      "stdoutBytes": 3332,
+      "stdoutSha256": "sha256:f28089a03ace4b835e001bdc6159670c58e6381a0745c58eeba4ee8afaadb6a1",
+      "stderrBytes": 0,
+      "stderrSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error": null
+    }
+  ],
+  "cleanBefore": true,
+  "cleanAfter": true,
+  "result": "pass",
+  "error": null
+}

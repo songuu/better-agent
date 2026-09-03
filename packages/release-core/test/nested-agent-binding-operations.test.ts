@@ -15,7 +15,7 @@ import {
 import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
 import { prepareCompiledCapabilityClosure } from '../src/compiled-capability-closure.js';
 import { compareCanonicalStrings, deriveDependencyManifest } from '../src/dependency-manifest.js';
-import { prepareExecutableSource } from '../src/executable-source.js';
+import { deriveExecutableCompiledHash, prepareExecutableSource } from '../src/executable-source.js';
 import { canonicalSha256, canonicalSha256ExcludingRootKeys } from '../src/hash.js';
 import { prepareGraphBoundNestedAgentBindingOperations } from '../src/nested-agent-binding-operations.js';
 import { projectNestedGateSpecs } from '../src/nested-gate-spec-projection.js';
@@ -71,6 +71,10 @@ function targetSources(parentEnabled = true) {
   target.agent_release_id = '00000000-0000-7000-8000-000000000099';
   const targetPin = {
     ...prepareExecutableSource(candidate(target)).root.pin,
+    contract_hash: deriveExecutableCompiledHash(
+      candidate(target),
+      compiledClosure(target).closure_hash,
+    ),
     published_resource_kind: 'AGENT_RELEASE' as const,
   };
   const agent = richAgentSource();
@@ -241,6 +245,20 @@ function graph(
   return { candidateGraph, expectedGraph: preparePinnedDependencyGraph(candidateGraph) };
 }
 
+function repinChild(value: ReturnType<typeof targetSources>, closureHash: string) {
+  value.targetPin = {
+    ...value.targetPin,
+    contract_hash: deriveExecutableCompiledHash(candidate(value.target), closureHash),
+  };
+  for (const binding of value.agent.capability_bindings) {
+    if (
+      binding.kind === 'subagent' &&
+      binding.pin.resource_version_id === value.targetPin.resource_version_id
+    )
+      binding.pin = value.targetPin;
+  }
+}
+
 function prepared(parentEnabled = true) {
   const sources = targetSources(parentEnabled);
   const closure = compiledClosure(sources.target);
@@ -326,6 +344,63 @@ function compositePolicy(
 }
 
 describe('nested Agent Binding operation projection', () => {
+  it.each(['semantic-seed', 'closure-hash', 'other-closure'] as const)(
+    'rejects a self-consistent published Agent graph using %s as its contract hash',
+    (substitution) => {
+      const value = prepared();
+      const wrongPin = {
+        ...value.targetPin,
+        contract_hash:
+          substitution === 'semantic-seed'
+            ? value.closure.root.semantic_seed_hash
+            : substitution === 'closure-hash'
+              ? value.closure.closure_hash
+              : deriveExecutableCompiledHash(candidate(value.target), hashB),
+      };
+      value.parentBinding.pin = wrongPin;
+      const evidence = graph(
+        prepareExecutableSource(candidate(value.agent)).root,
+        wrongPin,
+        value.closure.closure_hash,
+        value.closure.assembly_pins,
+      );
+      expect(() =>
+        prepareGraphBoundNestedAgentBindingOperations(
+          evidence.expectedGraph,
+          evidence.candidateGraph,
+          candidate(value.agent),
+          candidate(value.target),
+          value.closure,
+        ),
+      ).toThrow('CAPABILITY_DEPENDENCY_UNRESOLVED');
+    },
+  );
+  it('joins the actual published compiled Agent pin rather than its semantic seed', () => {
+    const value = prepared();
+    const publishedPin = {
+      ...value.targetPin,
+      contract_hash: deriveExecutableCompiledHash(
+        candidate(value.target),
+        value.closure.closure_hash,
+      ),
+    };
+    expect(publishedPin.contract_hash).not.toBe(value.closure.root.semantic_seed_hash);
+    value.parentBinding.pin = publishedPin;
+    const evidence = graph(
+      prepareExecutableSource(candidate(value.agent)).root,
+      publishedPin,
+      value.closure.closure_hash,
+      value.closure.assembly_pins,
+    );
+    const result = prepareGraphBoundNestedAgentBindingOperations(
+      evidence.expectedGraph,
+      evidence.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      value.closure,
+    );
+    expect(result.dependency_resource_node.pin).toEqual(publishedPin);
+  });
   it('bounds recursive graph edge fan-out at the exact closure limit', () => {
     expect(withinRecursiveResourceGraphCapacity(8_190, [1, 1])).toBe(true);
     expect(withinRecursiveResourceGraphCapacity(8_190, [1, 2])).toBe(false);
@@ -357,14 +432,14 @@ describe('nested Agent Binding operation projection', () => {
       projectNestedGateSpecs(
         closure,
         Array.from({ length: 4_096 }, () => mount),
-        canonicalResourceNodeId(value.targetPin),
+        { node_id: canonicalResourceNodeId(value.targetPin), pin: value.targetPin },
       ),
     ).toHaveLength(2);
     expect(() =>
       projectNestedGateSpecs(
         closure,
         Array.from({ length: 4_097 }, () => mount),
-        canonicalResourceNodeId(value.targetPin),
+        { node_id: canonicalResourceNodeId(value.targetPin), pin: value.targetPin },
       ),
     ).toThrow('NESTED_CAPABILITY_CLOSURE_MISMATCH');
   });
@@ -445,6 +520,7 @@ describe('nested Agent Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
@@ -463,7 +539,7 @@ describe('nested Agent Binding operation projection', () => {
 
   it('rewrites source-owned GateSpecs to the graph-committed child node identity', () => {
     const value = targetSources();
-    const publishedPin = { ...value.targetPin, contract_hash: hashB };
+    const publishedPin = value.targetPin;
     const closure = compiledClosure(value.target);
     const targetPath = prepareRootBindingPaths(candidate(value.agent)).bindings.find(
       (path) => path.binding_id === value.parentBinding.binding_id,
@@ -477,7 +553,7 @@ describe('nested Agent Binding operation projection', () => {
           { segment_kind: 'subagent_target', target_pin: value.targetPin },
         ],
       ],
-      canonicalResourceNodeId(publishedPin),
+      { node_id: canonicalResourceNodeId(publishedPin), pin: publishedPin },
     );
     expect(new Set(projected.map((gate) => gate.source_node_id))).toEqual(
       new Set([canonicalResourceNodeId(publishedPin)]),
@@ -512,8 +588,10 @@ describe('nested Agent Binding operation projection', () => {
           value.target.capability_bindings.push(copy);
         }
       }
+      const closure = compiledClosure(value.target);
       value.targetPin = {
         ...prepareExecutableSource(candidate(value.target)).root.pin,
+        contract_hash: deriveExecutableCompiledHash(candidate(value.target), closure.closure_hash),
         published_resource_kind: 'AGENT_RELEASE' as const,
       };
       value.parentBinding.pin = value.targetPin;
@@ -528,7 +606,6 @@ describe('nested Agent Binding operation projection', () => {
       value.agent.instruction_skill_bindings = [];
       value.agent.public_capability_handles = [];
       value.agent.gate_specs = [];
-      const closure = compiledClosure(value.target);
       const root = prepareExecutableSource(candidate(value.agent)).root;
       const evidence = graph(
         root,
@@ -553,7 +630,12 @@ describe('nested Agent Binding operation projection', () => {
       expect(
         new Set(result.projected_binding_entries.map((entry) => entry.binding_path)).size,
       ).toBe(closure.bindings.length * 2);
-      expect(result.projected_gate_specs).toEqual(closure.gate_specs);
+      expect(result.projected_gate_specs).toEqual(
+        closure.gate_specs.map((gate) => ({
+          ...gate,
+          source_node_id: canonicalResourceNodeId(value.targetPin),
+        })),
+      );
 
       const calls = [
         subagentCall(value.agent),
@@ -620,7 +702,7 @@ describe('nested Agent Binding operation projection', () => {
           graph_hash: missingRootStrategy.graph_hash,
         }),
       ).toThrow(/root dependency manifest/);
-      expect(sealedClosure.gate_specs).toEqual(closure.gate_specs);
+      expect(sealedClosure.gate_specs).toEqual(result.projected_gate_specs);
       expect(sealedClosure.resource_nodes).toEqual(resourceGraph.resource_nodes);
       const admission = compiledAgentAdmission(candidate(value.agent), sealedClosure);
       if (mode === 'large-gate-fanout') {
@@ -838,6 +920,9 @@ describe('nested Agent Binding operation projection', () => {
         ).toEqual(expectedSourcePaths);
       }
     },
+    // This boundary vector compiles and verifies the full fanout repeatedly;
+    // the production 32 MiB/8,192-entry limits remain the actual guard under test.
+    15_000,
   );
 
   it('rejects a resealed child closure that omits source-owned GateSpecs', () => {
@@ -847,6 +932,7 @@ describe('nested Agent Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
@@ -881,6 +967,7 @@ describe('nested Agent Binding operation projection', () => {
       if (change === 'order') call.order = 99;
       if (change === 'disposition') call.on_timeout = 'continue_without_context';
       draft.closure_hash = canonicalSha256ExcludingRootKeys(draft, ['closure_hash']);
+      repinChild(value, draft.closure_hash);
       const evidence = graph(
         prepareExecutableSource(candidate(value.agent)).root,
         value.targetPin,
@@ -910,6 +997,7 @@ describe('nested Agent Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
@@ -938,6 +1026,7 @@ describe('nested Agent Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
@@ -967,6 +1056,7 @@ describe('nested Agent Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
@@ -1029,6 +1119,7 @@ describe('nested Agent Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
@@ -1457,6 +1548,7 @@ describe('nested Agent Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
@@ -1546,6 +1638,10 @@ describe('nested Agent Binding operation projection', () => {
     plugin.enabled = false;
     const targetPin = {
       ...prepareExecutableSource(candidate(sources.target)).root.pin,
+      contract_hash: deriveExecutableCompiledHash(
+        candidate(sources.target),
+        compiledClosure(sources.target).closure_hash,
+      ),
       published_resource_kind: 'AGENT_RELEASE' as const,
     };
     sources.parentBinding.pin = targetPin;
@@ -1645,6 +1741,7 @@ describe('nested Agent Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,
@@ -1743,6 +1840,7 @@ describe('nested Agent Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(candidate(value.agent)).root,
       value.targetPin,

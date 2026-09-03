@@ -210,17 +210,42 @@ function prepareEntries(
   const policyByParentPath = new Map(
     policies.binding_ceilings.map((item) => [item.binding_path, item.ceiling]),
   );
+  const childNodes = new Map(
+    projection.nested_closure.resource_nodes.map((node) => [node.node_id, node]),
+  );
   const descendantEntries = projected
     .map((item) => {
       const parentCeiling = policyByParentPath.get(item.parent_binding_path);
       if (parentCeiling === undefined) notClosed('$.policy.binding_ceilings');
       const requirements = compileCapabilityRequirementEnvelope(item.entry.requirement_expression);
+      const expression = item.entry.requirement_expression;
+      const nestedCall = expression.expression_kind === 'nested_call';
+      if (nestedCall) {
+        const targetNode = childNodes.get(canonicalResourceNodeId(item.entry.target));
+        if (
+          !(
+            (item.entry.binding_kind === 'flow' &&
+              item.entry.target.published_resource_kind === 'FLOW_VERSION') ||
+            (item.entry.binding_kind === 'subagent' &&
+              item.entry.target.published_resource_kind === 'AGENT_RELEASE')
+          ) ||
+          item.entry.operation_contracts.length !== 1 ||
+          targetNode === undefined ||
+          !item.entry.dependency_node_ids.includes(targetNode.node_id) ||
+          canonicalSha256(expression.child) !== canonicalSha256(targetNode.intrinsic_policy)
+        )
+          notClosed(
+            `$.descendant_binding_entries.${item.binding_path}.requirement_expression`,
+            'nested call must retain the exact target resource demand',
+          );
+      }
+      const directRequirements = nestedCall ? expression.invocation : requirements;
       const operationHashes = item.entry.operation_contracts
         .map((operation) => operation.contract_hash)
         .sort();
       if (
-        requirements.operation_contract_hashes.length !== operationHashes.length ||
-        requirements.operation_contract_hashes.some(
+        directRequirements.operation_contract_hashes.length !== operationHashes.length ||
+        directRequirements.operation_contract_hashes.some(
           (hash, index) => hash !== operationHashes[index],
         )
       ) {
@@ -230,15 +255,24 @@ function prepareEntries(
         );
       }
       const disabled = !item.parent_enabled || item.source_disabled;
-      const effectivePolicy = disabled
-        ? unavailableDescendantPolicy(item.entry)
-        : resolveEffectiveCapabilityPolicy(
-            meetCapabilityPolicyCeilings(
-              meetCapabilityPolicyCeilings(sharedCeiling, parentCeiling),
-              effectivePolicyAsCeiling(item.entry.effective_policy),
-            ),
-            requirements,
-          );
+      // The full nested demand must fit the new parent. Its call entry still
+      // exposes only invocation operations; descendant entries authorize child operations.
+      let effectivePolicy: EffectiveCapabilityPolicyV1;
+      if (disabled) {
+        effectivePolicy = unavailableDescendantPolicy(item.entry);
+      } else {
+        const parentPolicy = resolveEffectiveCapabilityPolicy(
+          meetCapabilityPolicyCeilings(sharedCeiling, parentCeiling),
+          requirements,
+        );
+        effectivePolicy = resolveEffectiveCapabilityPolicy(
+          meetCapabilityPolicyCeilings(
+            effectivePolicyAsCeiling(parentPolicy),
+            effectivePolicyAsCeiling(item.entry.effective_policy),
+          ),
+          { ...requirements, operation_contract_hashes: operationHashes },
+        );
+      }
       const skillPackOperationRoutes = item.entry.skill_pack_operation_routes?.map((route) => {
         if (route.pack_binding_path !== item.source_binding_path) {
           notClosed(

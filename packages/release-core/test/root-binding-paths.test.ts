@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canonicalBindingPath,
   compareCanonicalStrings,
+  deriveExecutableCompiledHash,
   prepareExecutableSource,
   prepareLeafResourceSource,
   prepareSkillPackSource,
@@ -22,7 +23,7 @@ import {
   nestedFlowSource,
   richAgentSource,
 } from './executable-source-fixtures.js';
-import { workspaceId } from './fixtures.js';
+import { hashA, workspaceId } from './fixtures.js';
 import { leafCandidate, record } from './leaf-resource-source-fixtures.js';
 import { skillPackSource } from './skill-pack-source-fixtures.js';
 
@@ -340,6 +341,7 @@ function matchingAgentFlowSources() {
   const flow = nestedFlowSource();
   const flowPin = {
     ...prepareExecutableSource(candidate(flow)).root.pin,
+    contract_hash: deriveExecutableCompiledHash(candidate(flow), hashA),
     published_resource_kind: 'FLOW_VERSION' as const,
   };
   const agent = richAgentSource();
@@ -352,7 +354,7 @@ function matchingAgentFlowSources() {
 describe('Agent-owned Flow dependency paths', () => {
   it('prefixes nested Flow nodes with the exact root Binding path', () => {
     const { agent, flow, binding } = matchingAgentFlowSources();
-    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow), hashA);
     const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
     const node = compiled?.nodes.find(
       (candidateNode) => candidateNode.graph_id === 'root' && candidateNode.node_id === 'start-1',
@@ -377,7 +379,7 @@ describe('Agent-owned Flow dependency paths', () => {
 
   it('registers the complete root Binding namespace before expanding one dependency', () => {
     const { agent, flow } = matchingAgentFlowSources();
-    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow), hashA);
     expect(result.bindings).toHaveLength(agent.capability_bindings.length);
     expect(result.bindings.filter((binding) => binding.nodes.length > 0)).toHaveLength(1);
     expect(result.bindings.filter((binding) => binding.nodes.length === 0)).toHaveLength(
@@ -390,6 +392,7 @@ describe('Agent-owned Flow dependency paths', () => {
     const compiled = prepareAgentFlowDependencyPaths(
       candidate(agent),
       candidate(flow),
+      hashA,
     ).bindings.find((binding) => binding.binding_kind === 'flow' && binding.nodes.length > 0);
     const leaf = compiled?.nodes.find(
       (node) => node.graph_id === 'body' && node.node_id === 'leaf',
@@ -409,7 +412,7 @@ describe('Agent-owned Flow dependency paths', () => {
     second.binding_id = 'flow-second';
     agent.capability_bindings.push(second);
     agent.strategy.allowed_capability_binding_ids.push(second.binding_id);
-    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow), hashA);
     const expanded = result.bindings.filter((item) => item.nodes.length > 0);
     expect(expanded).toHaveLength(2);
     const firstNode = expanded[0]?.nodes.find((node) => node.node_id === 'start-1');
@@ -420,7 +423,7 @@ describe('Agent-owned Flow dependency paths', () => {
   it('keeps disabled dependency Bindings addressable and projects their root path only', () => {
     const { agent, flow, binding } = matchingAgentFlowSources();
     binding.enabled = false;
-    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow), hashA);
     const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
     expect(compiled?.nodes).toHaveLength(12);
     expect(result.source_disabled_binding_paths).toEqual([compiled?.binding_path]);
@@ -430,13 +433,14 @@ describe('Agent-owned Flow dependency paths', () => {
     const flow = maximumNodeFlowSource();
     const flowPin = {
       ...prepareExecutableSource(candidate(flow)).root.pin,
+      contract_hash: deriveExecutableCompiledHash(candidate(flow), hashA),
       published_resource_kind: 'FLOW_VERSION' as const,
     };
     const agent = richAgentSource();
     const binding = agent.capability_bindings.find((item) => item.kind === 'flow');
     if (binding === undefined) throw new Error('fixture is missing its Flow Binding');
     binding.pin = flowPin;
-    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow), hashA);
     expect(
       result.bindings.find((item) => item.binding_id === binding.binding_id)?.nodes,
     ).toHaveLength(4096);
@@ -446,21 +450,21 @@ describe('Agent-owned Flow dependency paths', () => {
     const { agent, flow } = matchingAgentFlowSources();
     (flow as unknown as { flow_version_id: string }).flow_version_id =
       '00000000-0000-7000-8000-000000000099';
-    expect(() => prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow))).toThrow(
+    expect(() => prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow), hashA)).toThrow(
       'CAPABILITY_DEPENDENCY_UNRESOLVED',
     );
   });
 
   it('revalidates both raw sources and rejects reversed root/dependency roles', () => {
     const { agent, flow } = matchingAgentFlowSources();
-    expect(() => prepareAgentFlowDependencyPaths(candidate(flow), candidate(agent))).toThrow(
+    expect(() => prepareAgentFlowDependencyPaths(candidate(flow), candidate(agent), hashA)).toThrow(
       'CLOSURE_SOURCE_INVALID',
     );
   });
 
   it('returns one deeply frozen closure-local snapshot without an authority hash', () => {
     const { agent, flow } = matchingAgentFlowSources();
-    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow));
+    const result = prepareAgentFlowDependencyPaths(candidate(agent), candidate(flow), hashA);
     expect(result).not.toHaveProperty('closure_hash');
     expect(Object.isFrozen(result)).toBe(true);
     const expanded = result.bindings.find((binding) => binding.nodes.length > 0);
@@ -634,6 +638,7 @@ function matchingInternalSubagentSources() {
     '00000000-0000-7000-8000-000000000099';
   const targetPin = {
     ...prepareExecutableSource(candidate(target)).root.pin,
+    contract_hash: deriveExecutableCompiledHash(candidate(target), hashA),
     published_resource_kind: 'AGENT_RELEASE' as const,
   };
   const agent = richAgentSource();
@@ -648,7 +653,11 @@ function matchingInternalSubagentSources() {
 describe('Agent-owned internal SubAgent target paths', () => {
   it('registers the complete parent namespace and expands the target Agent namespace', () => {
     const { agent, target, binding } = matchingInternalSubagentSources();
-    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    const result = prepareAgentInternalSubagentDependencyPaths(
+      candidate(agent),
+      candidate(target),
+      hashA,
+    );
     expect(result.bindings).toHaveLength(agent.capability_bindings.length);
     const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
     expect(compiled?.subagent_target?.bindings).toHaveLength(target.capability_bindings.length);
@@ -657,7 +666,11 @@ describe('Agent-owned internal SubAgent target paths', () => {
 
   it('constructs root, parent Binding, target and dependency-owned Binding segments', () => {
     const { agent, target, binding } = matchingInternalSubagentSources();
-    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    const result = prepareAgentInternalSubagentDependencyPaths(
+      candidate(agent),
+      candidate(target),
+      hashA,
+    );
     const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
     const targetPath = compiled?.subagent_target;
     const targetBinding = targetPath?.bindings[0];
@@ -686,7 +699,11 @@ describe('Agent-owned internal SubAgent target paths', () => {
 
   it('separates identical local Binding IDs in parent and target Agent namespaces', () => {
     const { agent, target } = matchingInternalSubagentSources();
-    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    const result = prepareAgentInternalSubagentDependencyPaths(
+      candidate(agent),
+      candidate(target),
+      hashA,
+    );
     const parent = result.bindings.find((binding) => binding.binding_id === 'plugin');
     const nested = result.bindings
       .find((binding) => binding.subagent_target !== undefined)
@@ -703,6 +720,7 @@ describe('Agent-owned internal SubAgent target paths', () => {
     const expanded = prepareAgentInternalSubagentDependencyPaths(
       candidate(agent),
       candidate(target),
+      hashA,
     ).bindings.filter((item) => item.subagent_target !== undefined);
     expect(expanded).toHaveLength(2);
     expect(expanded[0]?.subagent_target?.target_path).not.toBe(
@@ -717,10 +735,15 @@ describe('Agent-owned internal SubAgent target paths', () => {
     disabled.enabled = false;
     const refreshedPin = {
       ...prepareExecutableSource(candidate(target)).root.pin,
+      contract_hash: deriveExecutableCompiledHash(candidate(target), hashA),
       published_resource_kind: 'AGENT_RELEASE' as const,
     };
     binding.pin = refreshedPin;
-    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    const result = prepareAgentInternalSubagentDependencyPaths(
+      candidate(agent),
+      candidate(target),
+      hashA,
+    );
     const nested = result.bindings
       .find((item) => item.binding_id === binding.binding_id)
       ?.subagent_target?.bindings.find((item) => item.binding_id === disabled.binding_id);
@@ -733,7 +756,7 @@ describe('Agent-owned internal SubAgent target paths', () => {
     (target as unknown as { agent_release_id: string }).agent_release_id =
       '00000000-0000-7000-8000-000000000097';
     expect(() =>
-      prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target)),
+      prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target), hashA),
     ).toThrow('CAPABILITY_DEPENDENCY_UNRESOLVED');
   });
 
@@ -741,6 +764,7 @@ describe('Agent-owned internal SubAgent target paths', () => {
     const target = richAgentSource();
     const targetPin = {
       ...prepareExecutableSource(candidate(target)).root.pin,
+      contract_hash: deriveExecutableCompiledHash(candidate(target), hashA),
       published_resource_kind: 'AGENT_RELEASE' as const,
     };
     const agent = richAgentSource();
@@ -750,20 +774,28 @@ describe('Agent-owned internal SubAgent target paths', () => {
     if (binding === undefined) throw new Error('fixture is missing its internal SubAgent Binding');
     binding.pin = targetPin;
     expect(() =>
-      prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target)),
+      prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target), hashA),
     ).toThrow('CAPABILITY_DEPENDENCY_CYCLE');
   });
 
   it('rejects non-Agent dependencies at the internal target boundary', () => {
     const { agent } = matchingInternalSubagentSources();
     expect(() =>
-      prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(nestedFlowSource())),
+      prepareAgentInternalSubagentDependencyPaths(
+        candidate(agent),
+        candidate(nestedFlowSource()),
+        hashA,
+      ),
     ).toThrow('CLOSURE_SOURCE_INVALID');
   });
 
   it('returns deeply frozen paths without inventing a nested closure seal', () => {
     const { agent, target, binding } = matchingInternalSubagentSources();
-    const result = prepareAgentInternalSubagentDependencyPaths(candidate(agent), candidate(target));
+    const result = prepareAgentInternalSubagentDependencyPaths(
+      candidate(agent),
+      candidate(target),
+      hashA,
+    );
     const compiled = result.bindings.find((item) => item.binding_id === binding.binding_id);
     expect(result).not.toHaveProperty('closure_hash');
     expect(compiled?.subagent_target).not.toHaveProperty('nested_closure_hash');

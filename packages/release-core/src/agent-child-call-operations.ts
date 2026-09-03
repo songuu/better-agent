@@ -98,13 +98,11 @@ function declarations(input: unknown): readonly CallDeclaration[] {
 function prepare(
   projection: NestedProjection,
   rootInput: unknown,
-  dependencyInput: unknown,
   declarationInput: unknown,
   dependencyKind: 'AGENT_RELEASE' | 'FLOW_VERSION',
 ): PreparedAgentChildCallOperationsV1 {
   const rootSource = prepareExecutableSource(rootInput);
-  const dependencySource = prepareExecutableSource(dependencyInput);
-  const targetPin = { ...dependencySource.root.pin, published_resource_kind: dependencyKind };
+  const targetPin = projection.dependency_resource_node.pin;
   const targetKey = publishedResourcePinKey(targetPin);
   const document = rootSource.preimage.document as unknown as {
     capability_bindings: readonly CapabilityBindingV1[];
@@ -212,7 +210,6 @@ export function prepareGraphBoundAgentFlowCallOperations(
       nestedClosureInput,
     ),
     rootInput,
-    dependencyInput,
     declarationInput,
     'FLOW_VERSION',
   );
@@ -236,7 +233,6 @@ export function prepareGraphBoundAgentSubagentCallOperations(
       nestedClosureInput,
     ),
     rootInput,
-    dependencyInput,
     declarationInput,
     'AGENT_RELEASE',
   );

@@ -551,14 +551,14 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
             ...entry.binding_path_segments,
             BindingPathSegmentV1Schema.parse({
               segment_kind: 'subagent_target',
-              target_pin: nestedDependency.closure.root.pin,
+              target_pin: dependencyNode.data.pin,
             }),
           ],
     );
     const expectedGateSpecs = projectNestedGateSpecs(
       nestedDependency.closure,
       gateMountPaths,
-      dependencyNode.data.node_id,
+      dependencyNode.data,
     );
     if (!canonicalJsonBytes(expectedGateSpecs).equals(canonicalJsonBytes(descendantGateSpecs))) {
       notClosed(`${path}.descendant_gate_specs`);
@@ -571,7 +571,12 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
       8_192,
     );
     try {
-      verifyProjectedBindingAdmission(nestedDependency.closure, gateMountPaths, descendantEntries);
+      verifyProjectedBindingAdmission(
+        nestedDependency.closure,
+        gateMountPaths,
+        descendantEntries,
+        dependencyNode.data.pin,
+      );
     } catch {
       notClosed(`${path}.descendant_binding_entries`);
     }

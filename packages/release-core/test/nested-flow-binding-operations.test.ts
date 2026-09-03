@@ -3,24 +3,37 @@ import {
   type PublishedResourcePinV1,
 } from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
-import { verifyAgentClosureApprovalCoverage } from '../src/agent-capability-closure.js';
+import {
+  prepareAgentCapabilityClosure,
+  verifyAgentClosureApprovalCoverage,
+} from '../src/agent-capability-closure.js';
 import { prepareGraphBoundAgentFlowCallOperations } from '../src/agent-child-call-operations.js';
-import { prepareAgentFlowBindingEntries } from '../src/agent-composite-binding-entries.js';
+import {
+  prepareAgentFlowBindingEntries,
+  prepareAgentSubagentBindingEntries,
+} from '../src/agent-composite-binding-entries.js';
 import { prepareFlowGateSpecs } from '../src/agent-gate-specs.js';
 import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
 import { prepareAgentRootResourceGraph } from '../src/agent-root-resource-graph.js';
-import { canonicalResourceNodeId, createClosureIdentityRegistry } from '../src/closure-identity.js';
+import {
+  canonicalBindingPath,
+  canonicalResourceNodeId,
+  createClosureIdentityRegistry,
+} from '../src/closure-identity.js';
 import {
   compareCanonicalStrings,
   deriveDependencyManifest,
   normalizeDependencyPins,
 } from '../src/dependency-manifest.js';
-import { prepareExecutableSource } from '../src/executable-source.js';
+import { deriveExecutableCompiledHash, prepareExecutableSource } from '../src/executable-source.js';
 import { canonicalSha256, canonicalSha256ExcludingRootKeys } from '../src/hash.js';
+import { prepareCompiledCapabilityClosure } from '../src/compiled-capability-closure.js';
 import { prepareGraphBoundNestedFlowBindingOperations } from '../src/nested-flow-binding-operations.js';
 import { prepareOperationContractSource } from '../src/operation-contract-source.js';
 import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js';
 import { prepareFlowNodePaths, prepareRootBindingPaths } from '../src/root-binding-paths.js';
+import { resolveExecutionPlan, verifyResolvedExecutionPlan } from '../src/resolved-plan.js';
+import { compiledAgentAdmission } from './resolved-plan-compiler-fixtures.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import {
   callCapabilityRequirements,
@@ -96,7 +109,14 @@ function sources(secondMount = false, disabled = false) {
     },
   };
   const flowRoot = prepareExecutableSource(executable(flow)).root;
-  const flowPin = { ...flowRoot.pin, published_resource_kind: 'FLOW_VERSION' as const };
+  const flowPin = {
+    ...flowRoot.pin,
+    contract_hash: deriveExecutableCompiledHash(
+      executable(flow),
+      compiledClosure(flow).closure_hash,
+    ),
+    published_resource_kind: 'FLOW_VERSION' as const,
+  };
   const agent = richAgentSource();
   const binding = agent.capability_bindings.find((item) => item.kind === 'flow');
   if (binding === undefined) throw new Error('fixture Flow Binding is missing');
@@ -111,7 +131,7 @@ function sources(secondMount = false, disabled = false) {
   return { agent, flow, flowPin, pluginPin };
 }
 
-function compiledClosure(flow: ReturnType<typeof sources>['flow']) {
+function compiledClosure(flow: { resources: PublishedResourcePinV1[]; [key: string]: unknown }) {
   const prepared = prepareExecutableSource(executable(flow));
   const paths = prepareFlowNodePaths(executable(flow));
   const sourcePath = paths.nodes.find((node) => node.node_id === 'output-1');
@@ -235,6 +255,20 @@ function graph(
   return { candidateGraph, expectedGraph: preparePinnedDependencyGraph(candidateGraph) };
 }
 
+function repinChild(value: ReturnType<typeof sources>, closureHash: string) {
+  value.flowPin = {
+    ...value.flowPin,
+    contract_hash: deriveExecutableCompiledHash(executable(value.flow), closureHash),
+  };
+  for (const binding of value.agent.capability_bindings) {
+    if (
+      binding.kind === 'flow' &&
+      binding.pin.resource_version_id === value.flowPin.resource_version_id
+    )
+      binding.pin = value.flowPin;
+  }
+}
+
 function prepared(secondMount = false, disabled = false) {
   const value = sources(secondMount, disabled);
   const closure = compiledClosure(value.flow);
@@ -311,6 +345,378 @@ function compositePolicy(
 }
 
 describe('nested Flow Binding operation projection', () => {
+  it.each(['semantic-seed', 'closure-hash', 'other-closure'] as const)(
+    'rejects a self-consistent published Flow graph using %s as its contract hash',
+    (substitution) => {
+      const value = prepared();
+      const wrongPin = {
+        ...value.flowPin,
+        contract_hash:
+          substitution === 'semantic-seed'
+            ? value.closure.root.semantic_seed_hash
+            : substitution === 'closure-hash'
+              ? value.closure.closure_hash
+              : deriveExecutableCompiledHash(executable(value.flow), hashB),
+      };
+      const binding = value.agent.capability_bindings.find((item) => item.kind === 'flow');
+      if (binding === undefined) throw new Error('fixture Flow Binding is missing');
+      binding.pin = wrongPin;
+      const evidence = graph(
+        prepareExecutableSource(executable(value.agent)).root,
+        wrongPin,
+        value.closure.closure_hash,
+        value.pluginPin,
+      );
+      expect(() =>
+        prepareGraphBoundNestedFlowBindingOperations(
+          evidence.expectedGraph,
+          evidence.candidateGraph,
+          executable(value.agent),
+          executable(value.flow),
+          value.closure,
+        ),
+      ).toThrow('CAPABILITY_DEPENDENCY_UNRESOLVED');
+    },
+  );
+
+  it.each([false, true])(
+    'seals and admits Agent→Agent→Flow with two mounts per level and disabled=%s',
+    (disabled) => {
+      const value = minimalPrepared(disabled);
+      const first = value.agent.capability_bindings[0];
+      if (first === undefined) throw new Error('fixture Flow Binding is missing');
+      const second = { ...structuredClone(first), binding_id: 'flow-second' };
+      value.agent.capability_bindings.push(second);
+      value.agent.strategy.allowed_capability_binding_ids.push(second.binding_id);
+      const source = prepareExecutableSource(executable(value.agent));
+      const candidateGraph = {
+        ...value.candidateGraph,
+        root: source.root,
+        root_dependencies: source.dependency_manifest.dependencies,
+        resources: [
+          ...value.candidateGraph.resources,
+          ...source.dependency_manifest.dependencies
+            .filter(
+              (pin) =>
+                !value.candidateGraph.resources.some(
+                  (node) => node.pin.resource_version_id === pin.resource_version_id,
+                ),
+            )
+            .map((pin) => ({
+              schema_version: 'pinned-dependency-record/1',
+              pin,
+              publication_state: 'sealed',
+              dependency_manifest: deriveDependencyManifest(
+                {
+                  workspace_id: pin.workspace_id,
+                  published_resource_kind: pin.published_resource_kind,
+                  resource_id: pin.resource_id,
+                  resource_version_id: pin.resource_version_id,
+                },
+                [],
+              ),
+            })),
+        ],
+      };
+      const expectedGraph = preparePinnedDependencyGraph(candidateGraph);
+      const policy = compositePolicy(value.agent, 'flow', value.closure);
+      const secondPolicy = compositePolicy(value.agent, second.binding_id, value.closure);
+      const sharedCeiling = {
+        ...policy.root_ceiling,
+        operation_contract_hashes: [
+          ...new Set([
+            ...policy.root_ceiling.operation_contract_hashes,
+            ...secondPolicy.root_ceiling.operation_contract_hashes,
+          ]),
+        ].sort(),
+      };
+      const fullPolicy = {
+        ...policy,
+        workspace_ceiling: sharedCeiling,
+        root_ceiling: sharedCeiling,
+        binding_ceilings: [...policy.binding_ceilings, ...secondPolicy.binding_ceilings],
+      };
+      const slice = prepareAgentFlowBindingEntries(
+        expectedGraph,
+        candidateGraph,
+        executable(value.agent),
+        executable(value.flow),
+        value.closure,
+        [flowCall(value.agent), flowCall(value.agent, second.binding_id)],
+        fullPolicy,
+      );
+      const entries = prepareAgentRootBindingEntrySet(
+        executable(value.agent),
+        expectedGraph.graph_hash,
+        [slice],
+        { ...fullPolicy, schema_version: 'agent-root-binding-policy-input/1' },
+      );
+      const closure = prepareAgentCapabilityClosure(
+        executable(value.agent),
+        expectedGraph,
+        entries,
+      );
+      expect(closure.gate_specs).toHaveLength(2);
+      expect(new Set(closure.gate_specs.map((gate) => gate.source_node_id))).toEqual(
+        new Set([canonicalResourceNodeId(value.flowPin)]),
+      );
+      for (const gate of closure.gate_specs) {
+        if (gate.source_kind !== 'flow_node') throw new Error('expected Flow gate');
+        expect(gate.source_binding_path_segments.at(-1)).toMatchObject({
+          owner: { owner_kind: 'published_dependency', pin: value.flowPin },
+        });
+      }
+      const plan = resolveExecutionPlan(compiledAgentAdmission(executable(value.agent), closure));
+      expect(verifyResolvedExecutionPlan(plan, plan.plan_hash)).toEqual(plan);
+      expect(plan.root_release.contract_hash).not.toBe(closure.root.semantic_seed_hash);
+      expect(plan.enabled_bindings.map((binding) => binding.binding_path).sort()).toEqual(
+        disabled ? [] : closure.bindings.map((binding) => binding.binding_path).sort(),
+      );
+      expect(plan.disabled_binding_paths).toEqual(
+        disabled ? closure.bindings.map((binding) => binding.binding_path).sort() : [],
+      );
+
+      // Compile a real parent of the sealed Agent: the Flow is now a grandchild,
+      // so only the Agent's local root owners may be rewritten during projection.
+      const parent = richAgentSource();
+      parent.agent_id = '00000000-0000-7000-8000-000000000096';
+      parent.agent_release_id = '00000000-0000-7000-8000-000000000097';
+      const mount = parent.capability_bindings.find(
+        (binding) => binding.kind === 'subagent' && binding.target_kind === 'internal_agent',
+      );
+      if (mount === undefined) throw new Error('fixture Agent mount missing');
+      const childPin = {
+        ...source.root.pin,
+        published_resource_kind: 'AGENT_RELEASE' as const,
+        contract_hash: deriveExecutableCompiledHash(executable(value.agent), closure.closure_hash),
+      };
+      mount.pin = childPin;
+      const secondAgent = { ...structuredClone(mount), binding_id: 'subagent-second' };
+      parent.capability_bindings = [mount, secondAgent];
+      parent.strategy.allowed_capability_binding_ids = [mount.binding_id, secondAgent.binding_id];
+      parent.strategy.allowed_gate_spec_ids = [];
+      parent.instruction_skill_bindings = [];
+      parent.public_capability_handles = [];
+      parent.gate_specs = [];
+      const parentSource = prepareExecutableSource(executable(parent));
+      const parentCandidate = {
+        schema_version: 'pinned-dependency-graph-candidate/1',
+        root: parentSource.root,
+        root_dependencies: parentSource.dependency_manifest.dependencies,
+        resources: [
+          ...candidateGraph.resources,
+          {
+            schema_version: 'pinned-dependency-record/1',
+            pin: childPin,
+            publication_state: 'sealed',
+            dependency_manifest: source.dependency_manifest,
+            nested_closure_hash: closure.closure_hash,
+          },
+        ],
+      };
+      const parentGraph = preparePinnedDependencyGraph(parentCandidate);
+      const declarations = parent.capability_bindings.map((binding) => ({
+        binding_id: binding.binding_id,
+        requirements: callCapabilityRequirements,
+        operation: {
+          schema_version: 'operation-contract-source/1',
+          operation_kind: 'subagent_call',
+          operation_id: `${binding.binding_id}-call`,
+          input_schema: binding.input_schema,
+          ...(binding.output_schema === undefined ? {} : { output_schema: binding.output_schema }),
+          side_effect_class: binding.side_effect.class,
+          operation_key_required: binding.side_effect.operation_key_source !== undefined,
+          approval_required: binding.side_effect.approval === 'required',
+        },
+      }));
+      const parentCeiling = {
+        ...ceiling(),
+        operation_contract_hashes: [
+          ...new Set([
+            ...declarations.map(
+              (declaration) =>
+                prepareOperationContractSource(declaration.operation).pin.contract_hash,
+            ),
+            ...closure.bindings.flatMap((binding) =>
+              binding.operation_contracts.map((operation) => operation.contract_hash),
+            ),
+          ]),
+        ].sort(),
+      };
+      const parentPolicy = {
+        schema_version: 'agent-composite-binding-policy-input/1',
+        workspace_ceiling: parentCeiling,
+        root_ceiling: parentCeiling,
+        binding_ceilings: prepareRootBindingPaths(executable(parent)).bindings.map((binding) => ({
+          binding_path: binding.binding_path,
+          ceiling: parentCeiling,
+        })),
+      };
+      const parentSlice = prepareAgentSubagentBindingEntries(
+        parentGraph,
+        parentCandidate,
+        executable(parent),
+        executable(value.agent),
+        closure,
+        declarations,
+        parentPolicy,
+      );
+      const parentEntries = prepareAgentRootBindingEntrySet(
+        executable(parent),
+        parentGraph.graph_hash,
+        [parentSlice],
+        { ...parentPolicy, schema_version: 'agent-root-binding-policy-input/1' },
+      );
+      const parentClosure = prepareAgentCapabilityClosure(
+        executable(parent),
+        parentGraph,
+        parentEntries,
+      );
+      expect(parentClosure.gate_specs).toHaveLength(4);
+      for (const gate of parentClosure.gate_specs) {
+        if (gate.source_kind !== 'flow_node') throw new Error('expected recursive Flow gate');
+        expect(gate.source_node_id).toBe(canonicalResourceNodeId(value.flowPin));
+        expect(gate.source_binding_path_segments[2]).toEqual({
+          segment_kind: 'subagent_target',
+          target_pin: childPin,
+        });
+        expect(gate.source_binding_path_segments[3]).toMatchObject({
+          owner: { owner_kind: 'published_dependency', pin: childPin },
+        });
+        expect(gate.source_binding_path_segments.at(-1)).toMatchObject({
+          owner: { owner_kind: 'published_dependency', pin: value.flowPin },
+        });
+      }
+      const parentPlan = resolveExecutionPlan(
+        compiledAgentAdmission(executable(parent), parentClosure),
+      );
+      expect(verifyResolvedExecutionPlan(parentPlan, parentPlan.plan_hash)).toEqual(parentPlan);
+      expect(parentPlan.enabled_bindings).toHaveLength(disabled ? 2 : 10);
+      expect(parentPlan.disabled_binding_paths).toHaveLength(disabled ? 8 : 0);
+      for (const entry of parentClosure.bindings.filter(
+        (binding) => binding.binding_kind === 'flow',
+      )) {
+        expect(entry.operation_contracts).toHaveLength(1);
+        expect(entry.operation_contracts[0]?.operation_kind).toBe('flow_call');
+        expect(entry.effective_policy.operation_contract_hashes).toEqual(
+          entry.operation_contracts.map((operation) => operation.contract_hash),
+        );
+      }
+
+      if (!disabled)
+        for (const mutation of ['invocation', 'child-demand'] as const) {
+          const changed = { ...structuredClone(closure) };
+          const entry = changed.bindings.find((binding) => binding.binding_kind === 'flow');
+          if (entry?.requirement_expression.expression_kind !== 'nested_call')
+            throw new Error('nested-call fixture missing');
+          if (mutation === 'invocation')
+            entry.requirement_expression.invocation.operation_contract_hashes = [hashB];
+          else
+            entry.requirement_expression = {
+              ...entry.requirement_expression,
+              child: CapabilityRequirementExpressionV1Schema.parse(
+                emptyCapabilityRequirementExpression,
+              ),
+            };
+          changed.closure_hash = canonicalSha256ExcludingRootKeys(changed, ['closure_hash']);
+          prepareCompiledCapabilityClosure(changed);
+          const changedPin = {
+            ...childPin,
+            contract_hash: deriveExecutableCompiledHash(
+              executable(value.agent),
+              changed.closure_hash,
+            ),
+          };
+          const changedParent = structuredClone(parent);
+          for (const binding of changedParent.capability_bindings) binding.pin = changedPin;
+          const changedSource = prepareExecutableSource(executable(changedParent));
+          const changedCandidate = {
+            ...parentCandidate,
+            root: changedSource.root,
+            root_dependencies: changedSource.dependency_manifest.dependencies,
+            resources: parentCandidate.resources.map((node) =>
+              node.pin.resource_version_id === childPin.resource_version_id
+                ? { ...node, pin: changedPin, nested_closure_hash: changed.closure_hash }
+                : node,
+            ),
+          };
+          const changedGraph = preparePinnedDependencyGraph(changedCandidate);
+          const changedPolicy = {
+            ...parentPolicy,
+            binding_ceilings: prepareRootBindingPaths(executable(changedParent)).bindings.map(
+              (binding) => ({
+                binding_path: binding.binding_path,
+                ceiling: parentCeiling,
+              }),
+            ),
+          };
+          expect(() =>
+            prepareAgentSubagentBindingEntries(
+              changedGraph,
+              changedCandidate,
+              executable(changedParent),
+              executable(value.agent),
+              changed,
+              declarations,
+              changedPolicy,
+            ),
+          ).toThrow(
+            mutation === 'invocation'
+              ? /descendant requirement expression does not bind/
+              : /exact target resource demand/,
+          );
+        }
+
+      if (disabled) return;
+      const forgedEntries = structuredClone(parentEntries);
+      const forged = forgedEntries.descendant_binding_entries.find(
+        (binding) => binding.binding_kind === 'flow',
+      );
+      if (forged === undefined) throw new Error('recursive Flow Binding missing');
+      const ownerSegment = forged.binding_path_segments[3];
+      if (ownerSegment?.segment_kind !== 'binding')
+        throw new Error('Agent-owned Binding segment missing');
+      ownerSegment.owner.pin = closure.root.pin;
+      forged.binding_path = canonicalBindingPath(forged.binding_path_segments);
+      const sortedForgery = {
+        ...forgedEntries,
+        descendant_binding_entries: [...forgedEntries.descendant_binding_entries].sort(
+          (left, right) => compareCanonicalStrings(left.binding_path, right.binding_path),
+        ),
+      };
+      expect(() =>
+        prepareAgentCapabilityClosure(executable(parent), parentGraph, sortedForgery),
+      ).toThrow('descendant Binding shape is unsupported');
+    },
+  );
+  it('joins the actual published compiled Flow pin rather than its semantic seed', () => {
+    const value = prepared();
+    const publishedPin = {
+      ...value.flowPin,
+      contract_hash: deriveExecutableCompiledHash(
+        executable(value.flow),
+        value.closure.closure_hash,
+      ),
+    };
+    expect(publishedPin.contract_hash).not.toBe(value.closure.root.semantic_seed_hash);
+    const binding = value.agent.capability_bindings.find((item) => item.kind === 'flow');
+    if (binding === undefined) throw new Error('fixture Flow Binding is missing');
+    binding.pin = publishedPin;
+    const evidence = graph(
+      prepareExecutableSource(executable(value.agent)).root,
+      publishedPin,
+      value.closure.closure_hash,
+      value.pluginPin,
+    );
+    const result = prepareGraphBoundNestedFlowBindingOperations(
+      evidence.expectedGraph,
+      evidence.candidateGraph,
+      executable(value.agent),
+      executable(value.flow),
+      value.closure,
+    );
+    expect(result.dependency_resource_node.pin).toEqual(publishedPin);
+  });
   it('projects a verified Flow-node operation under its parent Flow Binding prefix', () => {
     const value = prepared();
     const result = prepareGraphBoundNestedFlowBindingOperations(
@@ -459,6 +865,7 @@ describe('nested Flow Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(executable(value.agent)).root,
       value.flowPin,
@@ -502,6 +909,7 @@ describe('nested Flow Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(executable(value.agent)).root,
       value.flowPin,
@@ -530,6 +938,7 @@ describe('nested Flow Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(executable(value.agent)).root,
       value.flowPin,
@@ -558,6 +967,7 @@ describe('nested Flow Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(executable(value.agent)).root,
       value.flowPin,
@@ -602,6 +1012,7 @@ describe('nested Flow Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(executable(value.agent)).root,
       value.flowPin,
@@ -820,6 +1231,7 @@ describe('nested Flow Binding operation projection', () => {
       ...draft,
       closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
     };
+    repinChild(value, closure.closure_hash);
     const evidence = graph(
       prepareExecutableSource(executable(value.agent)).root,
       value.flowPin,
