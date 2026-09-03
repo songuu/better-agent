@@ -14,7 +14,16 @@ const installer = readFileSync(
   new URL('../../scripts/deployment/install-production-web.sh', import.meta.url),
   'utf8',
 );
+const deploymentWorkflow = readFileSync(
+  new URL('../../.github/workflows/deploy-foundation.yml', import.meta.url),
+  'utf8',
+);
+const publicHtml = readFileSync(
+  new URL('../../apps/web/public/index.html', import.meta.url),
+  'utf8',
+);
 const webCurrentSymlinkGuard = ['[[ -L "', '$', '{WEB_CURRENT}', '" ]]'].join('');
+const publicPageMarker = '<title>Better Agent · Studio</title>';
 
 test('runs the web runtime as a dedicated hardened loopback service', () => {
   assert.match(unit, /^User=better-agent-web$/m);
@@ -77,4 +86,10 @@ test('retries TLS acceptance while nginx retires workers with the old route tabl
     /if \[\[ "\$\{attempt\}" == 20 \]\]; then false; fi\s+sleep 1\s+done/u,
   );
   assert.equal(publicAcceptance.match(/for attempt in \{1\.\.20\};/gu)?.length, 1);
+});
+
+test('verifies the deployed page with a marker owned by the public HTML', () => {
+  assert.ok(publicHtml.includes(publicPageMarker));
+  assert.ok(deploymentWorkflow.includes(`grep -Fq '${publicPageMarker}'`));
+  assert.doesNotMatch(deploymentWorkflow, /BETTER AGENT \/ STUDIO/u);
 });
