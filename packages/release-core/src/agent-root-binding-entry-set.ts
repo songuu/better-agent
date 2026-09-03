@@ -91,8 +91,11 @@ function parseEntries(
   value: unknown,
   accepts: (entry: CompiledBindingEntryV1) => boolean,
   path: string,
+  allowEmpty = false,
+  maxCount = 128,
 ): CompiledBindingEntryV1[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 128) notClosed(path);
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || value.length > maxCount)
+    notClosed(path);
   const entries = value.map((candidate, index) => {
     const parsed = CompiledBindingEntryV1Schema.safeParse(candidate);
     if (!parsed.success || !accepts(parsed.data)) notClosed(`${path}[${index}]`);
@@ -134,8 +137,8 @@ function parseExpressions(value: unknown, path: string): RequirementExpressionBy
   return expressions;
 }
 
-function parseCanonicalPaths(value: unknown, path: string): `bp1.${string}`[] {
-  if (!Array.isArray(value) || value.length > 256) notClosed(path);
+function parseCanonicalPaths(value: unknown, path: string, maxCount = 256): `bp1.${string}`[] {
+  if (!Array.isArray(value) || value.length > maxCount) notClosed(path);
   const paths = value.map((candidate, index) => {
     const parsed = CanonicalBindingPathV1Schema.safeParse(candidate);
     if (!parsed.success) notClosed(`${path}[${index}]`);
@@ -334,6 +337,8 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
         'nested_closure_hash',
         'dependency_resource_node',
         'entries',
+        'descendant_binding_entries',
+        'descendant_disabled_binding_paths',
         'requirement_expressions',
       ],
       path,
@@ -344,22 +349,108 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
     if (!dependencyNode.success || dependencyNode.data.node_role !== 'dependency') {
       notClosed(`${path}.dependency_resource_node`);
     }
+    if (dependencyNode.data.pin.published_resource_kind !== dependencyKind) {
+      notClosed(`${path}.dependency_resource_node.pin`);
+    }
     const dependencyNodeId = canonicalResourceNodeId(dependencyNode.data.pin);
     if (dependencyNode.data.node_id !== dependencyNodeId) {
       notClosed(`${path}.dependency_resource_node.node_id`);
     }
+    const parentEntries = parseEntries(
+      slice.entries,
+      (entry) =>
+        dependencyKind === 'FLOW_VERSION'
+          ? entry.binding_kind === 'flow' && entry.target.published_resource_kind === 'FLOW_VERSION'
+          : entry.binding_kind === 'subagent' &&
+            entry.target.published_resource_kind === 'AGENT_RELEASE',
+      `${path}.entries`,
+    );
+    if (
+      parentEntries.some(
+        (entry) =>
+          !canonicalJsonBytes(entry.target).equals(canonicalJsonBytes(dependencyNode.data.pin)),
+      )
+    ) {
+      notClosed(`${path}.entries`);
+    }
+    const descendantEntries = parseEntries(
+      slice.descendant_binding_entries,
+      () => true,
+      `${path}.descendant_binding_entries`,
+      true,
+      8_192,
+    );
+    descendantEntries.forEach((entry, entryIndex) => {
+      if (canonicalBindingPath(entry.binding_path_segments) !== entry.binding_path) {
+        notClosed(`${path}.descendant_binding_entries[${entryIndex}].binding_path`);
+      }
+      const parent = parentEntries.find(
+        (candidate) =>
+          candidate.binding_path_segments.length < entry.binding_path_segments.length &&
+          candidate.binding_path_segments.every((segment, segmentIndex) =>
+            canonicalJsonBytes(segment).equals(
+              canonicalJsonBytes(entry.binding_path_segments[segmentIndex]),
+            ),
+          ),
+      );
+      const boundary = entry.binding_path_segments[parent?.binding_path_segments.length ?? -1];
+      const validBoundary =
+        dependencyKind === 'FLOW_VERSION'
+          ? boundary?.segment_kind === 'flow_node' &&
+            boundary.owner.owner_kind === 'published_dependency' &&
+            canonicalJsonBytes(boundary.owner.pin).equals(
+              canonicalJsonBytes(dependencyNode.data.pin),
+            )
+          : boundary?.segment_kind === 'subagent_target' &&
+            canonicalJsonBytes(boundary.target_pin).equals(
+              canonicalJsonBytes(dependencyNode.data.pin),
+            );
+      if (parent === undefined || !validBoundary) {
+        notClosed(`${path}.descendant_binding_entries[${entryIndex}].binding_path_segments`);
+      }
+    });
+    const descendantDisabledBindingPaths = parseCanonicalPaths(
+      slice.descendant_disabled_binding_paths,
+      `${path}.descendant_disabled_binding_paths`,
+      8_192,
+    );
+    const descendantPaths = new Set(descendantEntries.map((entry) => entry.binding_path));
+    if (descendantDisabledBindingPaths.some((bindingPath) => !descendantPaths.has(bindingPath))) {
+      notClosed(`${path}.descendant_disabled_binding_paths`);
+    }
+    const disabledPaths = new Set(descendantDisabledBindingPaths);
+    descendantEntries.forEach((entry, entryIndex) => {
+      const parent = parentEntries.find(
+        (candidate) =>
+          candidate.binding_path_segments.length < entry.binding_path_segments.length &&
+          candidate.binding_path_segments.every((segment, segmentIndex) =>
+            canonicalJsonBytes(segment).equals(
+              canonicalJsonBytes(entry.binding_path_segments[segmentIndex]),
+            ),
+          ),
+      );
+      const unavailable =
+        entry.effective_policy.credential_requirements.length === 0 &&
+        entry.effective_policy.principal_modes.length === 0 &&
+        entry.effective_policy.egress.length === 0 &&
+        entry.effective_policy.max_calls === 0 &&
+        entry.effective_policy.max_depth === 0 &&
+        entry.effective_policy.max_parallelism === 0 &&
+        entry.effective_policy.budget.amount_credits === '0' &&
+        entry.effective_policy.budget.input_tokens === 0 &&
+        entry.effective_policy.budget.output_tokens === 0 &&
+        entry.effective_policy.budget.total_tokens === 0 &&
+        entry.effective_policy.budget.duration_ms === 0;
+      if (
+        disabledPaths.has(entry.binding_path as `bp1.${string}`) !== unavailable ||
+        parent === undefined
+      ) {
+        notClosed(`${path}.descendant_binding_entries[${entryIndex}].effective_policy`);
+      }
+    });
     return {
       graph_hash: canonicalGraphHash,
-      entries: parseEntries(
-        slice.entries,
-        (entry) =>
-          dependencyKind === 'FLOW_VERSION'
-            ? entry.binding_kind === 'flow' &&
-              entry.target.published_resource_kind === 'FLOW_VERSION'
-            : entry.binding_kind === 'subagent' &&
-              entry.target.published_resource_kind === 'AGENT_RELEASE',
-        `${path}.entries`,
-      ),
+      entries: parentEntries,
       requirement_expressions: parseExpressions(
         slice.requirement_expressions,
         `${path}.requirement_expressions`,
@@ -371,8 +462,8 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
           intrinsic_policy: dependencyNode.data.intrinsic_policy,
         },
       ],
-      descendant_binding_entries: [],
-      descendant_disabled_binding_paths: [],
+      descendant_binding_entries: descendantEntries,
+      descendant_disabled_binding_paths: descendantDisabledBindingPaths,
     };
   }
   return notClosed(`${path}.schema_version`);
@@ -393,6 +484,30 @@ export function prepareAgentRootBindingEntrySet(
   const snapshots = boundedDataSnapshot(sliceInputs, 'closure');
   if (!Array.isArray(snapshots) || snapshots.length === 0 || snapshots.length > 128) {
     notClosed('$.slices');
+  }
+  let descendantCount = 0;
+  let descendantDisabledCount = 0;
+  for (const [index, snapshot] of snapshots.entries()) {
+    const slice = record(snapshot, `$.slices[${index}]`);
+    const descendants =
+      slice.schema_version === 'prepared-agent-composite-binding-entries/1'
+        ? slice.descendant_binding_entries
+        : slice.schema_version === 'graph-bound-skill-pack-leaf-binding-entry-set/1'
+          ? record(slice.prepared_entries, `$.slices[${index}].prepared_entries`).entries
+          : [];
+    const disabled =
+      slice.schema_version === 'prepared-agent-composite-binding-entries/1'
+        ? slice.descendant_disabled_binding_paths
+        : slice.schema_version === 'graph-bound-skill-pack-leaf-binding-entry-set/1'
+          ? record(slice.prepared_entries, `$.slices[${index}].prepared_entries`)
+              .policy_disabled_binding_paths
+          : [];
+    if (!Array.isArray(descendants) || !Array.isArray(disabled)) notClosed(`$.slices[${index}]`);
+    descendantCount += descendants.length;
+    descendantDisabledCount += disabled.length;
+    if (descendantCount > 8_192 || descendantDisabledCount > 8_192) {
+      notClosed('$.descendant_binding_entries');
+    }
   }
   const slices = snapshots.map(parseSlice);
   if (slices.some((slice) => slice.graph_hash !== canonicalGraphHash)) notClosed('$.graph_hash');
@@ -477,11 +592,28 @@ export function prepareAgentRootBindingEntrySet(
   ) {
     notClosed('$.descendant_binding_entries');
   }
+  const descendantDisabledPaths = new Set(
+    slices.flatMap((slice) => slice.descendant_disabled_binding_paths),
+  );
+  for (const parentPath of paths.bindings.filter((path) => !path.enabled)) {
+    for (const descendant of descendantBindingEntries) {
+      const belongsToParent =
+        parentPath.binding_path_segments.length < descendant.binding_path_segments.length &&
+        parentPath.binding_path_segments.every((segment, segmentIndex) =>
+          canonicalJsonBytes(segment).equals(
+            canonicalJsonBytes(descendant.binding_path_segments[segmentIndex]),
+          ),
+        );
+      if (
+        belongsToParent &&
+        !descendantDisabledPaths.has(descendant.binding_path as `bp1.${string}`)
+      ) {
+        notClosed('$.descendant_disabled_binding_paths');
+      }
+    }
+  }
   const disabledBindingPaths = [
-    ...new Set([
-      ...paths.source_disabled_binding_paths,
-      ...slices.flatMap((slice) => slice.descendant_disabled_binding_paths),
-    ]),
+    ...new Set([...paths.source_disabled_binding_paths, ...descendantDisabledPaths]),
   ].sort(compareCanonicalStrings);
 
   const policies = parseAgentBindingPolicyInput(policyInput, 'agent-root-binding-policy-input/1');

@@ -50,6 +50,7 @@ export interface PreparedAgentChildCallOperationsV1 {
     readonly requirement_expression?: CapabilityRequirementExpressionV1;
     readonly invocation_requirements?: CapabilityRequirementsV1;
   }[];
+  readonly projected_binding_entries: NestedProjection['projected_binding_entries'];
 }
 
 function mismatch(path: string, reason: string): never {
@@ -165,6 +166,7 @@ function prepare(
     graph_hash: projection.graph_hash,
     nested_closure_hash: projection.nested_closure_hash,
     dependency_resource_node: projection.dependency_resource_node,
+    projected_binding_entries: projection.projected_binding_entries,
     binding_operations: projection.binding_operations
       .map((entry) => {
         const operation = operationByPath.get(entry.binding_path);

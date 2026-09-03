@@ -5,13 +5,15 @@ import {
 import { describe, expect, it } from 'vitest';
 import { prepareGraphBoundAgentSubagentCallOperations } from '../src/agent-child-call-operations.js';
 import { prepareAgentSubagentBindingEntries } from '../src/agent-composite-binding-entries.js';
-import { canonicalResourceNodeId } from '../src/closure-identity.js';
+import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
+import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
 import { compareCanonicalStrings, deriveDependencyManifest } from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
 import { canonicalSha256, canonicalSha256ExcludingRootKeys } from '../src/hash.js';
 import { prepareGraphBoundNestedAgentBindingOperations } from '../src/nested-agent-binding-operations.js';
 import { prepareOperationContractSource } from '../src/operation-contract-source.js';
 import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js';
+import { withinProjectedBindingCapacity } from '../src/projection-capacity.js';
 import { prepareRootBindingPaths } from '../src/root-binding-paths.js';
 import { richAgentSource } from './executable-source-fixtures.js';
 import {
@@ -49,7 +51,7 @@ const emptyPolicy = {
   },
 } as const;
 
-function targetSources() {
+function targetSources(parentEnabled = true) {
   const target = richAgentSource();
   target.agent_id = '00000000-0000-7000-8000-000000000098';
   target.agent_release_id = '00000000-0000-7000-8000-000000000099';
@@ -63,6 +65,7 @@ function targetSources() {
   );
   if (parentBinding === undefined) throw new Error('fixture internal SubAgent Binding is missing');
   parentBinding.pin = targetPin;
+  parentBinding.enabled = parentEnabled;
   return { agent, target, targetPin, parentBinding };
 }
 
@@ -89,10 +92,19 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
     approval_required: plugin.side_effect.approval === 'required',
   }).pin;
   const assemblyPins = prepared.dependency_manifest.dependencies;
+  const rootRequirementExpression = plugin.enabled
+    ? {
+        ...emptyCapabilityRequirementExpression,
+        requirements: {
+          ...emptyCapabilityRequirements,
+          operation_contract_hashes: [pluginOperation.contract_hash],
+        },
+      }
+    : emptyCapabilityRequirementExpression;
   const resourceNodes = [
     {
       node_id: canonicalResourceNodeId(paths.root.pin),
-      intrinsic_policy: emptyCapabilityRequirementExpression,
+      intrinsic_policy: rootRequirementExpression,
       dependency_manifest_hash: prepared.dependency_manifest.manifest_hash,
       node_role: 'root' as const,
       pin: paths.root.pin,
@@ -114,6 +126,16 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
       const source = sourceBindings.get(path.binding_id);
       if (source === undefined) throw new Error('fixture Binding source is missing');
       const operations = source.kind === 'plugin' ? [pluginOperation] : [];
+      const requirementExpression =
+        operations.length === 0
+          ? emptyCapabilityRequirementExpression
+          : {
+              ...emptyCapabilityRequirementExpression,
+              requirements: {
+                ...emptyCapabilityRequirements,
+                operation_contract_hashes: operations.map((operation) => operation.contract_hash),
+              },
+            };
       return {
         binding_path_encoding_version: 'binding-path-lp-utf8/1' as const,
         binding_path: path.binding_path,
@@ -124,7 +146,7 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
         config_schema_version: source.config.schema_version,
         config_hash: canonicalSha256(source.config),
         source_contract_hash: canonicalSha256(source),
-        requirement_expression: emptyCapabilityRequirementExpression,
+        requirement_expression: requirementExpression,
         effective_policy: {
           ...emptyPolicy,
           operation_contract_hashes: operations.map((op) => op.contract_hash),
@@ -144,7 +166,10 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
     resource_nodes: resourceNodes,
     dependency_edges: [],
     disabled_binding_paths: paths.source_disabled_binding_paths,
-    aggregate_limits: emptyPolicy,
+    aggregate_limits: {
+      ...emptyPolicy,
+      operation_contract_hashes: plugin.enabled ? [pluginOperation.contract_hash] : [],
+    },
     closure_hash: hashA,
   };
   return {
@@ -192,8 +217,27 @@ function graph(
   return { candidateGraph, expectedGraph: preparePinnedDependencyGraph(candidateGraph) };
 }
 
-function prepared() {
-  const sources = targetSources();
+function prepared(parentEnabled = true) {
+  const sources = targetSources(parentEnabled);
+  const closure = compiledClosure(sources.target);
+  const root = prepareExecutableSource(candidate(sources.agent)).root;
+  const evidence = graph(
+    root,
+    sources.targetPin,
+    closure.closure_hash,
+    prepareExecutableSource(candidate(sources.target)).dependency_manifest.dependencies,
+  );
+  return { ...sources, closure, ...evidence };
+}
+
+function minimalPrepared(parentEnabled = true) {
+  const sources = targetSources(parentEnabled);
+  sources.agent.capability_bindings = [sources.parentBinding];
+  sources.agent.strategy.allowed_capability_binding_ids = [sources.parentBinding.binding_id];
+  sources.agent.strategy.allowed_gate_spec_ids = [];
+  sources.agent.instruction_skill_bindings = [];
+  sources.agent.public_capability_handles = [];
+  sources.agent.gate_specs = [];
   const closure = compiledClosure(sources.target);
   const root = prepareExecutableSource(candidate(sources.agent)).root;
   const evidence = graph(
@@ -224,14 +268,31 @@ function subagentCall(agent: ReturnType<typeof richAgentSource>) {
   };
 }
 
-function compositePolicy(agent: ReturnType<typeof richAgentSource>) {
+function compositePolicy(
+  agent: ReturnType<typeof richAgentSource>,
+  closure?: {
+    readonly bindings: readonly {
+      readonly operation_contracts: readonly { readonly contract_hash: string }[];
+    }[];
+  },
+) {
   const declaration = subagentCall(agent);
   const operation = prepareOperationContractSource(declaration.operation).pin;
   const path = prepareRootBindingPaths(candidate(agent)).bindings.find(
     (item) => item.binding_id === declaration.binding_id,
   );
   if (path === undefined) throw new Error('fixture SubAgent path is missing');
-  const allowed = { ...ceiling(), operation_contract_hashes: [operation.contract_hash] };
+  const allowed = {
+    ...ceiling(),
+    operation_contract_hashes: [
+      ...new Set([
+        operation.contract_hash,
+        ...(closure?.bindings.flatMap((binding) =>
+          binding.operation_contracts.map((candidate) => candidate.contract_hash),
+        ) ?? []),
+      ]),
+    ].sort(),
+  };
   return {
     schema_version: 'agent-composite-binding-policy-input/1',
     workspace_ceiling: allowed,
@@ -241,6 +302,11 @@ function compositePolicy(agent: ReturnType<typeof richAgentSource>) {
 }
 
 describe('nested Agent Binding operation projection', () => {
+  it('accepts the exact projection capacity and rejects one entry above it', () => {
+    expect(withinProjectedBindingCapacity(128, 64)).toBe(true);
+    expect(withinProjectedBindingCapacity(129, 64)).toBe(false);
+  });
+
   it('projects child operations onto the parent-prefixed Binding path', () => {
     const value = prepared();
     const result = prepareGraphBoundNestedAgentBindingOperations(
@@ -267,7 +333,8 @@ describe('nested Agent Binding operation projection', () => {
     expect(result.dependency_resource_node).toMatchObject({
       node_role: 'dependency',
       pin: value.targetPin,
-      intrinsic_policy: emptyCapabilityRequirementExpression,
+      intrinsic_policy: value.closure.resource_nodes.find((node) => node.node_role === 'root')
+        ?.intrinsic_policy,
     });
     expect(Object.isFrozen(result.dependency_resource_node.intrinsic_policy)).toBe(true);
   });
@@ -358,6 +425,10 @@ describe('nested Agent Binding operation projection', () => {
     );
     expect(nestedPlugins).toHaveLength(2);
     expect(nestedPlugins[0]?.binding_path).not.toBe(nestedPlugins[1]?.binding_path);
+    expect(result.projected_binding_entries).toHaveLength(closure.bindings.length * 2);
+    expect(new Set(result.projected_binding_entries.map((entry) => entry.binding_path)).size).toBe(
+      closure.bindings.length * 2,
+    );
   });
 
   it('rejects a missing direct child Binding even with a recomputed closure hash', () => {
@@ -531,7 +602,8 @@ describe('nested Agent Binding operation projection', () => {
     );
     expect(result.dependency_resource_node).toMatchObject({
       pin: value.targetPin,
-      intrinsic_policy: emptyCapabilityRequirementExpression,
+      intrinsic_policy: value.closure.resource_nodes.find((node) => node.node_role === 'root')
+        ?.intrinsic_policy,
     });
   });
 
@@ -593,7 +665,7 @@ describe('nested Agent Binding operation projection', () => {
       candidate(value.target),
       value.closure,
       [subagentCall(value.agent)],
-      compositePolicy(value.agent),
+      compositePolicy(value.agent, value.closure),
     );
     expect(result.entries).toHaveLength(1);
     const entry = result.entries[0];
@@ -610,15 +682,369 @@ describe('nested Agent Binding operation projection', () => {
     expect(result.requirement_expressions[0]?.expression).toMatchObject({
       expression_kind: 'nested_call',
       invocation: { minimum_limits: { calls: 1, parallelism: 1 } },
-      child: emptyCapabilityRequirementExpression,
+      child: value.closure.resource_nodes.find((node) => node.node_role === 'root')
+        ?.intrinsic_policy,
     });
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.requirement_expressions[0]?.expression)).toBe(true);
   });
 
+  it('recompiles every verified child Binding under the parent-relative namespace', () => {
+    const value = prepared();
+    const result = prepareAgentSubagentBindingEntries(
+      value.expectedGraph,
+      value.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      value.closure,
+      [subagentCall(value.agent)],
+      compositePolicy(value.agent, value.closure),
+    );
+    expect(result.descendant_binding_entries).toHaveLength(value.closure.bindings.length);
+    expect(
+      result.descendant_binding_entries.every(
+        (entry) =>
+          CompiledBindingEntryV1Schema.safeParse(entry).success &&
+          entry.binding_path_segments[0]?.segment_kind === 'root' &&
+          entry.binding_path_segments[1]?.segment_kind === 'binding' &&
+          entry.binding_path_segments[2]?.segment_kind === 'subagent_target',
+      ),
+    ).toBe(true);
+    const nestedPlugin = result.descendant_binding_entries.find(
+      (entry) => entry.binding_id === 'plugin',
+    );
+    expect(nestedPlugin?.effective_policy.operation_contract_hashes).toEqual(
+      nestedPlugin?.operation_contracts.map((operation) => operation.contract_hash),
+    );
+    expect(Object.isFrozen(result.descendant_binding_entries)).toBe(true);
+  });
+
+  it('retains only parent-owned descendants through the root entry assembler', () => {
+    const value = minimalPrepared();
+    const policy = compositePolicy(value.agent, value.closure);
+    const slice = prepareAgentSubagentBindingEntries(
+      value.expectedGraph,
+      value.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      value.closure,
+      [subagentCall(value.agent)],
+      policy,
+    );
+    const assemble = (candidateSlice: unknown) =>
+      prepareAgentRootBindingEntrySet(
+        candidate(value.agent),
+        value.expectedGraph.graph_hash,
+        [candidateSlice],
+        { ...policy, schema_version: 'agent-root-binding-policy-input/1' },
+      );
+    const result = assemble(slice);
+    expect(result.entries).toEqual(slice.entries);
+    expect(result.descendant_binding_entries).toEqual(slice.descendant_binding_entries);
+    expect(Object.isFrozen(result.descendant_binding_entries)).toBe(true);
+
+    const wrongDigest = structuredClone(slice);
+    const wrongDigestEntry = wrongDigest.descendant_binding_entries[0];
+    const sourceEntry = value.closure.bindings[0];
+    if (wrongDigestEntry === undefined || sourceEntry === undefined) {
+      throw new Error('fixture descendant Binding is missing');
+    }
+    wrongDigestEntry.binding_path = `bp1.${'A'.repeat(43)}`;
+    expect(() => assemble(wrongDigest)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+
+    const outsideParent = structuredClone(slice);
+    const injected = outsideParent.descendant_binding_entries[0];
+    if (injected === undefined) throw new Error('fixture projected descendant is missing');
+    injected.binding_path_segments = Array.from(sourceEntry.binding_path_segments);
+    injected.binding_path = sourceEntry.binding_path;
+    expect(() => assemble(outsideParent)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+
+    const swappedDependency = structuredClone(slice);
+    swappedDependency.dependency_resource_node.pin.resource_id = 'swapped-agent-dependency';
+    (swappedDependency.dependency_resource_node as unknown as { node_id: string }).node_id =
+      canonicalResourceNodeId(swappedDependency.dependency_resource_node.pin);
+    expect(() => assemble(swappedDependency)).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+
+    const disabledValue = minimalPrepared(false);
+    const disabledPolicy = compositePolicy(disabledValue.agent, disabledValue.closure);
+    const disabledSlice = prepareAgentSubagentBindingEntries(
+      disabledValue.expectedGraph,
+      disabledValue.candidateGraph,
+      candidate(disabledValue.agent),
+      candidate(disabledValue.target),
+      disabledValue.closure,
+      [subagentCall(disabledValue.agent)],
+      disabledPolicy,
+    );
+    const missingDisabledEvidence = structuredClone(disabledSlice);
+    (
+      missingDisabledEvidence as unknown as { descendant_disabled_binding_paths: string[] }
+    ).descendant_disabled_binding_paths = [];
+    expect(() =>
+      prepareAgentRootBindingEntrySet(
+        candidate(disabledValue.agent),
+        disabledValue.expectedGraph.graph_hash,
+        [missingDisabledEvidence],
+        { ...disabledPolicy, schema_version: 'agent-root-binding-policy-input/1' },
+      ),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+  });
+
+  it('never lets a descendant retain a wider numeric ceiling than its parent mount', () => {
+    const value = prepared();
+    const bindings = structuredClone(value.closure.bindings) as unknown as Array<
+      ReturnType<typeof CompiledBindingEntryV1Schema.parse>
+    >;
+    const plugin = bindings.find((entry) => entry.binding_id === 'plugin');
+    if (plugin === undefined) throw new Error('fixture compiled plugin Binding is missing');
+    plugin.effective_policy.max_calls = 7;
+    const draft = { ...value.closure, bindings, closure_hash: hashA };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(candidate(value.agent)).root,
+      value.targetPin,
+      closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+    );
+    const policy = compositePolicy(value.agent, closure);
+    const cap = (item: (typeof policy)['root_ceiling']) => ({ ...item, max_calls: 3 });
+    const result = prepareAgentSubagentBindingEntries(
+      evidence.expectedGraph,
+      evidence.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      closure,
+      [subagentCall(value.agent)],
+      {
+        ...policy,
+        workspace_ceiling: cap(policy.workspace_ceiling),
+        root_ceiling: cap(policy.root_ceiling),
+        binding_ceilings: policy.binding_ceilings.map((item) => ({
+          ...item,
+          ceiling: cap(item.ceiling),
+        })),
+      },
+    );
+    expect(
+      result.descendant_binding_entries.find((entry) => entry.binding_id === 'plugin')
+        ?.effective_policy.max_calls,
+    ).toBe(3);
+  });
+
+  it('fails closed when a parent mount does not authorize a descendant operation', () => {
+    const value = prepared();
+    const policy = compositePolicy(value.agent, value.closure);
+    const callHash = prepareOperationContractSource(subagentCall(value.agent).operation).pin
+      .contract_hash;
+    const parentOnly = (item: (typeof policy)['root_ceiling']) => ({
+      ...item,
+      operation_contract_hashes: [callHash],
+    });
+    expect(() =>
+      prepareAgentSubagentBindingEntries(
+        value.expectedGraph,
+        value.candidateGraph,
+        candidate(value.agent),
+        candidate(value.target),
+        value.closure,
+        [subagentCall(value.agent)],
+        {
+          ...policy,
+          workspace_ceiling: parentOnly(policy.workspace_ceiling),
+          root_ceiling: parentOnly(policy.root_ceiling),
+          binding_ceilings: policy.binding_ceilings.map((item) => ({
+            ...item,
+            ceiling: parentOnly(item.ceiling),
+          })),
+        },
+      ),
+    ).toThrow('CLOSURE_POLICY_REQUIREMENT_UNAVAILABLE');
+  });
+
+  it('marks every projected descendant unavailable when its parent mount is disabled', () => {
+    const value = prepared(false);
+    const result = prepareAgentSubagentBindingEntries(
+      value.expectedGraph,
+      value.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      value.closure,
+      [subagentCall(value.agent)],
+      compositePolicy(value.agent, value.closure),
+    );
+    expect(result.descendant_disabled_binding_paths).toEqual(
+      result.descendant_binding_entries.map((entry) => entry.binding_path),
+    );
+    expect(
+      result.descendant_binding_entries.every(
+        (entry) => entry.effective_policy.principal_modes.length === 0,
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps a source-disabled child Binding disabled after parent-relative projection', () => {
+    const sources = targetSources();
+    const plugin = sources.target.capability_bindings.find((binding) => binding.kind === 'plugin');
+    if (plugin === undefined) throw new Error('fixture target plugin Binding is missing');
+    plugin.enabled = false;
+    const targetPin = {
+      ...prepareExecutableSource(candidate(sources.target)).root.pin,
+      published_resource_kind: 'AGENT_RELEASE' as const,
+    };
+    sources.parentBinding.pin = targetPin;
+    const closure = compiledClosure(sources.target);
+    const evidence = graph(
+      prepareExecutableSource(candidate(sources.agent)).root,
+      targetPin,
+      closure.closure_hash,
+      prepareExecutableSource(candidate(sources.target)).dependency_manifest.dependencies,
+    );
+    const result = prepareAgentSubagentBindingEntries(
+      evidence.expectedGraph,
+      evidence.candidateGraph,
+      candidate(sources.agent),
+      candidate(sources.target),
+      closure,
+      [subagentCall(sources.agent)],
+      compositePolicy(sources.agent, closure),
+    );
+    const projectedPlugin = result.descendant_binding_entries.find(
+      (entry) => entry.binding_id === plugin.binding_id,
+    );
+    if (projectedPlugin === undefined) throw new Error('projected plugin Binding is missing');
+    expect(result.descendant_disabled_binding_paths).toContain(projectedPlugin.binding_path);
+    expect(projectedPlugin.effective_policy).toMatchObject({
+      principal_modes: [],
+      max_calls: 0,
+      operation_contract_hashes: projectedPlugin.operation_contracts.map(
+        (operation) => operation.contract_hash,
+      ),
+    });
+  });
+
+  it('reprojects Pack routes and propagates a disabled ancestor to its member descendant', () => {
+    const value = prepared();
+    const bindings = structuredClone(value.closure.bindings) as unknown as Array<
+      ReturnType<typeof CompiledBindingEntryV1Schema.parse>
+    >;
+    const pack = bindings.find((entry) => entry.binding_kind === 'skill_pack');
+    const plugin = bindings.find((entry) => entry.binding_kind === 'plugin');
+    if (
+      pack === undefined ||
+      pack.target.published_resource_kind !== 'SKILL_PACK_RELEASE' ||
+      plugin === undefined ||
+      plugin.operation_contracts[0] === undefined
+    ) {
+      throw new Error('fixture Pack/plugin Binding is missing');
+    }
+    const memberSegments = [
+      ...pack.binding_path_segments,
+      {
+        segment_kind: 'skill_pack_member' as const,
+        owner_pin: { ...pack.target, published_resource_kind: 'SKILL_PACK_RELEASE' as const },
+        local_member_binding_id: 'projected-member',
+      },
+    ];
+    const memberPath = canonicalBindingPath(memberSegments);
+    const member = {
+      ...plugin,
+      binding_id: 'projected-member',
+      binding_path: memberPath,
+      binding_path_segments: memberSegments,
+    };
+    const routeContent = {
+      pack_binding_path: pack.binding_path,
+      exposed_operation_id: 'projected-operation',
+      exposed_operation_contract_hash: plugin.operation_contracts[0].contract_hash,
+      member_binding_path: memberPath,
+      member_target: plugin.target,
+      member_operation_contract_hash: plugin.operation_contracts[0].contract_hash,
+    };
+    pack.requirement_expression = plugin.requirement_expression;
+    pack.effective_policy = {
+      ...plugin.effective_policy,
+      side_effect: { ...plugin.effective_policy.side_effect, approval: 'required' },
+    };
+    pack.operation_contracts = plugin.operation_contracts;
+    pack.approval_gate_spec = { gate_spec_id: 'pack-binding-approval', gate_spec_hash: hashB };
+    pack.skill_pack_operation_routes = [
+      {
+        ...routeContent,
+        route_hash: canonicalSha256({
+          schema_version: 'skill-pack-operation-route-preimage/1',
+          ...routeContent,
+        }),
+      },
+    ];
+    bindings.push(member);
+    bindings.sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
+    const draft = {
+      ...value.closure,
+      bindings,
+      disabled_binding_paths: [pack.binding_path],
+      closure_hash: hashA,
+    };
+    const closure = {
+      ...draft,
+      closure_hash: canonicalSha256ExcludingRootKeys(draft, ['closure_hash']),
+    };
+    const evidence = graph(
+      prepareExecutableSource(candidate(value.agent)).root,
+      value.targetPin,
+      closure.closure_hash,
+      prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
+    );
+    const result = prepareAgentSubagentBindingEntries(
+      evidence.expectedGraph,
+      evidence.candidateGraph,
+      candidate(value.agent),
+      candidate(value.target),
+      closure,
+      [subagentCall(value.agent)],
+      compositePolicy(value.agent, closure),
+    );
+    const projectedPack = result.descendant_binding_entries.find(
+      (entry) => entry.binding_id === pack.binding_id,
+    );
+    const projectedMember = result.descendant_binding_entries.find(
+      (entry) => entry.binding_id === member.binding_id,
+    );
+    if (projectedPack === undefined || projectedMember === undefined) {
+      throw new Error('projected Pack/member Binding is missing');
+    }
+    const projectedRoute = projectedPack.skill_pack_operation_routes?.[0];
+    if (projectedRoute === undefined) throw new Error('projected Pack route is missing');
+    expect(projectedRoute).toMatchObject({
+      pack_binding_path: projectedPack.binding_path,
+      member_binding_path: projectedMember.binding_path,
+    });
+    const { route_hash: _routeHash, ...projectedRouteContent } = projectedRoute;
+    expect(projectedRoute.route_hash).toBe(
+      canonicalSha256({
+        schema_version: 'skill-pack-operation-route-preimage/1',
+        ...projectedRouteContent,
+      }),
+    );
+    expect(projectedRoute.route_hash).not.toBe(pack.skill_pack_operation_routes[0]?.route_hash);
+    expect(projectedPack.effective_policy.side_effect.approval).toBe('required');
+    expect(projectedPack.approval_gate_spec).toEqual(pack.approval_gate_spec);
+    expect(result.descendant_disabled_binding_paths).toEqual(
+      [projectedPack.binding_path, projectedMember.binding_path].sort(compareCanonicalStrings),
+    );
+    expect(projectedMember.effective_policy.principal_modes).toEqual([]);
+    const projectedSibling = result.descendant_binding_entries.find(
+      (entry) => entry.binding_id === plugin.binding_id,
+    );
+    expect(projectedSibling?.effective_policy.principal_modes.length).toBeGreaterThan(0);
+    expect(result.descendant_disabled_binding_paths).not.toContain(projectedSibling?.binding_path);
+  });
+
   it('requires the exact composite path ceiling set and sufficient aggregate limits', () => {
     const value = prepared();
-    const validPolicy = compositePolicy(value.agent);
+    const validPolicy = compositePolicy(value.agent, value.closure);
     const missing = { ...validPolicy, binding_ceilings: [] };
     const duplicate = {
       ...validPolicy,
@@ -670,7 +1096,7 @@ describe('nested Agent Binding operation projection', () => {
       prepareExecutableSource(candidate(value.target)).dependency_manifest.dependencies,
     );
     const declaration = subagentCall(value.agent);
-    const policy = compositePolicy(value.agent);
+    const policy = compositePolicy(value.agent, value.closure);
     expect(() =>
       prepareAgentSubagentBindingEntries(
         evidence.expectedGraph,

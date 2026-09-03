@@ -1,7 +1,10 @@
 import {
+  type CapabilityPolicyCeilingV1,
   type CapabilityBindingV1,
   type CapabilityRequirementExpressionV1,
   CompiledBindingEntryV1Schema,
+  type EffectiveCapabilityPolicyV1,
+  EffectiveCapabilityPolicyV1Schema,
 } from '@better-agent/domain-contracts';
 import { parseAgentBindingPolicyInput } from './agent-binding-policy.js';
 import {
@@ -32,18 +35,82 @@ export interface PreparedAgentCompositeBindingEntriesV1 {
   readonly nested_closure_hash: string;
   readonly dependency_resource_node: PreparedAgentChildCallOperationsV1['dependency_resource_node'];
   readonly entries: readonly CompiledBindingEntryV1[];
+  readonly descendant_binding_entries: readonly CompiledBindingEntryV1[];
+  readonly descendant_disabled_binding_paths: readonly `bp1.${string}`[];
   readonly requirement_expressions: readonly {
     readonly binding_path: `bp1.${string}`;
     readonly expression: CapabilityRequirementExpressionV1;
   }[];
 }
 
-function notClosed(path = '$.composite'): never {
-  throw new ReleaseCoreError(
-    'CLOSURE_BINDING_ENTRY_NOT_CLOSED',
-    path,
-    'composite Binding inputs do not form one exact closed path projection',
+function notClosed(
+  path = '$.composite',
+  reason = 'composite Binding inputs do not form one exact closed path projection',
+): never {
+  throw new ReleaseCoreError('CLOSURE_BINDING_ENTRY_NOT_CLOSED', path, reason);
+}
+
+function effectivePolicyAsCeiling(policy: EffectiveCapabilityPolicyV1): CapabilityPolicyCeilingV1 {
+  const allowances = new Map<string, CapabilityPolicyCeilingV1['credential_allowances'][number]>();
+  for (const requirement of policy.credential_requirements) {
+    const key = `${requirement.provider_id}\u0000${requirement.audience}`;
+    const current = allowances.get(key);
+    allowances.set(key, {
+      provider_id: requirement.provider_id,
+      audience: requirement.audience,
+      allowed_scopes: [
+        ...new Set([...(current?.allowed_scopes ?? []), ...requirement.required_scopes]),
+      ].sort(),
+      principal_modes: [
+        ...new Set([...(current?.principal_modes ?? []), ...requirement.allowed_principal_modes]),
+      ].sort(),
+    });
+  }
+  const { credential_requirements: _requirements, ...shape } = policy;
+  return {
+    schema_version: 'capability-policy-ceiling/1',
+    credential_allowances: [...allowances.values()],
+    ...shape,
+  };
+}
+
+function unavailableDescendantPolicy(entry: CompiledBindingEntryV1): EffectiveCapabilityPolicyV1 {
+  const operations = entry.operation_contracts;
+  const effectRank = { safe: 0, requires_key: 1, unsafe: 2 } as const;
+  const maximumClass = operations.reduce<'safe' | 'requires_key' | 'unsafe'>(
+    (current, operation) =>
+      effectRank[operation.side_effect_class] > effectRank[current]
+        ? operation.side_effect_class
+        : current,
+    'safe',
   );
+  return EffectiveCapabilityPolicyV1Schema.parse({
+    credential_requirements: [],
+    principal_modes: [],
+    egress: [],
+    readable_data_classification_ceiling: 'public',
+    output_data_classification: 'public',
+    side_effect: {
+      maximum_class: maximumClass,
+      approval:
+        entry.approval_gate_spec !== undefined ||
+        operations.some((operation) => operation.approval_required)
+          ? 'required'
+          : 'none',
+    },
+    operation_contract_hashes: operations.map((operation) => operation.contract_hash),
+    max_calls: 0,
+    max_depth: 0,
+    max_parallelism: 0,
+    budget: {
+      schema_version: 'capability-budget/1',
+      amount_credits: '0',
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      duration_ms: 0,
+    },
+  });
 }
 
 function prepareEntries(
@@ -152,6 +219,106 @@ function prepareEntries(
       return parsed.data;
     })
     .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
+  const projected = projection.projected_binding_entries ?? [];
+  const projectedPathByParentAndSource = new Map(
+    projected.map((item) => [
+      `${item.parent_binding_path}\u0000${item.source_binding_path}`,
+      item.binding_path,
+    ]),
+  );
+  const policyByParentPath = new Map(
+    policies.binding_ceilings.map((item) => [item.binding_path, item.ceiling]),
+  );
+  const descendantEntries = projected
+    .map((item) => {
+      const parentCeiling = policyByParentPath.get(item.parent_binding_path);
+      if (parentCeiling === undefined) notClosed('$.policy.binding_ceilings');
+      const requirements = compileCapabilityRequirementEnvelope(item.entry.requirement_expression);
+      const operationHashes = item.entry.operation_contracts
+        .map((operation) => operation.contract_hash)
+        .sort();
+      if (
+        requirements.operation_contract_hashes.length !== operationHashes.length ||
+        requirements.operation_contract_hashes.some(
+          (hash, index) => hash !== operationHashes[index],
+        )
+      ) {
+        notClosed(
+          `$.descendant_binding_entries.${item.binding_path}.requirement_expression`,
+          'descendant requirement expression does not bind the compiled operation set',
+        );
+      }
+      const disabled = !item.parent_enabled || item.source_disabled;
+      const effectivePolicy = disabled
+        ? unavailableDescendantPolicy(item.entry)
+        : resolveEffectiveCapabilityPolicy(
+            meetCapabilityPolicyCeilings(
+              meetCapabilityPolicyCeilings(sharedCeiling, parentCeiling),
+              effectivePolicyAsCeiling(item.entry.effective_policy),
+            ),
+            requirements,
+          );
+      const skillPackOperationRoutes = item.entry.skill_pack_operation_routes?.map((route) => {
+        if (route.pack_binding_path !== item.source_binding_path) {
+          notClosed(
+            `$.descendant_binding_entries.${item.binding_path}.skill_pack_operation_routes`,
+            'descendant Pack route is not bound to its source Binding path',
+          );
+        }
+        const memberBindingPath = projectedPathByParentAndSource.get(
+          `${item.parent_binding_path}\u0000${route.member_binding_path}`,
+        );
+        if (memberBindingPath === undefined) {
+          notClosed(
+            `$.descendant_binding_entries.${item.binding_path}.skill_pack_operation_routes`,
+            'descendant Pack member route has no projected Binding path',
+          );
+        }
+        const content = {
+          pack_binding_path: item.binding_path,
+          exposed_operation_id: route.exposed_operation_id,
+          exposed_operation_contract_hash: route.exposed_operation_contract_hash,
+          member_binding_path: memberBindingPath,
+          member_target: route.member_target,
+          member_operation_contract_hash: route.member_operation_contract_hash,
+        };
+        return {
+          ...content,
+          route_hash: canonicalSha256({
+            schema_version: 'skill-pack-operation-route-preimage/1',
+            ...content,
+          }),
+        };
+      });
+      const parsed = CompiledBindingEntryV1Schema.safeParse({
+        ...item.entry,
+        binding_path: item.binding_path,
+        binding_path_segments: item.binding_path_segments,
+        effective_policy: effectivePolicy,
+        ...(skillPackOperationRoutes === undefined
+          ? {}
+          : { skill_pack_operation_routes: skillPackOperationRoutes }),
+      });
+      if (!parsed.success) {
+        notClosed(
+          `$.descendant_binding_entries.${item.binding_path}`,
+          `parent-relative descendant Binding is invalid: ${parsed.error.issues[0]?.message ?? 'unknown schema failure'}`,
+        );
+      }
+      return parsed.data;
+    })
+    .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
+  if (
+    descendantEntries.some(
+      (entry, index) =>
+        index > 0 && (descendantEntries[index - 1]?.binding_path ?? '') >= entry.binding_path,
+    )
+  )
+    notClosed('$.descendant_binding_entries');
+  const descendantDisabledPaths = projected
+    .filter((item) => !item.parent_enabled || item.source_disabled)
+    .map((item) => item.binding_path)
+    .sort(compareCanonicalStrings);
   return deepFreezeJson({
     schema_version: 'prepared-agent-composite-binding-entries/1',
     dependency_kind: projection.dependency_kind,
@@ -159,6 +326,8 @@ function prepareEntries(
     nested_closure_hash: projection.nested_closure_hash,
     dependency_resource_node: projection.dependency_resource_node,
     entries,
+    descendant_binding_entries: descendantEntries,
+    descendant_disabled_binding_paths: descendantDisabledPaths,
     requirement_expressions: expressions.sort((left, right) =>
       compareCanonicalStrings(left.binding_path, right.binding_path),
     ),

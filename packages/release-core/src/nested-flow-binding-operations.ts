@@ -1,15 +1,19 @@
 import type {
+  BindingPathSegmentV1Schema,
   CapabilityBindingV1,
   CapabilityRequirementExpressionV1,
+  CompiledBindingEntryV1Schema,
   OperationContractPinV1,
 } from '@better-agent/domain-contracts';
 
 import { canonicalJsonBytes } from './canonical-json.js';
+import { canonicalBindingPath } from './closure-identity.js';
 import { prepareNestedCapabilityDependency } from './compiled-capability-closure.js';
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
 import { prepareGraphBoundAgentFlowPaths } from './graph-bound-direct-paths.js';
+import { withinProjectedBindingCapacity } from './projection-capacity.js';
 import { prepareFlowNodePaths } from './root-binding-paths.js';
 
 interface ProjectedFlowBindingOperationV1 {
@@ -28,6 +32,15 @@ export interface PreparedNestedFlowBindingOperationsV1 {
     typeof prepareNestedCapabilityDependency
   >['resource_node'];
   readonly binding_operations: readonly ProjectedFlowBindingOperationV1[];
+  readonly projected_binding_entries: readonly {
+    readonly parent_binding_path: `bp1.${string}`;
+    readonly parent_enabled: boolean;
+    readonly source_binding_path: `bp1.${string}`;
+    readonly source_disabled: boolean;
+    readonly binding_path: `bp1.${string}`;
+    readonly binding_path_segments: readonly ReturnType<typeof BindingPathSegmentV1Schema.parse>[];
+    readonly entry: ReturnType<typeof CompiledBindingEntryV1Schema.parse>;
+  }[];
 }
 
 function mismatch(path: string, reason: string): never {
@@ -52,6 +65,20 @@ function flowNodeSequence(segments: readonly unknown[]): string {
     return [{ graph_id: segment.graph_id, node_id: segment.node_id }];
   });
   return canonicalJsonBytes(nodes).toString('base64url');
+}
+
+function segmentPrefix(prefix: readonly unknown[], value: readonly unknown[]): boolean {
+  return (
+    prefix.length < value.length &&
+    prefix.every((segment, index) => sameJson(segment, value[index]))
+  );
+}
+
+function segmentPrefixOrEqual(prefix: readonly unknown[], value: readonly unknown[]): boolean {
+  return (
+    prefix.length <= value.length &&
+    prefix.every((segment, index) => sameJson(segment, value[index]))
+  );
 }
 
 /** Project verified Flow closure operations into every parent-prefixed Flow node namespace. */
@@ -108,12 +135,18 @@ export function prepareGraphBoundNestedFlowBindingOperations(
   >();
   for (const entry of nestedClosure.bindings) {
     const node = childNodeByPath.get(entry.binding_path);
-    if (node === undefined) {
+    if (
+      node === undefined &&
+      !childNodes.nodes.some((candidate) =>
+        segmentPrefix(candidate.source_path_segments, entry.binding_path_segments),
+      )
+    ) {
       mismatch(
         `$.nested_closure.bindings.${entry.binding_path}`,
-        'nested Flow Binding path is not an exact source Flow node path',
+        'nested Flow Binding path is not rooted at an exact source Flow node path',
       );
     }
+    if (node === undefined) continue;
     const key = flowNodeSequence(entry.binding_path_segments);
     if (childOperations.has(key)) {
       mismatch(
@@ -159,12 +192,96 @@ export function prepareGraphBoundNestedFlowBindingOperations(
     mismatch('$.prepared_paths', 'verified Flow operations have no parent-prefixed namespace');
   }
 
+  const projectedParents = graphBound.prepared_paths.bindings.filter(
+    (parentBinding) => parentBinding.nodes.length > 0,
+  );
+  if (!withinProjectedBindingCapacity(projectedParents.length, nestedClosure.bindings.length)) {
+    mismatch('$.nested_closure.bindings', 'projected Flow Binding namespace exceeds its bound');
+  }
+  const disabledSourceSegments = nestedClosure.bindings
+    .filter((entry) => nestedClosure.disabled_binding_paths.includes(entry.binding_path))
+    .map((entry) => entry.binding_path_segments);
+  const projectedBindingEntries = projectedParents.flatMap((parentBinding) => {
+    return nestedClosure.bindings.map((entry) => {
+      const [rootSegment, ...descendantSegments] = entry.binding_path_segments;
+      if (
+        rootSegment?.segment_kind !== 'root' ||
+        !sameJson(rootSegment.pin, nestedClosure.root.pin)
+      ) {
+        mismatch(
+          `$.nested_closure.bindings.${entry.binding_path}`,
+          'nested Binding path is not rooted in the verified Flow',
+        );
+      }
+      const rewrittenSegments = descendantSegments.map((segment) => {
+        if (
+          (segment.segment_kind === 'binding' || segment.segment_kind === 'flow_node') &&
+          segment.owner.owner_kind === 'root' &&
+          sameJson(segment.owner.pin, nestedClosure.root.pin)
+        ) {
+          return {
+            ...segment,
+            owner: {
+              owner_kind: 'published_dependency' as const,
+              pin: nestedClosure.root.pin,
+            },
+          };
+        }
+        return segment;
+      });
+      const bindingPathSegments = [
+        ...parentBinding.binding_path_segments,
+        ...rewrittenSegments,
+      ] as ReturnType<typeof BindingPathSegmentV1Schema.parse>[];
+      const bindingPath = canonicalBindingPath(bindingPathSegments);
+      const directNode = childNodeByPath.get(entry.binding_path);
+      if (
+        directNode !== undefined &&
+        !parentBinding.nodes.some(
+          (candidate) =>
+            flowNodeSequence(candidate.source_path_segments) ===
+              flowNodeSequence(directNode.source_path_segments) &&
+            candidate.source_path === bindingPath,
+        )
+      ) {
+        mismatch(
+          `$.nested_closure.bindings.${entry.binding_path}`,
+          'projected direct Flow-node path does not match the prepared namespace',
+        );
+      }
+      return {
+        parent_binding_path: parentBinding.binding_path,
+        parent_enabled: parentBinding.enabled,
+        source_binding_path: entry.binding_path as `bp1.${string}`,
+        source_disabled: disabledSourceSegments.some((segments) =>
+          segmentPrefixOrEqual(segments, entry.binding_path_segments),
+        ),
+        binding_path: bindingPath,
+        binding_path_segments: bindingPathSegments,
+        entry,
+      };
+    });
+  });
+  if (
+    projectedBindingEntries.length > 8_192 ||
+    new Set(projectedBindingEntries.map((item) => item.binding_path)).size !==
+      projectedBindingEntries.length
+  ) {
+    mismatch(
+      '$.nested_closure.bindings',
+      'projected Flow Binding namespace is not bounded and unique',
+    );
+  }
+
   return deepFreezeJson({
     schema_version: 'prepared-nested-flow-binding-operations/1',
     graph_hash: graphBound.graph_binding.graph_hash,
     nested_closure_hash: nestedClosure.closure_hash,
     dependency_resource_node: nestedDependency.resource_node,
     binding_operations: bindingOperations.sort((left, right) =>
+      compareCanonicalStrings(left.binding_path, right.binding_path),
+    ),
+    projected_binding_entries: projectedBindingEntries.sort((left, right) =>
       compareCanonicalStrings(left.binding_path, right.binding_path),
     ),
   });
