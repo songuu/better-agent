@@ -22,7 +22,10 @@ const matrixOsExpression = '$' + '{{ matrix.os }}';
 
 const requiredLfGitAttributes = [
   '*.cjs',
+  '*.conf',
+  '*.css',
   '*.cts',
+  '*.html',
   '*.js',
   '*.jsx',
   '*.json',
@@ -30,6 +33,8 @@ const requiredLfGitAttributes = [
   '*.mts',
   '*.md',
   '*.sql',
+  '*.service',
+  '*.sh',
   '*.ts',
   '*.tsx',
   '*.yaml',
@@ -38,6 +43,7 @@ const requiredLfGitAttributes = [
 
 const expectedGitAttributes = [
   '* text=auto',
+  '.gitattributes text eol=lf',
   '',
   ...requiredLfGitAttributes.map((pattern) => `${pattern} text eol=lf`),
   '',

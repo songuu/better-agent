@@ -14,6 +14,7 @@ const installer = readFileSync(
   new URL('../../scripts/deployment/install-production-web.sh', import.meta.url),
   'utf8',
 );
+const webCurrentSymlinkGuard = ['[[ -L "', '$', '{WEB_CURRENT}', '" ]]'].join('');
 
 test('runs the web runtime as a dedicated hardened loopback service', () => {
   assert.match(unit, /^User=better-agent-web$/m);
@@ -44,7 +45,7 @@ test('installs transactionally and verifies loopback plus TLS-routed health', ()
     "trap 'rollback 143' TERM",
     'Nginx include anchor must exist exactly once',
     'require_release_file',
-    '[[ -L "${WEB_CURRENT}" ]]',
+    webCurrentSymlinkGuard,
     "--noproxy '*'",
     'nginx -t',
     'systemctl reload nginx',

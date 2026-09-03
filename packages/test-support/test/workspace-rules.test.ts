@@ -13,7 +13,10 @@ import {
 describe('validateGitAttributes', () => {
   const requiredLfPatterns = [
     '*.cjs',
+    '*.conf',
+    '*.css',
     '*.cts',
+    '*.html',
     '*.js',
     '*.jsx',
     '*.json',
@@ -21,6 +24,8 @@ describe('validateGitAttributes', () => {
     '*.mts',
     '*.md',
     '*.sql',
+    '*.service',
+    '*.sh',
     '*.ts',
     '*.tsx',
     '*.yaml',
@@ -28,6 +33,7 @@ describe('validateGitAttributes', () => {
   ];
   const validAttributes = [
     '* text=auto',
+    '.gitattributes text eol=lf',
     '',
     ...requiredLfPatterns.map((pattern) => `${pattern} text eol=lf`),
     '',
@@ -41,9 +47,10 @@ describe('validateGitAttributes', () => {
     expect(validateGitAttributes(validAttributes)).toEqual([]);
   });
 
-  it('rejects a missing MTS rule that would turn declarations into CRLF on Windows', () => {
+  it('rejects missing source rules that would turn formatted files into CRLF on Windows', () => {
     for (const attributes of [
       validAttributes.replace('*.mts text eol=lf\n', ''),
+      validAttributes.replace('*.css text eol=lf\n', ''),
       `${validAttributes}*.mts text eol=crlf\n`,
       `${validAttributes}*.mts -text\n`,
       `${validAttributes}* text=auto eol=crlf\n`,
