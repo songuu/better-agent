@@ -1,6 +1,8 @@
 import { CompiledBindingEntryV1Schema } from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
 
+import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
+import { prepareAgentRootResourceGraph } from '../src/agent-root-resource-graph.js';
 import { canonicalResourceNodeId } from '../src/closure-identity.js';
 import { deriveDependencyManifest, publishedResourcePinKey } from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
@@ -25,14 +27,24 @@ function candidate(document: unknown) {
 function fixture(
   options: {
     aliasExposure?: boolean;
+    compositeMember?: boolean;
     disabledWithExposure?: boolean;
     secondMount?: boolean;
     selectExposure?: boolean;
+    packOnly?: boolean;
   } = {},
 ) {
   const leafInput = leafCandidate();
   const leaf = prepareLeafResourceSource(leafInput);
   const packInput = skillPackSource();
+  const agent = richAgentSource();
+  if (options.compositeMember) {
+    const nestedPackBinding = agent.capability_bindings.find(
+      (binding) => binding.kind === 'skill_pack',
+    );
+    if (nestedPackBinding === undefined) throw new Error('fixture nested Pack Binding is missing');
+    packInput.document.member_bindings.push(structuredClone(nestedPackBinding));
+  }
   if (options.aliasExposure) {
     const exposure = packInput.document.exposures[0];
     if (exposure === undefined) throw new Error('fixture Pack exposure is missing');
@@ -42,7 +54,6 @@ function fixture(
     });
   }
   const pack = prepareSkillPackSource(packInput);
-  const agent = richAgentSource();
   const packBinding = agent.capability_bindings.find((item) => item.kind === 'skill_pack');
   if (packBinding === undefined || packBinding.kind !== 'skill_pack')
     throw new Error('fixture Pack Binding is missing');
@@ -72,6 +83,18 @@ function fixture(
     second.binding_id = 'pack-second';
     agent.capability_bindings.push(second);
     agent.strategy.allowed_capability_binding_ids.push(second.binding_id);
+  }
+  if (options.packOnly) {
+    agent.capability_bindings = agent.capability_bindings.filter(
+      (binding) => binding.kind === 'skill_pack',
+    );
+    agent.strategy.allowed_capability_binding_ids = agent.capability_bindings.map(
+      (binding) => binding.binding_id,
+    );
+    agent.strategy.allowed_gate_spec_ids = [];
+    agent.instruction_skill_bindings = [];
+    agent.public_capability_handles = [];
+    agent.gate_specs = [];
   }
   const root = candidate(agent);
   const paths = prepareAgentSkillPackDependencyPaths(root, packInput);
@@ -103,6 +126,17 @@ function fixture(
     },
   } as const;
   const mounted = paths.bindings.filter((binding) => binding.members.length > 0);
+  const leafMemberIds = new Set(
+    pack.document.member_bindings
+      .filter(
+        (binding) =>
+          binding.kind === 'knowledge' ||
+          binding.kind === 'database' ||
+          binding.kind === 'plugin' ||
+          (binding.kind === 'subagent' && binding.target_kind === 'external_a2a'),
+      )
+      .map((binding) => binding.binding_id),
+  );
   const policies = {
     schema_version: 'skill-pack-leaf-binding-policy-input/1',
     workspace_ceiling: ceiling,
@@ -112,17 +146,19 @@ function fixture(
       ceiling,
     })),
     member_binding_ceilings: mounted.flatMap((binding) =>
-      binding.members.map((member) => ({
-        binding_path: member.member_binding_path,
-        ceiling,
-      })),
+      binding.members
+        .filter((member) => leafMemberIds.has(member.member_binding_id))
+        .map((member) => ({
+          binding_path: member.member_binding_path,
+          ceiling,
+        })),
     ),
   };
   return { agent, root, packInput, pack, packBinding, leafInput, leaf, paths, policies, ceiling };
 }
 
-function graphFixture() {
-  const value = fixture({ secondMount: true });
+function graphFixture(options: Parameters<typeof fixture>[0] = {}) {
+  const value = fixture({ secondMount: true, packOnly: true, ...options });
   const root = prepareExecutableSource(value.root);
   const records = new Map<string, Record<string, unknown>>();
   for (const pin of root.dependency_manifest.dependencies) {
@@ -206,6 +242,11 @@ describe('Skill Pack leaf Binding entry assembly', () => {
     expect(result.pack_entries[0]?.skill_pack_operation_routes).toHaveLength(1);
     expect(result.pack_requirement_expressions).toHaveLength(1);
     expect(result.leaf_dependency_intrinsic_policies).toHaveLength(1);
+    expect(result.pack_dependency_intrinsic_policy).toMatchObject({
+      node_id: canonicalResourceNodeId(value.pack.full_pin),
+      pin: value.pack.full_pin,
+      intrinsic_policy: result.leaf_dependency_intrinsic_policies[0]?.intrinsic_policy,
+    });
     expect(
       result.leaf_dependency_intrinsic_policies.find(
         (item) => item.node_id === canonicalResourceNodeId(value.leaf.full_pin),
@@ -228,6 +269,18 @@ describe('Skill Pack leaf Binding entry assembly', () => {
     expect(result.pack_entries[0]?.skill_pack_operation_routes).toHaveLength(2);
     expect(result.pack_entries[0]?.operation_contracts).toEqual([value.leaf.operation_contract]);
     expect(result.pack_requirement_expressions[0]?.expression.expression_kind).toBe('leaf');
+  });
+
+  it('withholds the Pack-node policy when composite member coverage is incomplete', () => {
+    const value = fixture({ compositeMember: true });
+    const result = prepareSkillPackLeafBindingEntrySet(
+      value.root,
+      value.packInput,
+      [value.leafInput],
+      value.policies,
+    );
+    expect(result).not.toHaveProperty('pack_dependency_intrinsic_policy');
+    expect(result.leaf_dependency_intrinsic_policies).toHaveLength(1);
   });
 
   it('meets Workspace, root, Pack-mount and member ceilings', () => {
@@ -405,6 +458,102 @@ describe('Skill Pack leaf Binding entry assembly', () => {
     expect(result.graph_hash).toBe(value.graph.graph_hash);
     expect(result.prepared_entries.entries).toHaveLength(2);
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('assembles shared Pack and member nodes with one edge per mounted path', () => {
+    const value = graphFixture();
+    const slice = prepareGraphBoundSkillPackLeafBindingEntrySet(
+      value.graph,
+      value.graphCandidate,
+      value.root,
+      value.packInput,
+      [value.leafInput],
+      value.policies,
+    );
+    const rootPolicyInput = {
+      schema_version: 'agent-root-binding-policy-input/1',
+      workspace_ceiling: value.ceiling,
+      root_ceiling: value.ceiling,
+      binding_ceilings: value.policies.pack_binding_ceilings,
+    } as const;
+    const entrySet = prepareAgentRootBindingEntrySet(
+      value.root,
+      value.graph.graph_hash,
+      [slice],
+      rootPolicyInput,
+    );
+    const result = prepareAgentRootResourceGraph(value.graph, entrySet);
+    const packNodeId = canonicalResourceNodeId(value.pack.full_pin);
+    const leafNodeId = canonicalResourceNodeId(value.leaf.full_pin);
+    expect(result.resource_nodes).toHaveLength(value.graph.nodes.length);
+    expect(
+      result.resource_nodes.find((node) => node.node_id === packNodeId)?.intrinsic_policy,
+    ).toEqual(slice.prepared_entries.pack_dependency_intrinsic_policy?.intrinsic_policy);
+    expect(
+      result.dependency_edges.filter(
+        (edge) => edge.from_node_id === value.graph.root_node_id && edge.to_node_id === packNodeId,
+      ),
+    ).toHaveLength(2);
+    expect(
+      result.dependency_edges.filter(
+        (edge) => edge.from_node_id === packNodeId && edge.to_node_id === leafNodeId,
+      ),
+    ).toHaveLength(2);
+    expect(() =>
+      prepareAgentRootResourceGraph(value.graph, {
+        ...entrySet,
+        descendant_binding_entries: [],
+      }),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+    expect(() =>
+      prepareAgentRootResourceGraph(value.graph, {
+        ...entrySet,
+        dependency_intrinsic_policies: entrySet.dependency_intrinsic_policies.filter(
+          (policy) => policy.node_id !== packNodeId,
+        ),
+      }),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+    const changedSlice = structuredClone(slice);
+    const changedMember = changedSlice.prepared_entries.entries[0];
+    if (changedMember === undefined) throw new Error('fixture Pack member entry is missing');
+    changedMember.binding_id = 'forged-member';
+    expect(() =>
+      prepareAgentRootBindingEntrySet(
+        value.root,
+        value.graph.graph_hash,
+        [changedSlice],
+        rootPolicyInput,
+      ),
+    ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+  });
+
+  it('retains disabled Pack descendant paths in the root entry set', () => {
+    const value = graphFixture({ selectExposure: false });
+    const slice = prepareGraphBoundSkillPackLeafBindingEntrySet(
+      value.graph,
+      value.graphCandidate,
+      value.root,
+      value.packInput,
+      [value.leafInput],
+      value.policies,
+    );
+    const disabledCeiling = {
+      ...value.ceiling,
+      principal_modes: [...value.ceiling.principal_modes, 'none'] as const,
+    };
+    const entrySet = prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [slice], {
+      schema_version: 'agent-root-binding-policy-input/1',
+      workspace_ceiling: disabledCeiling,
+      root_ceiling: disabledCeiling,
+      binding_ceilings: value.policies.pack_binding_ceilings.map(({ binding_path }) => ({
+        binding_path,
+        ceiling: disabledCeiling,
+      })),
+    });
+    expect(entrySet.disabled_binding_paths).toEqual(
+      slice.prepared_entries.policy_disabled_binding_paths,
+    );
+    expect(entrySet.descendant_binding_entries).toHaveLength(2);
   });
 
   it('rejects a leaf that is direct from Agent but not from its Pack', () => {

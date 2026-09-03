@@ -1,3 +1,11 @@
+---
+title: "Agent 直接资源图必须同时闭合节点策略与边来源"
+date: 2026-09-02
+tags: [solution, release-core, capability, security, testing]
+related_instincts: []
+aliases: ["Agent direct resource graph"]
+---
+
 # Agent 直接资源图必须同时闭合节点策略与边来源
 
 ## 问题
@@ -22,3 +30,8 @@
 - L4 安全、架构、质量、性能与测试内联审查未发现剩余 P0/P1/P2。
 
 本增量没有执行 PostgreSQL、上传、生产部署或 host-attested Acceptance。
+
+## Related
+
+- [[2026-09-03-skill-pack-resource-node-provenance]]
+- [[session-2026-09-02]]

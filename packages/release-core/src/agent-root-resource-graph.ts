@@ -197,6 +197,7 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
       'requirement_expressions',
       'disabled_binding_paths',
       'dependency_intrinsic_policies',
+      'descendant_binding_entries',
       'intrinsic_policy',
       'aggregate_limits',
     ]) ||
@@ -204,7 +205,8 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
     !Array.isArray(value.entries) ||
     !Array.isArray(value.requirement_expressions) ||
     !Array.isArray(value.disabled_binding_paths) ||
-    !Array.isArray(value.dependency_intrinsic_policies)
+    !Array.isArray(value.dependency_intrinsic_policies) ||
+    !Array.isArray(value.descendant_binding_entries)
   ) {
     invalid('$.entry_set', 'entry set does not match its closed intermediate shape');
   }
@@ -274,18 +276,45 @@ function parseEntrySet(input: unknown): PreparedAgentRootBindingEntrySetV1 {
       'dependency policy identities must be sorted and unique',
     );
   }
+  const descendantBindingEntries = value.descendant_binding_entries.map((candidate, index) => {
+    const parsed = CompiledBindingEntryV1Schema.safeParse(candidate);
+    if (!parsed.success) {
+      invalid(`$.entry_set.descendant_binding_entries[${index}]`, 'invalid descendant Binding');
+    }
+    return parsed.data;
+  });
+  if (
+    descendantBindingEntries.some(
+      (entry, index) =>
+        index > 0 &&
+        (descendantBindingEntries[index - 1]?.binding_path ?? '') >= entry.binding_path,
+    )
+  ) {
+    invalid(
+      '$.entry_set.descendant_binding_entries',
+      'descendant Bindings must be sorted and unique',
+    );
+  }
+  if (
+    descendantBindingEntries.some((entry) =>
+      entries.some((rootEntry) => rootEntry.binding_path === entry.binding_path),
+    )
+  ) {
+    invalid('$.entry_set.descendant_binding_entries', 'root and descendant paths must be disjoint');
+  }
   return {
     ...(snapshot as PreparedAgentRootBindingEntrySetV1),
     graph_hash: graphHash.data as `sha256:${string}`,
     root: root.data as PreparedAgentRootBindingEntrySetV1['root'],
     entries,
     dependency_intrinsic_policies: policies,
+    descendant_binding_entries: descendantBindingEntries,
     intrinsic_policy: normalizedRootPolicy,
     aggregate_limits: aggregate.data,
   };
 }
 
-/** Assemble direct Agent resource facts and route provenance; recursive descendants stay fail-closed. */
+/** Assemble direct Agent and complete leaf-Pack resource facts; other recursion stays fail-closed. */
 export function prepareAgentRootResourceGraph(
   graphInput: unknown,
   entrySetInput: unknown,
@@ -373,30 +402,72 @@ export function prepareAgentRootResourceGraph(
   const graphEdgeKeys = new Set(
     graph.edges.map((edge) => `${edge.from_node_id}\u0000${edge.to_node_id}`),
   );
-  const dependencyEdges: DependencyEdge[] = entrySet.entries.map((entry) => {
+  const dependencyEdges: DependencyEdge[] = [];
+  for (const entry of entrySet.descendant_binding_entries) {
+    const lastSegment = entry.binding_path_segments.at(-1);
     const targetNodeId = entry.dependency_node_ids[0];
     if (
+      lastSegment?.segment_kind !== 'skill_pack_member' ||
+      lastSegment.local_member_binding_id !== entry.binding_id ||
+      canonicalBindingPath(entry.binding_path_segments) !== entry.binding_path ||
       entry.dependency_node_ids.length !== 1 ||
       targetNodeId === undefined ||
-      !graphEdgeKeys.has(`${graph.root_node_id}\u0000${targetNodeId}`)
+      targetNodeId !== canonicalResourceNodeId(entry.target) ||
+      !(
+        entry.binding_kind === 'knowledge' ||
+        entry.binding_kind === 'database' ||
+        entry.binding_kind === 'plugin' ||
+        (entry.binding_kind === 'subagent' &&
+          entry.target.published_resource_kind === 'A2A_AGENT_RELEASE')
+      )
     ) {
-      invalid('$.dependency_edges', 'root Binding does not match a direct pinned graph edge');
+      invalid('$.dependency_edges', 'descendant Binding shape is unsupported');
+    }
+    const fromNodeId = canonicalResourceNodeId(lastSegment.owner_pin);
+    if (!graphEdgeKeys.has(`${fromNodeId}\u0000${targetNodeId}`)) {
+      invalid('$.dependency_edges', 'descendant Binding edge is absent from the pinned graph');
     }
     const parsed = ClosureDependencyEdgeV1Schema.safeParse({
-      from_node_id: graph.root_node_id,
+      from_node_id: fromNodeId,
       to_node_id: targetNodeId,
       relation: 'binding_target',
       source_path: entry.binding_path,
     });
-    if (!parsed.success) invalid('$.dependency_edges', 'Binding edge is not canonical');
-    return parsed.data;
-  });
+    if (!parsed.success) invalid('$.dependency_edges', 'descendant Binding edge is not canonical');
+    dependencyEdges.push(parsed.data);
+  }
+  dependencyEdges.push(
+    ...entrySet.entries.map((entry) => {
+      const targetNodeId = entry.dependency_node_ids[0];
+      if (
+        entry.dependency_node_ids.length !== 1 ||
+        targetNodeId === undefined ||
+        !graphEdgeKeys.has(`${graph.root_node_id}\u0000${targetNodeId}`)
+      ) {
+        invalid('$.dependency_edges', 'root Binding does not match a direct pinned graph edge');
+      }
+      const parsed = ClosureDependencyEdgeV1Schema.safeParse({
+        from_node_id: graph.root_node_id,
+        to_node_id: targetNodeId,
+        relation: 'binding_target',
+        source_path: entry.binding_path,
+      });
+      if (!parsed.success) invalid('$.dependency_edges', 'Binding edge is not canonical');
+      return parsed.data;
+    }),
+  );
   const rootSourcePath = canonicalBindingPath([{ segment_kind: 'root', pin: entrySet.root.pin }]);
   for (const edge of graph.edges) {
+    if (
+      dependencyEdges.some(
+        (candidate) =>
+          candidate.from_node_id === edge.from_node_id && candidate.to_node_id === edge.to_node_id,
+      )
+    )
+      continue;
     if (edge.from_node_id !== graph.root_node_id) {
       invalid('$.dependency_edges', 'recursive or unclaimed graph edge requires more provenance');
     }
-    if (dependencyEdges.some((candidate) => candidate.to_node_id === edge.to_node_id)) continue;
     const target = graph.nodes.find((node) => node.node_id === edge.to_node_id);
     if (target === undefined || !assemblyOnlyKinds.has(target.pin.published_resource_kind)) {
       invalid('$.dependency_edges', 'capability graph edge has no Binding provenance');

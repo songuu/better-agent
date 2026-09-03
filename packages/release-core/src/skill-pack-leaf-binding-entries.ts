@@ -49,6 +49,11 @@ export interface PreparedSkillPackLeafBindingEntrySetV1 {
     readonly pin: ReturnType<typeof prepareLeafResourceSource>['full_pin'];
     readonly intrinsic_policy: CapabilityRequirementExpressionV1;
   }[];
+  readonly pack_dependency_intrinsic_policy?: {
+    readonly node_id: ReturnType<typeof canonicalResourceNodeId>;
+    readonly pin: ReturnType<typeof prepareSkillPackSource>['full_pin'];
+    readonly intrinsic_policy: CapabilityRequirementExpressionV1;
+  };
   readonly pack_entries: readonly CompiledBindingEntryV1[];
   readonly pack_requirement_expressions: readonly {
     readonly binding_path: `bp1.${string}`;
@@ -445,6 +450,38 @@ export function prepareSkillPackLeafBindingEntrySet(
     })
     .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
   if (entries.length !== expectedMemberPaths.size) notClosed('$.entries');
+  const leafDependencyIntrinsicPolicies = [...leaves.values()]
+    .map(({ prepared }) => ({
+      node_id: canonicalResourceNodeId(prepared.full_pin),
+      pin: prepared.full_pin,
+      intrinsic_policy: normalizeCapabilityRequirementExpression({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'leaf',
+        requirements: prepared.intrinsic_policy,
+      }),
+    }))
+    .sort((left, right) => compareCanonicalStrings(left.node_id, right.node_id));
+  const uniquePackChildren = new Map<string, CapabilityRequirementExpressionV1>();
+  for (const evidence of leafDependencyIntrinsicPolicies) {
+    uniquePackChildren.set(canonicalSha256(evidence.intrinsic_policy), evidence.intrinsic_policy);
+  }
+  const packChildren = [...uniquePackChildren.values()];
+  const packDependencyIntrinsicPolicy =
+    leafMembers.length === packDocument.member_bindings.length
+      ? {
+          node_id: canonicalResourceNodeId(pack.full_pin),
+          pin: pack.full_pin,
+          intrinsic_policy: normalizeCapabilityRequirementExpression(
+            packChildren.length === 1
+              ? packChildren[0]
+              : {
+                  schema_version: 'capability-requirement-expression/1',
+                  expression_kind: 'alternative',
+                  children: packChildren,
+                },
+          ),
+        }
+      : undefined;
   return deepFreezeJson({
     schema_version: 'prepared-skill-pack-leaf-binding-entry-set/1',
     root: rootSource.root,
@@ -454,17 +491,10 @@ export function prepareSkillPackLeafBindingEntrySet(
       .sort((left, right) =>
         compareCanonicalStrings(publishedResourcePinKey(left), publishedResourcePinKey(right)),
       ),
-    leaf_dependency_intrinsic_policies: [...leaves.values()]
-      .map(({ prepared }) => ({
-        node_id: canonicalResourceNodeId(prepared.full_pin),
-        pin: prepared.full_pin,
-        intrinsic_policy: normalizeCapabilityRequirementExpression({
-          schema_version: 'capability-requirement-expression/1',
-          expression_kind: 'leaf',
-          requirements: prepared.intrinsic_policy,
-        }),
-      }))
-      .sort((left, right) => compareCanonicalStrings(left.node_id, right.node_id)),
+    leaf_dependency_intrinsic_policies: leafDependencyIntrinsicPolicies,
+    ...(packDependencyIntrinsicPolicy === undefined
+      ? {}
+      : { pack_dependency_intrinsic_policy: packDependencyIntrinsicPolicy }),
     pack_entries: packEntries,
     pack_requirement_expressions: packRequirementExpressions.sort((left, right) =>
       compareCanonicalStrings(left.binding_path, right.binding_path),

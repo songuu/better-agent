@@ -1,6 +1,7 @@
 import {
   type CapabilityBindingV1,
   type CapabilityRequirementExpressionV1,
+  CanonicalBindingPathV1Schema,
   CompiledBindingEntryV1Schema,
   ClosureResourceNodeV1Schema,
   ContractHashSchema,
@@ -18,7 +19,7 @@ import {
   resolveEffectiveCapabilityPolicy,
 } from './capability-policy.js';
 import { canonicalJsonBytes } from './canonical-json.js';
-import { canonicalResourceNodeId } from './closure-identity.js';
+import { canonicalBindingPath, canonicalResourceNodeId } from './closure-identity.js';
 import { compareCanonicalStrings, deepFreezeJson } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
@@ -43,6 +44,8 @@ interface ParsedSlice {
   readonly entries: readonly CompiledBindingEntryV1[];
   readonly requirement_expressions: readonly RequirementExpressionByPath[];
   readonly dependency_intrinsic_policies: readonly DependencyIntrinsicPolicyEvidence[];
+  readonly descendant_binding_entries: readonly CompiledBindingEntryV1[];
+  readonly descendant_disabled_binding_paths: readonly `bp1.${string}`[];
   readonly root?: unknown;
 }
 
@@ -54,6 +57,7 @@ export interface PreparedAgentRootBindingEntrySetV1 {
   readonly requirement_expressions: readonly RequirementExpressionByPath[];
   readonly disabled_binding_paths: readonly `bp1.${string}`[];
   readonly dependency_intrinsic_policies: readonly DependencyIntrinsicPolicyEvidence[];
+  readonly descendant_binding_entries: readonly CompiledBindingEntryV1[];
   readonly intrinsic_policy: CapabilityRequirementExpressionV1;
   readonly aggregate_limits: EffectiveCapabilityPolicyV1;
 }
@@ -71,10 +75,15 @@ function record(value: unknown, path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function exactKeys(value: Record<string, unknown>, keys: readonly string[], path: string): void {
+function exactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  path: string,
+  optional: readonly string[] = [],
+): void {
   const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index]))
+  const allowed = new Set([...keys, ...optional]);
+  if (!keys.every((key) => Object.hasOwn(value, key)) || actual.some((key) => !allowed.has(key)))
     notClosed(path);
 }
 
@@ -123,6 +132,19 @@ function parseExpressions(value: unknown, path: string): RequirementExpressionBy
   )
     notClosed(path);
   return expressions;
+}
+
+function parseCanonicalPaths(value: unknown, path: string): `bp1.${string}`[] {
+  if (!Array.isArray(value) || value.length > 256) notClosed(path);
+  const paths = value.map((candidate, index) => {
+    const parsed = CanonicalBindingPathV1Schema.safeParse(candidate);
+    if (!parsed.success) notClosed(`${path}[${index}]`);
+    return parsed.data as `bp1.${string}`;
+  });
+  if (paths.some((item, index) => index > 0 && (paths[index - 1] ?? '') >= item)) {
+    notClosed(path);
+  }
+  return paths;
 }
 
 function parseDependencyIntrinsicPolicies(
@@ -204,6 +226,8 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
           kind === 'A2A_AGENT_RELEASE',
         `${path}.prepared_entries.dependency_intrinsic_policies`,
       ),
+      descendant_binding_entries: [],
+      descendant_disabled_binding_paths: [],
     };
   }
   if (slice.schema_version === 'graph-bound-skill-pack-leaf-binding-entry-set/1') {
@@ -223,29 +247,81 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
         'policy_disabled_binding_paths',
       ],
       `${path}.prepared_entries`,
+      ['pack_dependency_intrinsic_policy'],
     );
     if (prepared.schema_version !== 'prepared-skill-pack-leaf-binding-entry-set/1') notClosed(path);
+    const packPin = PublishedResourcePinV1Schema.safeParse(prepared.pack_dependency);
+    if (!packPin.success || packPin.data.published_resource_kind !== 'SKILL_PACK_RELEASE') {
+      notClosed(`${path}.prepared_entries.pack_dependency`);
+    }
+    const memberEntries = parseEntries(
+      prepared.entries,
+      (entry) =>
+        entry.binding_kind === 'knowledge' ||
+        entry.binding_kind === 'database' ||
+        entry.binding_kind === 'plugin' ||
+        (entry.binding_kind === 'subagent' &&
+          entry.target.published_resource_kind === 'A2A_AGENT_RELEASE'),
+      `${path}.prepared_entries.entries`,
+    );
+    const packEntries = parseEntries(
+      prepared.pack_entries,
+      (entry) => entry.binding_kind === 'skill_pack',
+      `${path}.prepared_entries.pack_entries`,
+    );
+    memberEntries.forEach((entry, entryIndex) => {
+      const lastSegment = entry.binding_path_segments.at(-1);
+      if (
+        lastSegment?.segment_kind !== 'skill_pack_member' ||
+        lastSegment.local_member_binding_id !== entry.binding_id ||
+        !canonicalJsonBytes(lastSegment.owner_pin).equals(canonicalJsonBytes(packPin.data)) ||
+        canonicalBindingPath(entry.binding_path_segments) !== entry.binding_path ||
+        entry.dependency_node_ids.length !== 1 ||
+        entry.dependency_node_ids[0] !== canonicalResourceNodeId(entry.target)
+      ) {
+        notClosed(`${path}.prepared_entries.entries[${entryIndex}]`);
+      }
+    });
+    const packPolicies =
+      prepared.pack_dependency_intrinsic_policy === undefined
+        ? []
+        : parseDependencyIntrinsicPolicies(
+            [prepared.pack_dependency_intrinsic_policy],
+            (kind) => kind === 'SKILL_PACK_RELEASE',
+            `${path}.prepared_entries.pack_dependency_intrinsic_policy`,
+          );
+    const descendantDisabledBindingPaths = parseCanonicalPaths(
+      prepared.policy_disabled_binding_paths,
+      `${path}.prepared_entries.policy_disabled_binding_paths`,
+    );
+    const compiledPaths = new Set(
+      [...packEntries, ...memberEntries].map((entry) => entry.binding_path),
+    );
+    if (descendantDisabledBindingPaths.some((bindingPath) => !compiledPaths.has(bindingPath))) {
+      notClosed(`${path}.prepared_entries.policy_disabled_binding_paths`);
+    }
     return {
       graph_hash: canonicalGraphHash,
       root: prepared.root,
-      entries: parseEntries(
-        prepared.pack_entries,
-        (entry) => entry.binding_kind === 'skill_pack',
-        `${path}.prepared_entries.pack_entries`,
-      ),
+      entries: packEntries,
       requirement_expressions: parseExpressions(
         prepared.pack_requirement_expressions,
         `${path}.prepared_entries.pack_requirement_expressions`,
       ),
-      dependency_intrinsic_policies: parseDependencyIntrinsicPolicies(
-        prepared.leaf_dependency_intrinsic_policies,
-        (kind) =>
-          kind === 'KNOWLEDGE_INDEX_GENERATION' ||
-          kind === 'DATABASE_OPERATION_RELEASE' ||
-          kind === 'PLUGIN_TOOL_RELEASE' ||
-          kind === 'A2A_AGENT_RELEASE',
-        `${path}.prepared_entries.leaf_dependency_intrinsic_policies`,
-      ),
+      dependency_intrinsic_policies: [
+        ...packPolicies,
+        ...parseDependencyIntrinsicPolicies(
+          prepared.leaf_dependency_intrinsic_policies,
+          (kind) =>
+            kind === 'KNOWLEDGE_INDEX_GENERATION' ||
+            kind === 'DATABASE_OPERATION_RELEASE' ||
+            kind === 'PLUGIN_TOOL_RELEASE' ||
+            kind === 'A2A_AGENT_RELEASE',
+          `${path}.prepared_entries.leaf_dependency_intrinsic_policies`,
+        ),
+      ].sort((left, right) => compareCanonicalStrings(left.node_id, right.node_id)),
+      descendant_binding_entries: memberEntries,
+      descendant_disabled_binding_paths: descendantDisabledBindingPaths,
     };
   }
   if (slice.schema_version === 'prepared-agent-composite-binding-entries/1') {
@@ -295,6 +371,8 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
           intrinsic_policy: dependencyNode.data.intrinsic_policy,
         },
       ],
+      descendant_binding_entries: [],
+      descendant_disabled_binding_paths: [],
     };
   }
   return notClosed(`${path}.schema_version`);
@@ -387,6 +465,24 @@ export function prepareAgentRootBindingEntrySet(
   const dependencyIntrinsicPolicies = [...dependencyPoliciesByNode.values()].sort((left, right) =>
     compareCanonicalStrings(left.node_id, right.node_id),
   );
+  const descendantBindingEntries = slices
+    .flatMap((slice) => slice.descendant_binding_entries)
+    .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
+  if (
+    descendantBindingEntries.some(
+      (entry, index) =>
+        index > 0 &&
+        (descendantBindingEntries[index - 1]?.binding_path ?? '') >= entry.binding_path,
+    )
+  ) {
+    notClosed('$.descendant_binding_entries');
+  }
+  const disabledBindingPaths = [
+    ...new Set([
+      ...paths.source_disabled_binding_paths,
+      ...slices.flatMap((slice) => slice.descendant_disabled_binding_paths),
+    ]),
+  ].sort(compareCanonicalStrings);
 
   const policies = parseAgentBindingPolicyInput(policyInput, 'agent-root-binding-policy-input/1');
   const policyPaths = policies.binding_ceilings
@@ -433,8 +529,9 @@ export function prepareAgentRootBindingEntrySet(
     root: rootSource.root,
     entries,
     requirement_expressions: expressions,
-    disabled_binding_paths: paths.source_disabled_binding_paths,
+    disabled_binding_paths: disabledBindingPaths,
     dependency_intrinsic_policies: dependencyIntrinsicPolicies,
+    descendant_binding_entries: descendantBindingEntries,
     intrinsic_policy: intrinsicPolicy,
     aggregate_limits: aggregateLimits,
   });
