@@ -1,17 +1,17 @@
 import {
-  ClosureResourceNodeV1Schema,
   ClosureResourceNodeIdV1Schema,
+  ClosureResourceNodeV1Schema,
   CompiledCapabilityClosureV1Schema,
   ContractHashSchema,
   PublishedResourcePinV1Schema,
 } from '@better-agent/domain-contracts';
 
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
+import { canonicalJsonBytes } from './canonical-json.js';
 import {
   normalizeCapabilityRequirementExpression,
   verifyCapabilityRequirementLimitEnvelope,
 } from './capability-policy.js';
-import { canonicalJsonBytes } from './canonical-json.js';
 import { verifyCanonicalBindingPath, verifyCanonicalResourceNodeId } from './closure-identity.js';
 import { deepFreezeJson, publishedResourcePinKey } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
@@ -73,6 +73,25 @@ export function prepareCompiledCapabilityClosure(input: unknown): Readonly<Compi
   }
   for (const binding of parsed.data.bindings) {
     verifyCanonicalBindingPath(binding.binding_path, binding.binding_path_segments);
+    const normalizedRequirement = normalizeCapabilityRequirementExpression(
+      binding.requirement_expression,
+    );
+    if (
+      !canonicalJsonBytes(binding.requirement_expression).equals(
+        canonicalJsonBytes(normalizedRequirement),
+      )
+    ) {
+      invalid(
+        '$.bindings[].requirement_expression',
+        'Binding requirement expression must use canonical branch and leaf ordering',
+      );
+    }
+    if (!parsed.data.disabled_binding_paths.includes(binding.binding_path)) {
+      verifyCapabilityRequirementLimitEnvelope(
+        binding.requirement_expression,
+        binding.effective_policy,
+      );
+    }
   }
   assertCanonicalSetOrder(parsed.data.assembly_pins, '$.assembly_pins', publishedResourcePinKey);
   assertCanonicalSetOrder(parsed.data.bindings, '$.bindings', (value) => value.binding_path);

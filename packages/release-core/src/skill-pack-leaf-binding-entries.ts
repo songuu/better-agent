@@ -1,6 +1,6 @@
 import {
-  type CapabilityRequirementExpressionV1,
   type CapabilityBindingV1,
+  type CapabilityRequirementExpressionV1,
   CompiledBindingEntryV1Schema,
   EffectiveCapabilityPolicyV1Schema,
 } from '@better-agent/domain-contracts';
@@ -8,10 +8,11 @@ import {
 import { prepareAgentBindingApprovalGate } from './agent-gate-specs.js';
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
 import {
+  canonicalEmptyCapabilityRequirementExpression,
   compileCapabilityRequirementEnvelope,
   meetCapabilityPolicyCeilings,
-  normalizeCapabilityRequirementExpression,
   normalizeCapabilityPolicyCeiling,
+  normalizeCapabilityRequirementExpression,
   resolveEffectiveCapabilityPolicy,
 } from './capability-policy.js';
 import { canonicalResourceNodeId } from './closure-identity.js';
@@ -313,30 +314,33 @@ export function prepareSkillPackLeafBindingEntrySet(
           notClosed('$.pack_entry.requirements');
         return first;
       });
+      const children = operationRequirements.map((requirements) => ({
+        schema_version: 'capability-requirement-expression/1' as const,
+        expression_kind: 'leaf' as const,
+        requirements: {
+          ...requirements,
+          approval_required:
+            requirements.approval_required || packBinding.side_effect.approval === 'required',
+        },
+      }));
+      const expression =
+        children.length === 0
+          ? canonicalEmptyCapabilityRequirementExpression()
+          : normalizeCapabilityRequirementExpression(
+              children.length === 1
+                ? children[0]
+                : {
+                    schema_version: 'capability-requirement-expression/1',
+                    expression_kind: 'alternative',
+                    children,
+                  },
+            );
       let effectivePolicy = unavailablePolicy(operations);
       if (enabled) {
-        const children = operationRequirements.map((requirements) => ({
-          schema_version: 'capability-requirement-expression/1' as const,
-          expression_kind: 'leaf' as const,
-          requirements,
-        }));
-        const expression = normalizeCapabilityRequirementExpression(
-          children.length === 1
-            ? children[0]
-            : {
-                schema_version: 'capability-requirement-expression/1',
-                expression_kind: 'alternative',
-                children,
-              },
-        );
         const requirements = compileCapabilityRequirementEnvelope(expression);
         effectivePolicy = resolveEffectiveCapabilityPolicy(
           meetCapabilityPolicyCeilings(sharedCeiling, packPolicy.ceiling),
-          {
-            ...requirements,
-            approval_required:
-              requirements.approval_required || packBinding.side_effect.approval === 'required',
-          },
+          requirements,
         );
         packRequirementExpressions.push({ binding_path: mount.binding_path, expression });
       } else {
@@ -362,6 +366,7 @@ export function prepareSkillPackLeafBindingEntrySet(
         config_schema_version: packBinding.config.schema_version,
         config_hash: canonicalSha256(packBinding.config),
         source_contract_hash: pack.full_pin.contract_hash,
+        requirement_expression: expression,
         effective_policy: effectivePolicy,
         operation_contracts: operations,
         dependency_node_ids: [canonicalResourceNodeId(pack.full_pin)],
@@ -402,15 +407,16 @@ export function prepareSkillPackLeafBindingEntrySet(
         const approval = prepareAgentBindingApprovalGate(rootInput, packBinding.binding_id, [
           leaf.prepared.operation_contract,
         ]);
+        const memberRequirements = {
+          ...leaf.prepared.intrinsic_policy,
+          approval_required:
+            leaf.prepared.intrinsic_policy.approval_required ||
+            packBinding.side_effect.approval === 'required' ||
+            member.side_effect.approval === 'required',
+        };
         const effectivePolicy = resolveEffectiveCapabilityPolicy(
           meetCapabilityPolicyCeilings(mountCeiling, memberPolicy.ceiling),
-          {
-            ...leaf.prepared.intrinsic_policy,
-            approval_required:
-              leaf.prepared.intrinsic_policy.approval_required ||
-              packBinding.side_effect.approval === 'required' ||
-              member.side_effect.approval === 'required',
-          },
+          memberRequirements,
         );
         if (
           effectivePolicy.side_effect.approval === 'required' &&
@@ -433,6 +439,11 @@ export function prepareSkillPackLeafBindingEntrySet(
           config_schema_version: member.config.schema_version,
           config_hash: canonicalSha256(member.config),
           source_contract_hash: leaf.prepared.full_pin.contract_hash,
+          requirement_expression: normalizeCapabilityRequirementExpression({
+            schema_version: 'capability-requirement-expression/1',
+            expression_kind: 'leaf',
+            requirements: memberRequirements,
+          }),
           effective_policy: effectivePolicy,
           operation_contracts: [leaf.prepared.operation_contract],
           dependency_node_ids: [canonicalResourceNodeId(leaf.prepared.full_pin)],

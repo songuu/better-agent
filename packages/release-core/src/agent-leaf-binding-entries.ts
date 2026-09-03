@@ -1,12 +1,11 @@
 import {
+  type CapabilityBindingV1,
   type CapabilityRequirementExpressionV1,
   CompiledBindingEntryV1Schema,
-  type CapabilityBindingV1,
 } from '@better-agent/domain-contracts';
-
-import { prepareAgentLeafBindingOperations } from './agent-leaf-binding-operations.js';
-import { prepareAgentBindingApprovalGate } from './agent-gate-specs.js';
 import { parseAgentBindingPolicyInput } from './agent-binding-policy.js';
+import { prepareAgentBindingApprovalGate } from './agent-gate-specs.js';
+import { prepareAgentLeafBindingOperations } from './agent-leaf-binding-operations.js';
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
 import {
   meetCapabilityPolicyCeilings,
@@ -19,8 +18,8 @@ import {
   deepFreezeJson,
   publishedResourcePinKey,
 } from './dependency-manifest.js';
-import { prepareExecutableSource } from './executable-source.js';
 import { ReleaseCoreError } from './errors.js';
+import { prepareExecutableSource } from './executable-source.js';
 import { canonicalSha256 } from './hash.js';
 import { prepareLeafResourceSource } from './leaf-resource-source.js';
 import { prepareGraphBoundDirectDependencies } from './pinned-graph-slice.js';
@@ -110,6 +109,17 @@ export function prepareAgentLeafBindingEntries(
         (candidate) => candidate.binding_path === path.binding_path,
       );
       if (binding === undefined || compiledPath === undefined || policy === undefined) notClosed();
+      const bindingRequirements = {
+        ...projection.intrinsic_policy,
+        approval_required:
+          projection.intrinsic_policy.approval_required ||
+          binding.side_effect.approval === 'required',
+      };
+      const requirementExpression = normalizeCapabilityRequirementExpression({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'leaf',
+        requirements: bindingRequirements,
+      });
       const approval = prepareAgentBindingApprovalGate(
         rootInput,
         binding.binding_id,
@@ -117,12 +127,7 @@ export function prepareAgentLeafBindingEntries(
       );
       const effectivePolicy = resolveEffectiveCapabilityPolicy(
         meetCapabilityPolicyCeilings(sharedCeiling, policy.ceiling),
-        {
-          ...projection.intrinsic_policy,
-          approval_required:
-            projection.intrinsic_policy.approval_required ||
-            binding.side_effect.approval === 'required',
-        },
+        bindingRequirements,
       );
       if (
         effectivePolicy.side_effect.approval === 'required' &&
@@ -139,6 +144,7 @@ export function prepareAgentLeafBindingEntries(
         config_schema_version: binding.config.schema_version,
         config_hash: canonicalSha256(binding.config),
         source_contract_hash: projection.dependency.contract_hash,
+        requirement_expression: requirementExpression,
         effective_policy: effectivePolicy,
         operation_contracts: path.operation_contracts,
         dependency_node_ids: [dependencyNodeId],
@@ -157,14 +163,11 @@ export function prepareAgentLeafBindingEntries(
   if (entries.length !== policies.binding_ceilings.length) notClosed();
   const requirementExpressions = selectedPaths
     .filter((path) => path.enabled)
-    .map((path) => ({
-      binding_path: path.binding_path,
-      expression: normalizeCapabilityRequirementExpression({
-        schema_version: 'capability-requirement-expression/1',
-        expression_kind: 'leaf',
-        requirements: projection.intrinsic_policy,
-      }),
-    }))
+    .map((path) => {
+      const entry = entries.find((candidate) => candidate.binding_path === path.binding_path);
+      if (entry === undefined) notClosed('$.requirement_expressions');
+      return { binding_path: path.binding_path, expression: entry.requirement_expression };
+    })
     .sort((left, right) => compareCanonicalStrings(left.binding_path, right.binding_path));
   return deepFreezeJson({
     schema_version: 'prepared-agent-leaf-binding-entries/1',

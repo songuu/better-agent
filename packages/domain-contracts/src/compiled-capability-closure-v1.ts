@@ -190,6 +190,7 @@ export const CompiledBindingEntryV1Schema = z
     ]),
     config_hash: ContractHashSchema,
     source_contract_hash: ContractHashSchema,
+    requirement_expression: CapabilityRequirementExpressionV1Schema,
     effective_policy: EffectiveCapabilityPolicyV1Schema,
     operation_contracts: CompiledOperationSetV1Schema,
     dependency_node_ids: DependencyNodeSetV1Schema,

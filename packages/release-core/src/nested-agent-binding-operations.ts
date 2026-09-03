@@ -1,4 +1,8 @@
-import type { CapabilityBindingV1, OperationContractPinV1 } from '@better-agent/domain-contracts';
+import type {
+  CapabilityBindingV1,
+  CapabilityRequirementExpressionV1,
+  OperationContractPinV1,
+} from '@better-agent/domain-contracts';
 
 import { canonicalJsonBytes } from './canonical-json.js';
 import { prepareNestedCapabilityDependency } from './compiled-capability-closure.js';
@@ -20,6 +24,7 @@ export interface PreparedNestedAgentBindingOperationsV1 {
     readonly binding_kind: CapabilityBindingV1['kind'];
     readonly binding_path: `bp1.${string}`;
     readonly operation_contracts: readonly OperationContractPinV1[];
+    readonly requirement_expression?: CapabilityRequirementExpressionV1;
   }[];
 }
 
@@ -80,6 +85,7 @@ export function prepareGraphBoundNestedAgentBindingOperations(
       binding_kind: CapabilityBindingV1['kind'];
       target: unknown;
       operations: readonly OperationContractPinV1[];
+      requirement_expression: CapabilityRequirementExpressionV1;
     }
   >();
   for (const childPath of childRootPaths.bindings) {
@@ -98,6 +104,7 @@ export function prepareGraphBoundNestedAgentBindingOperations(
       binding_kind: childPath.binding_kind,
       target: entry.target,
       operations: entry.operation_contracts,
+      requirement_expression: entry.requirement_expression,
     });
   }
 
@@ -126,6 +133,7 @@ export function prepareGraphBoundNestedAgentBindingOperations(
         binding_kind: targetBinding.binding_kind,
         binding_path: targetBinding.binding_path,
         operation_contracts: source.operations,
+        requirement_expression: source.requirement_expression,
       };
     });
     return [parent, ...nested];

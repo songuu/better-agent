@@ -1,11 +1,13 @@
 import {
   type CapabilityBindingV1,
   CapabilityInvocationRequirementsV1Schema,
+  type CapabilityRequirementExpressionV1,
   type CapabilityRequirementsV1,
   type OperationContractPinV1,
 } from '@better-agent/domain-contracts';
 
 import { boundedDataSnapshot } from './bounded-data-snapshot.js';
+import { normalizeCapabilityRequirements } from './capability-policy.js';
 import {
   compareCanonicalStrings,
   deepFreezeJson,
@@ -13,7 +15,6 @@ import {
 } from './dependency-manifest.js';
 import { ReleaseCoreError } from './errors.js';
 import { prepareExecutableSource } from './executable-source.js';
-import { normalizeCapabilityRequirements } from './capability-policy.js';
 import {
   type PreparedNestedAgentBindingOperationsV1,
   prepareGraphBoundNestedAgentBindingOperations,
@@ -46,6 +47,7 @@ export interface PreparedAgentChildCallOperationsV1 {
     readonly binding_kind: CapabilityBindingV1['kind'];
     readonly binding_path: `bp1.${string}`;
     readonly operation_contracts: readonly OperationContractPinV1[];
+    readonly requirement_expression?: CapabilityRequirementExpressionV1;
     readonly invocation_requirements?: CapabilityRequirementsV1;
   }[];
 }

@@ -4,9 +4,9 @@ import {
   BindingPathSegmentV1Schema,
   CapabilityInvocationRequirementsV1Schema,
   CapabilityRequirementExpressionV1Schema,
+  ClosureResourceNodeV1Schema,
   CompiledBindingEntryV1Schema,
   CompiledCapabilityClosureV1Schema,
-  ClosureResourceNodeV1Schema,
   FlowGraphV1Schema,
   FlowIrV1Schema,
   ProductionPromotionGateDecisionV1Schema,
@@ -340,6 +340,7 @@ describe('Compiled closure reference integrity', () => {
     config_schema_version: 'knowledge-binding/1',
     config_hash: hash,
     source_contract_hash: hash,
+    requirement_expression: intrinsicExpression,
     effective_policy: effectivePolicy,
     operation_contracts: [],
     dependency_node_ids: [missingNodeId],
@@ -352,6 +353,8 @@ describe('Compiled closure reference integrity', () => {
         config_schema_version: 'future-binding/1',
       }).success,
     ).toBe(false);
+    const { requirement_expression: _requirementExpression, ...withoutRequirement } = binding;
+    expect(CompiledBindingEntryV1Schema.safeParse(withoutRequirement).success).toBe(false);
   });
 
   it('binds config version and operation kind to the Binding discriminator', () => {

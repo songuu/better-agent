@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
 import { CompiledBindingEntryV1Schema } from '@better-agent/domain-contracts';
+import { describe, expect, it, vi } from 'vitest';
 
+import { normalizeCapabilityRequirementExpression } from '../src/capability-policy.js';
 import {
   canonicalJsonBytes,
   meetCapabilityPolicyCeilings,
@@ -585,6 +586,11 @@ describe('policy compilation composition', () => {
       config_schema_version: 'plugin-binding/1',
       config_hash: hashA,
       source_contract_hash: hashA,
+      requirement_expression: normalizeCapabilityRequirementExpression({
+        schema_version: 'capability-requirement-expression/1',
+        expression_kind: 'leaf',
+        requirements: requirements(),
+      }),
       effective_policy: resolve(meet(ceiling(), ceiling()), requirements()),
       operation_contracts: [
         {

@@ -5,10 +5,15 @@ import { prepareNonRecursiveAgentCapabilityClosure } from '../src/agent-capabili
 import { prepareGraphBoundAgentLeafBindingEntrySet } from '../src/agent-leaf-binding-entries.js';
 import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
 import { prepareAgentRootResourceGraph } from '../src/agent-root-resource-graph.js';
-import { canonicalEmptyCapabilityRequirementExpression } from '../src/capability-policy.js';
+import {
+  canonicalEmptyCapabilityRequirementExpression,
+  normalizeCapabilityRequirementExpression,
+} from '../src/capability-policy.js';
 import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
+import { prepareCompiledCapabilityClosure } from '../src/compiled-capability-closure.js';
 import { deriveDependencyManifest } from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
+import { canonicalSha256ExcludingRootKeys } from '../src/hash.js';
 import { prepareLeafResourceSource } from '../src/leaf-resource-source.js';
 import { preparePinnedDependencyGraph } from '../src/pinned-dependency-graph.js';
 import { prepareRootBindingPaths } from '../src/root-binding-paths.js';
@@ -647,6 +652,9 @@ describe('non-recursive Agent capability closure assembly', () => {
       prepareExecutableSource(value.root).dependency_manifest.dependencies,
     );
     expect(result.bindings).toEqual(value.entrySet.entries);
+    expect(result.bindings[0]?.requirement_expression).toEqual(
+      value.entrySet.requirement_expressions[0]?.expression,
+    );
     expect(result.resource_nodes).toHaveLength(value.graph.nodes.length);
     expect(result.closure_hash).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(Object.isFrozen(result)).toBe(true);
@@ -679,5 +687,64 @@ describe('non-recursive Agent capability closure assembly', () => {
     expect(() =>
       prepareNonRecursiveAgentCapabilityClosure(value.root, otherFixture.graph, otherEntrySet),
     ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+  });
+
+  it('rejects a noncanonical Binding requirement and an enabled demand above its policy limit', () => {
+    const value = prepared();
+    const valid = prepareNonRecursiveAgentCapabilityClosure(
+      value.root,
+      value.graph,
+      value.entrySet,
+    );
+    const binding = valid.bindings[0];
+    if (binding === undefined || binding.requirement_expression.expression_kind !== 'leaf') {
+      throw new Error('fixture leaf Binding requirement is missing');
+    }
+    const canonical = normalizeCapabilityRequirementExpression({
+      schema_version: 'capability-requirement-expression/1',
+      expression_kind: 'alternative',
+      children: [binding.requirement_expression, canonicalEmptyCapabilityRequirementExpression()],
+    });
+    if (canonical.expression_kind !== 'alternative') throw new Error('expected alternative');
+    const noncanonicalDraft = {
+      ...valid,
+      bindings: [
+        {
+          ...binding,
+          requirement_expression: { ...canonical, children: [...canonical.children].reverse() },
+        },
+      ],
+    };
+    expect(() =>
+      prepareCompiledCapabilityClosure({
+        ...noncanonicalDraft,
+        closure_hash: canonicalSha256ExcludingRootKeys(noncanonicalDraft, ['closure_hash']),
+      }),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+
+    const excessiveDraft = {
+      ...valid,
+      bindings: [
+        {
+          ...binding,
+          requirement_expression: {
+            ...binding.requirement_expression,
+            requirements: {
+              ...binding.requirement_expression.requirements,
+              minimum_limits: {
+                ...binding.requirement_expression.requirements.minimum_limits,
+                calls: binding.effective_policy.max_calls + 1,
+              },
+            },
+          },
+        },
+      ],
+    };
+    expect(() =>
+      prepareCompiledCapabilityClosure({
+        ...excessiveDraft,
+        closure_hash: canonicalSha256ExcludingRootKeys(excessiveDraft, ['closure_hash']),
+      }),
+    ).toThrow('CLOSURE_POLICY_REQUIREMENT_UNAVAILABLE');
   });
 });

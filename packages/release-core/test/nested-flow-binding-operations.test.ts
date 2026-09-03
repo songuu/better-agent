@@ -98,6 +98,7 @@ function compiledClosure(flow: ReturnType<typeof sources>['flow']) {
     config_schema_version: 'plugin-binding/1' as const,
     config_hash: canonicalSha256({ schema_version: 'plugin-binding/1' }),
     source_contract_hash: canonicalSha256({ node_id: sourcePath.node_id }),
+    requirement_expression: emptyCapabilityRequirementExpression,
     effective_policy: { ...emptyPolicy, operation_contract_hashes: [operation.contract_hash] },
     operation_contracts: [operation],
     dependency_node_ids: [canonicalResourceNodeId(target)],
@@ -236,6 +237,10 @@ describe('nested Flow Binding operation projection', () => {
       (entry) => entry.operation_contracts.length === 1,
     );
     expect(projected?.operation_contracts[0]?.operation_id).toBe('flow-output');
+    expect(projected?.requirement_expression).toEqual(
+      value.closure.bindings[0]?.requirement_expression,
+    );
+    expect(Object.isFrozen(projected?.requirement_expression)).toBe(true);
     expect(projected?.binding_path).not.toBe(value.closure.bindings[0]?.binding_path);
     expect(result.dependency_resource_node).toMatchObject({
       node_role: 'dependency',

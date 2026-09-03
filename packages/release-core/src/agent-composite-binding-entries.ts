@@ -1,15 +1,14 @@
 import {
-  CompiledBindingEntryV1Schema,
   type CapabilityBindingV1,
   type CapabilityRequirementExpressionV1,
+  CompiledBindingEntryV1Schema,
 } from '@better-agent/domain-contracts';
-
+import { parseAgentBindingPolicyInput } from './agent-binding-policy.js';
 import {
   type PreparedAgentChildCallOperationsV1,
   prepareGraphBoundAgentFlowCallOperations,
   prepareGraphBoundAgentSubagentCallOperations,
 } from './agent-child-call-operations.js';
-import { parseAgentBindingPolicyInput } from './agent-binding-policy.js';
 import { prepareAgentBindingApprovalGate } from './agent-gate-specs.js';
 import {
   compileCapabilityRequirementEnvelope,
@@ -136,6 +135,7 @@ function prepareEntries(
         config_schema_version: binding.config.schema_version,
         config_hash: canonicalSha256(binding.config),
         source_contract_hash: projection.dependency_resource_node.pin.contract_hash,
+        requirement_expression: expression,
         effective_policy: effectivePolicy,
         operation_contracts: parent.operation_contracts,
         dependency_node_ids: [dependencyNodeId],

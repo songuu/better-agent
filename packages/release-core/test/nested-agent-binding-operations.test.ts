@@ -124,6 +124,7 @@ function compiledClosure(target: ReturnType<typeof richAgentSource>) {
         config_schema_version: source.config.schema_version,
         config_hash: canonicalSha256(source.config),
         source_contract_hash: canonicalSha256(source),
+        requirement_expression: emptyCapabilityRequirementExpression,
         effective_policy: {
           ...emptyPolicy,
           operation_contract_hashes: operations.map((op) => op.contract_hash),
@@ -253,6 +254,11 @@ describe('nested Agent Binding operation projection', () => {
       (binding) => binding.binding_id === 'plugin' && binding.operation_contracts.length === 1,
     );
     expect(nestedPlugin?.operation_contracts[0]?.operation_kind).toBe('plugin_tool');
+    expect(nestedPlugin?.requirement_expression).toEqual(
+      value.closure.bindings.find((binding) => binding.binding_id === 'plugin')
+        ?.requirement_expression,
+    );
+    expect(Object.isFrozen(nestedPlugin?.requirement_expression)).toBe(true);
     expect(nestedPlugin?.binding_path).not.toBe(
       prepareRootBindingPaths(candidate(value.target)).bindings.find(
         (binding) => binding.binding_id === 'plugin',

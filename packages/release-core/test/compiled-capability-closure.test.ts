@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
-
-import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
 import { normalizeCapabilityRequirementExpression } from '../src/capability-policy.js';
+import { canonicalBindingPath, canonicalResourceNodeId } from '../src/closure-identity.js';
 import {
   prepareCompiledCapabilityClosure,
-  prepareNestedCapabilityDependency,
   prepareNestedCapabilityClosure,
+  prepareNestedCapabilityDependency,
 } from '../src/compiled-capability-closure.js';
 import { ReleaseCoreError } from '../src/errors.js';
 import { canonicalSha256ExcludingRootKeys } from '../src/hash.js';
@@ -204,6 +203,7 @@ describe('compiled capability closure verification', () => {
           config_schema_version: 'knowledge-binding/1',
           config_hash: hashA,
           source_contract_hash: hashA,
+          requirement_expression: emptyCapabilityRequirementExpression,
           effective_policy: emptyPolicy,
           operation_contracts: [],
           dependency_node_ids: [dependencyNodeId],

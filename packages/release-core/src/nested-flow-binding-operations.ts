@@ -1,4 +1,8 @@
-import type { CapabilityBindingV1, OperationContractPinV1 } from '@better-agent/domain-contracts';
+import type {
+  CapabilityBindingV1,
+  CapabilityRequirementExpressionV1,
+  OperationContractPinV1,
+} from '@better-agent/domain-contracts';
 
 import { canonicalJsonBytes } from './canonical-json.js';
 import { prepareNestedCapabilityDependency } from './compiled-capability-closure.js';
@@ -13,6 +17,7 @@ interface ProjectedFlowBindingOperationV1 {
   readonly binding_kind: CapabilityBindingV1['kind'];
   readonly binding_path: `bp1.${string}`;
   readonly operation_contracts: readonly OperationContractPinV1[];
+  readonly requirement_expression?: CapabilityRequirementExpressionV1;
 }
 
 export interface PreparedNestedFlowBindingOperationsV1 {
@@ -98,6 +103,7 @@ export function prepareGraphBoundNestedFlowBindingOperations(
       binding_id: string;
       binding_kind: CapabilityBindingV1['kind'];
       operations: readonly OperationContractPinV1[];
+      requirement_expression: CapabilityRequirementExpressionV1;
     }
   >();
   for (const entry of nestedClosure.bindings) {
@@ -119,6 +125,7 @@ export function prepareGraphBoundNestedFlowBindingOperations(
       binding_id: entry.binding_id,
       binding_kind: entry.binding_kind,
       operations: entry.operation_contracts,
+      requirement_expression: entry.requirement_expression,
     });
   }
 
@@ -138,6 +145,7 @@ export function prepareGraphBoundNestedFlowBindingOperations(
           binding_kind: source.binding_kind,
           binding_path: targetNode.source_path,
           operation_contracts: source.operations,
+          requirement_expression: source.requirement_expression,
         },
       ];
     });
