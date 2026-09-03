@@ -4,3 +4,45 @@
 - CI 安全测试应解析 YAML 并验证闭集对象；正则只用于精确版式补充，不能承担语义解析。
 - 数据库清理回归必须证明首次失败仍尝试所有目标、保留 registry、重试成功后才删除 registry。
 - 语义 marker 回归必须成对覆盖合法 ANSI/Tab/多空格与非法跨行、嵌入前缀、相邻数字、错包名/计数；拒绝格式要包含 CRLF/LF/CR/VT/FF/NEL/LS/PS。
+- 权限交集除代数律还要验证独立成员模型，并为每个精确授权轴提供双向冲突输入；内存变异能发现“正例和通配负例全绿，但 exact 比较已被移除”的缺口。
+- 多维最低资源消耗要测联合可行性；input/output cap 可独立，但同时的 token minima 之和不得超过 total cap，覆盖等值、+1 和 safe-integer 求和边界。
+- DAG 最长路径回归必须包含先访问的共享非叶子子图，并断言 canonical 访问顺序；只共享叶节点无法捕获 memoized height 被错误清零。用 32/33 等值与 +1 成对案例、独立边集合模型和只读内存变异共同验证。
+- 语义 preimage 不仅测“哈希变化”，还要断言完整投影对象；对每类 Binding 使用非空有效配置并逐字段变异，防止整类字段被忽略而测试仍绿。共享 source/release refinements 用同一有效 fixture 的正反成对测试保护。
+- 递归图测试分别变异 second case、loop body、else，保持其他路径有效；规范集合排序和 first-match case 保序分开断言。复杂度回归在 schema 层计数 leaf parse，公网 source API 仍必须拒绝 getter/Proxy。
+- 两份声明“一致”不代表组合允许：G1 DB 即使 Binding 与 operation 双方都声明 unsafe、hash 都正确，read_only mode 也不能使它通过。单独构造双侧一致但违反平台约束的回归，不能只测两侧漂移。
+- operation 固有要求与 Binding 额外加严要求分开测试：operation 不要求 key、DB config 要求 key 时仍必须提供 key source。输出预算也需独立回归：整个输入 JCS 合法但封装后的 artifact 超限，应当次拒绝，并保留缩小输入可 prepare/verify 的正例。
+- 多 guard 负例必须排除遮蔽：测试附加 filter 分类时先让列 allowlist、Binding output 与另一分类轴满足，再分别变异 read/output guard。凭证身份须在实际 Binding 入口逐字段错配；source→intrinsic 传递须包含非默认 effect/approval，不能全部只用 safe/false。
+- 集合校验需要异构双项：第一项合法、第二项独立违规；投影逐项断言完整 target/operation pin。仅单模型/单成员正例无法捕获只查首项、只比部分身份或取错首成员；权限集合用非空正例，并让扩大/缩减引用均真实存在以排除上游 unknown-reference 遮蔽。
+- 编码/分块负例应保持实际 decoded bytes、长度、hash 和签名不变，只破坏目标表示规则，避免被内容漂移校验遮蔽。冻结的第三方密码学接口用单独 mock-boundary 套件测试 guard 顺序/选项，真实签名与异常公钥回归仍必须直接跑真实库。
+- 校验器返回父线程原快照会遮蔽 worker 内的数据变更：禁止默认值需用 required+default 且缺字段必拒绝的负例，而不只断言返回值未变。生命周期 fake 必须能延迟 exit/拒绝 terminate，以四槽满载证明仅实际退出释放额度，并用连续 stop 事件证明幂等。独立 schema-node 与完整返回 artifact 预算各有 exact/+1 或输入可用/输出溢出的成对回归。
+- 批量 typed collector 同时需要三类变异：异构第二项证明不截断/不复用首项，独立 output 轴证明不误取 input，真实 1024/1025 结果证明证据分批。deadline 配置值本身不够，fake timer 必须在 4999ms 不终止、5000ms 终止，并证明 exit 前槽位仍占用。
+- 局部 ID 的路径身份要用“相同 ID、不同命名空间”成对回归，并覆盖命名空间重复拒绝。递归路径不仅测叶子存在，还要断言深层 case/else/loop 的完整祖先段序列，才能杀死浅层截断实现。
+- 上游 source 上限与下游 identity registry 上限必须用同一个 exact-max fixture 贯通验证；分别测试两个模块的边界，无法发现合法输入在组合后因额外 root/ancestor 条目而失败。
+- 选择性依赖展开要同时断言“命中的依赖被展开”和“未命中的兄弟 Binding 仍被登记”；仅检查展开结果会允许实现把 closure-wide 冲突/预算域偷偷缩成过滤后的子集。
+- 批量 Binding verifier 要用两个不同 ID 的合法输入，再破坏非首项并单独拒绝重复/空集合；下游 Pack path 还需用 128-member exact max 贯通，且验证 disabled+unexposed member 仍有地址但不会被误造为 sealed route。
+- SubAgent 路径要成对覆盖 internal 与 external：internal 断言 target 后还有 dependency-owned Binding、same-version 自环拒绝和禁用目标地址；external 断言完整 leaf evidence 后终止于 target，且没有伪造 nested bindings/closure seal。不要为测试方便复制具有同 credential requirement ID 的 root Bindings而放宽全局唯一性。
+- Pack route 回归要独立重算 versioned route preimage hash，并用同一 Pack 在不同 root Binding/root release 下证明 Pack path、member path 与 route hash 全部隔离；disabled route 只证明 source fact 保留，不能断言其 runtime 可用。
+- Graph-bound direct slice 回归必须区分“节点存在”和“root 有直接边”：用一个真实 transitive 节点证明不能冒充 direct dependency，并分别破坏 expected graph bytes、candidate record 与 requested root，避免只查 node membership。
+- 同一个 graph-bound wrapper 形态仍要为 Flow/internal Agent/external A2A 各跑真实 source adapter：前两者断言 nested seal 保留，A2A 断言 terminal node 没有该字段，防止泛型组合抹平 target-kind 语义。
+- Agent GateSpec projection 测试必须独立规范 protected operation hash 集合，并断言 root gate 不含 Flow-only source path/node；直接拿未规范化 source 数组比较会把合法 canonical sorting 误判为漂移。
+- Flow GateSpec 测试必须穿透真实 human-gate source parse 和 path compiler，并断言 resource node、opaque full path、node ID 三者同时存在；duplicate gate fixture 若在 source schema 更早失败也属于正确 fail-closed，不应强迫后层错误码覆盖前层。
+- Binding approval coverage 用四类负例保护：operation intrinsic approval 与 Binding none 冲突、required approval 空集合、重复 operation pin、Gate protected set 缺项。正例必须断言输出 Gate ID/hash 来自同一 prepared Agent source，而非调用方自报。
+- Leaf Binding operation collector 必须对 Knowledge/Database/Plugin/A2A 四类真实 verifier 参数化，并额外断言未命中的 sibling path 仍存在且 operation set 为空；只测试命中项会漏掉 positional operation 泄漏。
+- Pack route/operation 测试要构造两个 exposed aliases 指向同一 member operation：routes 必须保留两条，Binding operation pins 必须按 contract hash 去重为一条，防止错误地把“调用入口”和“执行合同”当成同一集合。
+- Compiled closure verifier 必须覆盖：完整 hash 重算、unknown/future fields、accessor/proxy、collection budget、resource node/path identity 重算，以及 nested Agent/Flow 的 version tuple/hash 双重 join。必须保留“published pin hash 与 semantic seed hash 可以不同”的正例，防止误把两个 hash 层级合并。
+- Closure canonical-set 测试必须先为乱序/重复 candidate 重算一个自洽 `closure_hash`，再断言 verifier 仍拒绝；否则测试只证明 hash mismatch，不能证明 canonical order enforcement。
+- Nested Agent operation projection 测试需要故意让 parent/child 复用同一 Binding ID，并覆盖同一 child 的两个 mount、重封后的 child path 缺失、重封后的 target 漂移以及 graph/closure hash 不一致；这样才能区分 exact path/target join 与错误的 local-ID/position join。
+- Nested Flow operation projection 除多 mount/path/freeze 外，还必须用重封后的非 Flow-node canonical path、缺失 source dependency 的 graph manifest 和缺失 assembly pin 的 closure 分别测试；只测 nested closure hash 会漏掉 source→graph→closure 三方装配漂移。
+- Parent child-call operation 测试必须让 child closure 复用 parent Binding ID，并断言 `flow_call`/`subagent_call` 只落在 parent canonical path；多 mount 需要 exact declaration cardinality，另测 missing/unknown/duplicate/wrong-kind/schema-drift。
+- Nested Agent manifest 回归的合法 fixture 必须使用完整 executable dependency manifest（不仅是 Capability Binding pins），并分别拒绝 graph manifest 省略依赖和重封 closure assembly 省略依赖；否则会漏掉 Strategy/Instruction 的传递图缺口。
+- 完整 Binding entry 回归不能只做 Schema `safeParse`：逐字段断言 path segments、target、config/source hash、operation、dependency node，并分别收窄 Workspace/root/Binding ceiling。另测 path-keyed policy 缺失/重复、固有 demand 不可满足，以及 policy 要求 approval 但 source GateSpec 未覆盖时 fail closed。
+- 全量 leaf entry set 要分别测试 mount 集合与 unique target 集合：同一 target 的两个 canonical mounts 应生成两条 entry，但 source candidate 只能出现一次；missing/duplicate/unrelated candidate 均拒绝。graph-bound 正例必须贯通完整 source manifest，负例把真实 leaf 改成 transitive-only，防止只验证 node membership；批量 direct-edge helper 只解析/哈希一次 graph，避免按 leaf 数量放大上限。
+- Compiled Binding entry 的 schema 回归要把跨字段语义当作一组测：kind/config/operation-kind 对应、operation 与 dependency 的 duplicate/reorder、effective allow-set 的 missing/extra、operation effect 超 ceiling、approval 与 GateSpec 双向不一致、非 Flow/SubAgent 的 async hash。Pack 还要逐条验证 same-path、exposed/member hash、member operation membership，并证明每个 compiled operation 至少有一条 route；不能只测字段 shape。
+- Resource-node intrinsic policy 要有完整 typed 正例，并成对拒绝 `{}` 与 unknown field。Nested closure 回归必须直接传 graph dependency commitment；若生产适配器需要注入 `intrinsic_policy: {}` 或 `node_role` 才能复用校验器，说明两个 artifact 边界已混淆，测试应让这种额外字段 fail closed。
+- Nested intrinsic-policy 投影正例要故意让 graph published hash 与 child semantic seed hash 不同，同时断言父 dependency node 保留前者、policy 来自 child root。分别破坏 nested closure hash、version tuple 和 dependency manifest；只测 hash join 会遗漏 graph/source assembly 漂移。
+- Skill Pack leaf entry 测试要同时覆盖两个正交集合：leaf source 按 unique full pin 精确闭合，Pack/member policy 按每个 mount-specific canonical path 精确闭合。两个 Pack mount 复用一个 leaf source 应生成两条不同 path entry；禁用 Pack 或无选中 route 只增加 unavailable path，不能抹掉编译证据。
+- Pack graph-sealing 回归必须构造“Agent→leaf 存在、Pack→leaf 缺失”的合法图，证明错误父边不能借权；再分别给 Agent root manifest 与 Pack manifest 增加一个仍可解析的额外依赖，证明 edge membership 通过时 manifest exactness 仍会拒绝。
+- Nested policy evidence 不能只用空 requirements 测字段存在；至少重封一次含非零 minimum/read classification 的 child closure、更新 graph nested hash，并断言 parent dependency node 逐字保留该 policy 且 deep-frozen。Composite 数值回归必须分别覆盖 sequence/parallel/alternative/repeat/nested-call、token 联合下限、safe-integer/bigint 溢出与 root envelope 超 aggregate 拒绝；parent entry 只能调用该编译器，不能复制 child minima。
+- Child-call invocation requirements 要同时测试缺失、零成本、自报 operation/effect/approval、schema drift、parent/child 同 ID 隔离以及深冻结；仅验证 call operation pin 不足以生成 composite policy。
+- 完整 requirements envelope 回归要逐轴覆盖 credential scope 并集、合取 mode 交集、alternative mode 并集、分类/effect 最大值、approval OR、egress/operation 规范集合、同 requirement ID 的 authority alias 冲突，以及 permutation stability/deep freeze；数值编译结果还要与既有 limit envelope 逐字一致。
+- Composite Binding entry 要证明 child operation 参与 ceiling 可满足性校验，但不会出现在 parent entry 的 operation allow-set；同时覆盖 exact path ceiling 缺失/重复、depth 不足、dependency pin 边界误传和重封 child closure 后的重新验证。

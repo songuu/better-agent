@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
+import { BindingKindV1Schema, PublishedResourcePinV1Schema } from './agent-release-v1.js';
 import {
-  BindingKindV1Schema,
-  CredentialRequirementV1Schema,
-  PublishedResourcePinV1Schema,
-} from './agent-release-v1.js';
+  CapabilityRequirementExpressionV1Schema,
+  EffectiveCapabilityPolicyV1Schema,
+} from './capability-policy-v1.js';
 import {
   addCustomIssue,
   CanonicalBindingPathV1Schema,
@@ -12,7 +12,6 @@ import {
   ContractHashSchema,
   hasUniqueBy,
   hasUniqueStrings,
-  JsonObjectSchema,
   NonEmptyStringSchema,
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
@@ -86,6 +85,7 @@ export const BindingPathSegmentV1Schema = z.union([
   z.strictObject({
     segment_kind: z.literal('flow_node'),
     owner: FlowOwnerIdentityV1Schema,
+    graph_id: NonEmptyStringSchema,
     node_id: NonEmptyStringSchema,
   }),
   z.strictObject({
@@ -102,33 +102,6 @@ export const BindingPathSegmentV1Schema = z.union([
     }),
   }),
 ]);
-
-export const EffectiveCapabilityPolicyV1Schema = z.strictObject({
-  credential_requirements: z.array(CredentialRequirementV1Schema),
-  principal_modes: z
-    .array(z.enum(['caller_delegated', 'service_principal', 'team_shared', 'none']))
-    .refine(hasUniqueStrings, 'principal modes must be unique'),
-  // Egress and budget own separate versioned vocabularies; this contract only embeds JSON values.
-  egress: z.array(JsonObjectSchema),
-  readable_data_classification_ceiling: z.enum([
-    'public',
-    'internal',
-    'confidential',
-    'restricted',
-  ]),
-  output_data_classification: z.enum(['public', 'internal', 'confidential', 'restricted']),
-  side_effect: z.strictObject({
-    maximum_class: z.enum(['safe', 'requires_key', 'unsafe']),
-    approval: z.enum(['none', 'required']),
-  }),
-  operation_contract_hashes: z
-    .array(ContractHashSchema)
-    .refine(hasUniqueStrings, 'operation contract hashes must be unique'),
-  max_calls: NonNegativeIntegerSchema,
-  max_depth: NonNegativeIntegerSchema,
-  max_parallelism: NonNegativeIntegerSchema,
-  budget: JsonObjectSchema,
-});
 
 export const OperationContractPinV1Schema = z.strictObject({
   operation_kind: z.enum([
@@ -157,6 +130,48 @@ export const SkillPackOperationRouteV1Schema = z.strictObject({
   route_hash: ContractHashSchema,
 });
 
+const CompiledOperationSetV1Schema = z
+  .array(OperationContractPinV1Schema)
+  .max(128)
+  .refine(
+    (operations) => hasUniqueBy(operations, (operation) => operation.contract_hash),
+    'operation contract hashes must be unique',
+  )
+  .refine(
+    (operations) =>
+      operations.every(
+        (operation, index) =>
+          index === 0 || (operations[index - 1]?.contract_hash ?? '') < operation.contract_hash,
+      ),
+    'operation contracts must be sorted by contract hash',
+  );
+
+const DependencyNodeSetV1Schema = z
+  .array(ClosureResourceNodeIdV1Schema)
+  .refine(hasUniqueStrings, 'dependency node ids must be unique')
+  .refine(
+    (nodeIds) =>
+      nodeIds.every((nodeId, index) => index === 0 || (nodeIds[index - 1] ?? '') < nodeId),
+    'dependency node ids must be sorted',
+  );
+
+const SkillPackRouteSetV1Schema = z
+  .array(SkillPackOperationRouteV1Schema)
+  .max(128)
+  .refine(
+    (routes) => hasUniqueBy(routes, (route) => route.exposed_operation_id),
+    'skill pack exposed operation routes must be unique',
+  )
+  .refine(
+    (routes) =>
+      routes.every(
+        (route, index) =>
+          index === 0 ||
+          (routes[index - 1]?.exposed_operation_id ?? '') < route.exposed_operation_id,
+      ),
+    'skill pack operation routes must be sorted by exposed operation id',
+  );
+
 export const CompiledBindingEntryV1Schema = z
   .strictObject({
     binding_path_encoding_version: z.literal('binding-path-lp-utf8/1'),
@@ -175,11 +190,10 @@ export const CompiledBindingEntryV1Schema = z
     ]),
     config_hash: ContractHashSchema,
     source_contract_hash: ContractHashSchema,
+    requirement_expression: CapabilityRequirementExpressionV1Schema,
     effective_policy: EffectiveCapabilityPolicyV1Schema,
-    operation_contracts: z.array(OperationContractPinV1Schema),
-    dependency_node_ids: z
-      .array(ClosureResourceNodeIdV1Schema)
-      .refine(hasUniqueStrings, 'dependency node ids must be unique'),
+    operation_contracts: CompiledOperationSetV1Schema,
+    dependency_node_ids: DependencyNodeSetV1Schema,
     approval_gate_spec: z
       .strictObject({
         gate_spec_id: NonEmptyStringSchema,
@@ -187,7 +201,7 @@ export const CompiledBindingEntryV1Schema = z
       })
       .optional(),
     async_child_policy_hash: ContractHashSchema.optional(),
-    skill_pack_operation_routes: z.array(SkillPackOperationRouteV1Schema).optional(),
+    skill_pack_operation_routes: SkillPackRouteSetV1Schema.optional(),
   })
   .superRefine((binding, ctx) => {
     if (binding.binding_path_segments[0]?.segment_kind !== 'root') {
@@ -214,6 +228,102 @@ export const CompiledBindingEntryV1Schema = z
       );
     }
 
+    const expectedConfigVersions: Record<typeof binding.binding_kind, string> = {
+      knowledge: 'knowledge-binding/1',
+      database: 'database-binding/1',
+      flow: 'flow-binding/1',
+      plugin: 'plugin-binding/1',
+      skill_pack: 'skill-pack-binding/1',
+      subagent: 'subagent-binding/1',
+    };
+    if (binding.config_schema_version !== expectedConfigVersions[binding.binding_kind]) {
+      addCustomIssue(
+        ctx,
+        ['config_schema_version'],
+        `config version does not match ${binding.binding_kind} binding`,
+      );
+    }
+
+    const expectedOperationKinds: Partial<Record<typeof binding.binding_kind, string>> = {
+      knowledge: 'knowledge_query',
+      database: 'database_operation',
+      flow: 'flow_call',
+      plugin: 'plugin_tool',
+      subagent: 'subagent_call',
+    };
+    const expectedOperationKind = expectedOperationKinds[binding.binding_kind];
+    if (
+      expectedOperationKind !== undefined &&
+      binding.operation_contracts.some(
+        (operation) => operation.operation_kind !== expectedOperationKind,
+      )
+    ) {
+      addCustomIssue(
+        ctx,
+        ['operation_contracts'],
+        `operation kind does not match ${binding.binding_kind} binding`,
+      );
+    }
+
+    const operationHashes = binding.operation_contracts.map((operation) => operation.contract_hash);
+    if (
+      operationHashes.length !== binding.effective_policy.operation_contract_hashes.length ||
+      operationHashes.some(
+        (hash, index) => hash !== binding.effective_policy.operation_contract_hashes[index],
+      )
+    ) {
+      addCustomIssue(
+        ctx,
+        ['effective_policy', 'operation_contract_hashes'],
+        'effective operation allow-set must exactly equal the compiled operation set',
+      );
+    }
+
+    const approvalRequired = binding.effective_policy.side_effect.approval === 'required';
+    if (approvalRequired !== (binding.approval_gate_spec !== undefined)) {
+      addCustomIssue(
+        ctx,
+        ['approval_gate_spec'],
+        'effective approval and compiled GateSpec presence must agree',
+      );
+    }
+    if (
+      binding.operation_contracts.some((operation) => operation.approval_required) &&
+      !approvalRequired
+    ) {
+      addCustomIssue(
+        ctx,
+        ['effective_policy', 'side_effect', 'approval'],
+        'an approval-required operation requires effective approval',
+      );
+    }
+    const effectRank = { safe: 0, requires_key: 1, unsafe: 2 } as const;
+    if (
+      binding.operation_contracts.some(
+        (operation) =>
+          effectRank[operation.side_effect_class] >
+          effectRank[binding.effective_policy.side_effect.maximum_class],
+      )
+    ) {
+      addCustomIssue(
+        ctx,
+        ['effective_policy', 'side_effect', 'maximum_class'],
+        'effective side-effect ceiling must cover every compiled operation',
+      );
+    }
+
+    if (
+      binding.async_child_policy_hash !== undefined &&
+      binding.binding_kind !== 'flow' &&
+      binding.binding_kind !== 'subagent'
+    ) {
+      addCustomIssue(
+        ctx,
+        ['async_child_policy_hash'],
+        'only Flow and SubAgent bindings can contain an async child policy hash',
+      );
+    }
+
     if (
       binding.binding_kind === 'skill_pack' &&
       binding.skill_pack_operation_routes === undefined
@@ -233,6 +343,33 @@ export const CompiledBindingEntryV1Schema = z
         ['skill_pack_operation_routes'],
         'only skill pack bindings can contain operation routes',
       );
+    }
+    if (binding.binding_kind === 'skill_pack') {
+      const routes = binding.skill_pack_operation_routes ?? [];
+      for (const route of routes) {
+        if (
+          route.pack_binding_path !== binding.binding_path ||
+          route.exposed_operation_contract_hash !== route.member_operation_contract_hash ||
+          !operationHashes.includes(route.member_operation_contract_hash)
+        ) {
+          addCustomIssue(
+            ctx,
+            ['skill_pack_operation_routes'],
+            'each Pack route must bind this path to one compiled member operation',
+          );
+        }
+      }
+      if (
+        operationHashes.some(
+          (hash) => !routes.some((route) => route.member_operation_contract_hash === hash),
+        )
+      ) {
+        addCustomIssue(
+          ctx,
+          ['skill_pack_operation_routes'],
+          'every compiled Pack operation requires at least one sealed route',
+        );
+      }
     }
   });
 
@@ -284,14 +421,14 @@ export const ClosureResourceNodeV1Schema = z
   .union([
     z.strictObject({
       node_id: ClosureResourceNodeIdV1Schema,
-      intrinsic_policy: JsonObjectSchema,
+      intrinsic_policy: CapabilityRequirementExpressionV1Schema,
       dependency_manifest_hash: ContractHashSchema,
       node_role: z.literal('root'),
       pin: ClosureRootPinV1Schema,
     }),
     z.strictObject({
       node_id: ClosureResourceNodeIdV1Schema,
-      intrinsic_policy: JsonObjectSchema,
+      intrinsic_policy: CapabilityRequirementExpressionV1Schema,
       dependency_manifest_hash: ContractHashSchema,
       node_role: z.literal('dependency'),
       pin: PublishedResourcePinV1Schema,

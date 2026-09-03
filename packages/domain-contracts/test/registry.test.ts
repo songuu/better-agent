@@ -69,7 +69,32 @@ const aggregateLimits = {
   max_calls: 0,
   max_depth: 0,
   max_parallelism: 0,
-  budget: {},
+  budget: {
+    schema_version: 'capability-budget/1',
+    amount_credits: '0',
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    duration_ms: 0,
+  },
+} as const;
+
+const intrinsicRequirements = {
+  schema_version: 'capability-requirements/1',
+  credential_requirements: [],
+  principal_modes: ['none'],
+  egress: [],
+  readable_data_classification: 'public',
+  output_data_classification: 'public',
+  side_effect_class: 'safe',
+  approval_required: false,
+  operation_contract_hashes: [],
+  minimum_limits: {
+    calls: 0,
+    depth: 0,
+    parallelism: 0,
+    budget: aggregateLimits.budget,
+  },
 } as const;
 
 describe('domain contract registry', () => {
@@ -167,7 +192,11 @@ describe('domain contract registry', () => {
         resource_nodes: [
           {
             node_id: resourceNodeId,
-            intrinsic_policy: {},
+            intrinsic_policy: {
+              schema_version: 'capability-requirement-expression/1',
+              expression_kind: 'leaf',
+              requirements: intrinsicRequirements,
+            },
             dependency_manifest_hash: hash,
             node_role: 'root',
             pin: rootPin,

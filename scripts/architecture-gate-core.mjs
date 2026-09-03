@@ -90,7 +90,7 @@ const EXPECTED_POSTGRES_SUPPORT_FILES = Object.freeze([
   }),
   Object.freeze({
     file: 'infra/test/postgres/harness.mjs',
-    sha256: 'eda327cc5f693b22e9fda3b4380b8b707204ef8701f31e510a86768770591f44',
+    sha256: '1a29abb9b081ff77e7d71f4daeb361f1a8f535b0f8d07dc6ab2fc48c248adb66',
   }),
 ]);
 
@@ -128,14 +128,14 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/domain-contracts',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 53,
-    successMarker: '@better-agent/domain-contracts:test:       Tests  53 passed (53)',
+    testCount: 162,
+    successMarker: '@better-agent/domain-contracts:test:       Tests  162 passed (162)',
   }),
   Object.freeze({
     packageName: '@better-agent/release-core',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 33,
-    successMarker: '@better-agent/release-core:test:       Tests  33 passed (33)',
+    testCount: 982,
+    successMarker: '@better-agent/release-core:test:       Tests  982 passed (982)',
   }),
   Object.freeze({
     packageName: '@better-agent/run-core',
@@ -147,8 +147,14 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
     packageName: '@better-agent/test-support',
     script:
       'vitest run --config vitest.config.ts --configLoader native && node --test ../../tests/deployment/*.test.mjs',
-    testCount: 21,
-    successMarker: '@better-agent/test-support:test:       Tests  21 passed (21)',
+    testCount: 23,
+    successMarker: '@better-agent/test-support:test:       Tests  23 passed (23)',
+  }),
+  Object.freeze({
+    packageName: '@better-agent/web',
+    script: 'vitest run --config vitest.config.ts --configLoader native',
+    testCount: 20,
+    successMarker: '@better-agent/web:test:       Tests  20 passed (20)',
   }),
 ]);
 
@@ -159,8 +165,8 @@ const EXPECTED_GATE_COMMANDS = Object.freeze([
     args: Object.freeze(['--test', 'tests/architecture-gate/architecture-gate.test.mjs']),
     timeoutMs: 120_000,
     successMarkers: Object.freeze([
-      '# tests 31',
-      '# pass 31',
+      '# tests 37',
+      '# pass 37',
       '# fail 0',
       '# skipped 0',
       '# todo 0',
@@ -172,7 +178,7 @@ const EXPECTED_GATE_COMMANDS = Object.freeze([
     args: Object.freeze(['check']),
     timeoutMs: 300_000,
     successMarkers: Object.freeze([
-      'workspace smoke passed for 9 package(s)',
+      'workspace smoke passed for 10 package(s)',
       EXPECTED_CONTRACT_SUCCESS_MARKER,
       ...EXPECTED_WORKSPACE_TESTS.map(({ successMarker }) => successMarker),
     ]),

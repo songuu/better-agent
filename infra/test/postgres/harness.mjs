@@ -230,7 +230,9 @@ export function runPostgresCommand(command, arguments_, options = {}) {
   });
 }
 
-export function createPostgresHarness(suiteName) {
+export function createPostgresHarness(suiteName, options = {}) {
+  const spawnInteractiveProcess = options.spawnInteractiveProcess ?? spawn;
+  const registerSignalCleanup = options.registerSignalCleanup ?? installPostgresSignalCleanup;
   const runId = `${process.pid}-${randomBytes(4).toString('hex')}`;
   const projectName = `better-agent-${suiteName}-${runId}`.toLowerCase();
   const projectRegistry = registerPostgresProject(projectName);
@@ -249,7 +251,7 @@ export function createPostgresHarness(suiteName) {
     });
     return stopPromise;
   }
-  installPostgresSignalCleanup(stop);
+  registerSignalCleanup(stop);
 
   function psqlArguments(role, options = {}) {
     const { applicationName, echoErrors = false, tuplesOnly = false } = options;
@@ -292,18 +294,23 @@ export function createPostgresHarness(suiteName) {
       applicationName = `better-agent-${suiteName}-${randomBytes(4).toString('hex')}`,
       scanFor = [],
     } = options;
-    const child = spawn('docker', psqlArguments(role, { applicationName, tuplesOnly: true }), {
-      cwd: harnessDirectory,
-      env: process.env,
-      shell: false,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const child = spawnInteractiveProcess(
+      'docker',
+      psqlArguments(role, { applicationName, tuplesOnly: true }),
+      {
+        cwd: harnessDirectory,
+        env: process.env,
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    );
     const output = createBoundedOutputCapture();
     let stdoutText = '';
     let readOffset = 0;
     let closed = false;
     let exited = false;
     let spawnError;
+    let stdinError;
     let exitCode;
     const waiters = new Set();
 
@@ -315,6 +322,20 @@ export function createPostgresHarness(suiteName) {
       if (!exited) child.kill('SIGKILL');
       settleWaiters();
     };
+    const captureStdinError = (error) => {
+      stdinError ??= error instanceof Error ? error : new Error(String(error));
+      settleWaiters();
+    };
+    const stdinFailure = () =>
+      new Error(`interactive psql stdin failed: ${redact(stdinError.message)}`);
+    const stdinPeerClosed = () =>
+      stdinError?.code === 'EPIPE' ||
+      (stdinError?.code === 'ERR_STREAM_DESTROYED' && (exited || closed));
+    const combinedFailure = (context, primaryError, cleanupError) =>
+      new Error(
+        `${context}: ${redact(String(primaryError))}; cleanup failed: ${redact(String(cleanupError))}`,
+      );
+    child.stdin.on('error', captureStdinError);
     child.stdout.on('data', (chunk) => {
       if (!output.append('stdout', chunk)) {
         exceedOutputBoundary();
@@ -347,19 +368,29 @@ export function createPostgresHarness(suiteName) {
     });
 
     async function waitUntil(predicate, timeoutMs, context, waitOptions = {}) {
-      const { allowExited = false } = waitOptions;
+      const {
+        allowExited = false,
+        allowPeerClosedStdinError = false,
+        allowStdinError = false,
+      } = waitOptions;
       const deadline = Date.now() + timeoutMs;
-      while (!predicate()) {
+      while (true) {
         if (spawnError !== undefined) throw spawnError;
+        if (
+          stdinError !== undefined &&
+          !allowStdinError &&
+          !(allowPeerClosedStdinError && stdinPeerClosed())
+        ) {
+          throw stdinFailure();
+        }
+        if (predicate()) break;
         if (closed || (exited && !allowExited)) {
-          if (predicate()) break;
           throw new Error(
             `${context}: interactive psql exited (${String(exitCode)}): ${redact(output.buffer('stderr').toString('utf8'))}`,
           );
         }
         const remaining = deadline - Date.now();
         if (remaining <= 0) {
-          if (predicate()) break;
           throw new Error(`${context}: timed out after ${String(timeoutMs)}ms`);
         }
         await new Promise((resolve) => {
@@ -380,15 +411,26 @@ export function createPostgresHarness(suiteName) {
       if (exited || closed || child.stdin.destroyed) throw new Error('interactive psql is closed');
       const marker = `ba_marker_${randomBytes(12).toString('hex')}`;
       const startOffset = readOffset;
-      child.stdin.write(`${sql.trimEnd()}\n\\echo ${marker}\n`);
       try {
+        try {
+          child.stdin.write(`${sql.trimEnd()}\n\\echo ${marker}\n`);
+        } catch (error) {
+          captureStdinError(error);
+          throw stdinFailure();
+        }
         await waitUntil(
           () => stdoutText.indexOf(marker, startOffset) >= 0,
           timeoutMs,
           'interactive psql marker',
         );
       } catch (error) {
-        if (disconnectOnFailure) await abruptDisconnect();
+        if (disconnectOnFailure) {
+          try {
+            await abruptDisconnect();
+          } catch (cleanupError) {
+            throw combinedFailure('interactive psql execution failed', error, cleanupError);
+          }
+        }
         throw error;
       }
       const markerOffset = stdoutText.indexOf(marker, startOffset);
@@ -417,15 +459,27 @@ export function createPostgresHarness(suiteName) {
     }
 
     async function close() {
-      if (!exited && !closed && !child.stdin.destroyed) child.stdin.end('\\quit\n');
+      if (!exited && !closed && !child.stdin.destroyed) {
+        try {
+          child.stdin.end('\\quit\n');
+        } catch (error) {
+          captureStdinError(error);
+        }
+      }
       try {
         await waitUntil(() => closed, defaultWaitTimeoutMs, 'interactive psql close', {
           allowExited: true,
+          allowPeerClosedStdinError: true,
         });
       } catch (error) {
-        await abruptDisconnect();
+        try {
+          await abruptDisconnect();
+        } catch (cleanupError) {
+          throw combinedFailure('interactive psql close failed', error, cleanupError);
+        }
         throw error;
       }
+      if (stdinError !== undefined && !stdinPeerClosed()) throw stdinFailure();
       return metadata();
     }
 
@@ -433,11 +487,24 @@ export function createPostgresHarness(suiteName) {
       if (!child.stdin.destroyed) child.stdin.destroy();
       if (!exited) child.kill();
       try {
-        await waitForExit();
-      } catch {
+        await waitUntil(
+          () => closed,
+          defaultWaitTimeoutMs,
+          'interactive psql close after disconnect',
+          {
+            allowExited: true,
+            allowStdinError: true,
+          },
+        );
+      } catch (error) {
         if (!exited) {
           child.kill('SIGKILL');
-          await waitForExit();
+          await waitUntil(() => closed, defaultWaitTimeoutMs, 'interactive psql forced close', {
+            allowExited: true,
+            allowStdinError: true,
+          });
+        } else if (!closed) {
+          throw error;
         }
       }
       return metadata();

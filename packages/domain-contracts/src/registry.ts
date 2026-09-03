@@ -1,4 +1,21 @@
 import type { z } from 'zod';
+import {
+  InstructionSkillSourceV1Schema,
+  InstructionSkillSourceCandidateV1Schema,
+  InstructionSkillTrustedSignersV1Schema,
+} from './instruction-skill-source-v1.js';
+import { OperationContractSourceV1Schema } from './operation-contract-source-v1.js';
+import {
+  SkillPackSourceV1Schema,
+  SkillPackSourceCandidateV1Schema,
+} from './skill-pack-source-v1.js';
+import {
+  A2aAgentSourceV1Schema,
+  DatabaseOperationSourceV1Schema,
+  KnowledgeIndexGenerationSourceV1Schema,
+  PluginToolSourceV1Schema,
+  LeafResourceSourceCandidateV1Schema,
+} from './leaf-resource-source-v1.js';
 
 import {
   AgentDeploymentActivePointerV1Schema,
@@ -10,6 +27,7 @@ import {
   AgentDeploymentV1Schema,
 } from './agent-deployment-v1.js';
 import {
+  AgentExecutableSourceV1Schema,
   AgentGateSpecV1Schema,
   AgentReleaseV1Schema,
   AsyncChildPolicyV1Schema,
@@ -25,6 +43,10 @@ import {
   SubagentContextProjectionV1Schema,
 } from './agent-release-v1.js';
 import { AgentStrategyReleaseV1Schema } from './agent-strategy-release-v1.js';
+import {
+  AgentStrategySourceV1Schema,
+  AgentStrategySourceCandidateV1Schema,
+} from './agent-strategy-source-v1.js';
 import {
   StrategyCheckpointV1Schema,
   StrategyGateRequestV1Schema,
@@ -48,6 +70,13 @@ import {
   RunCancellationReleaseAuthorityV1Schema,
 } from './billing-v2.js';
 import { BrowserSessionMetadataV1Schema } from './browser-session-v1.js';
+import {
+  CanonicalEgressRuleV1Schema,
+  CapabilityBudgetV1Schema,
+  CapabilityPolicyCeilingV1Schema,
+  CapabilityRequirementExpressionV1Schema,
+  CapabilityRequirementsV1Schema,
+} from './capability-policy-v1.js';
 import {
   CompiledCapabilityClosureV1Schema,
   CompiledGateSpecEntryV1Schema,
@@ -233,7 +262,36 @@ export const domainContractSchemaEntries = [
     schema: CredentialOperationPolicyV1Schema,
   },
   { schemaVersion: 'agent-release/1', schema: AgentReleaseV1Schema },
+  { schemaVersion: 'agent-executable-source/1', schema: AgentExecutableSourceV1Schema },
+  { schemaVersion: 'operation-contract-source/1', schema: OperationContractSourceV1Schema },
+  { schemaVersion: 'skill-pack-source/1', schema: SkillPackSourceV1Schema },
+  { schemaVersion: 'instruction-skill-source/1', schema: InstructionSkillSourceV1Schema },
+  {
+    schemaVersion: 'instruction-skill-source-candidate/1',
+    schema: InstructionSkillSourceCandidateV1Schema,
+  },
+  {
+    schemaVersion: 'instruction-skill-trusted-signers/1',
+    schema: InstructionSkillTrustedSignersV1Schema,
+  },
+  { schemaVersion: 'skill-pack-source-candidate/1', schema: SkillPackSourceCandidateV1Schema },
+  {
+    schemaVersion: 'knowledge-index-generation-source/1',
+    schema: KnowledgeIndexGenerationSourceV1Schema,
+  },
+  { schemaVersion: 'database-operation-source/1', schema: DatabaseOperationSourceV1Schema },
+  { schemaVersion: 'plugin-tool-source/1', schema: PluginToolSourceV1Schema },
+  { schemaVersion: 'a2a-agent-source/1', schema: A2aAgentSourceV1Schema },
+  {
+    schemaVersion: 'leaf-resource-source-candidate/1',
+    schema: LeafResourceSourceCandidateV1Schema,
+  },
   { schemaVersion: 'agent-strategy-release/1', schema: AgentStrategyReleaseV1Schema },
+  { schemaVersion: 'agent-strategy-source/1', schema: AgentStrategySourceV1Schema },
+  {
+    schemaVersion: 'agent-strategy-source-candidate/1',
+    schema: AgentStrategySourceCandidateV1Schema,
+  },
   { schemaVersion: 'experience-release/1', schema: ExperienceReleaseV1Schema },
   { schemaVersion: 'deployment-policy-pin/1', schema: ImmutableDeploymentPolicyPinV1Schema },
   { schemaVersion: 'agent-deployment-stable/1', schema: AgentDeploymentV1Schema },
@@ -373,6 +431,26 @@ export const domainContractSchemaEntries = [
   { schemaVersion: 'subagent-binding/1', schema: SubagentBindingConfigV1Schema },
   { schemaVersion: 'flow-ir/1', schema: FlowIrV1Schema },
   { schemaVersion: 'human-gate/1', schema: FlowGateSpecV1Schema },
+  {
+    schemaVersion: 'canonical-egress-rule/1',
+    schema: CanonicalEgressRuleV1Schema,
+  },
+  {
+    schemaVersion: 'capability-budget/1',
+    schema: CapabilityBudgetV1Schema,
+  },
+  {
+    schemaVersion: 'capability-policy-ceiling/1',
+    schema: CapabilityPolicyCeilingV1Schema,
+  },
+  {
+    schemaVersion: 'capability-requirements/1',
+    schema: CapabilityRequirementsV1Schema,
+  },
+  {
+    schemaVersion: 'capability-requirement-expression/1',
+    schema: CapabilityRequirementExpressionV1Schema,
+  },
   {
     schemaVersion: 'compiled-capability-closure/1',
     schema: CompiledCapabilityClosureV1Schema,

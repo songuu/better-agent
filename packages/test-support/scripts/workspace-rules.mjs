@@ -22,7 +22,10 @@ const matrixOsExpression = '$' + '{{ matrix.os }}';
 
 const requiredLfGitAttributes = [
   '*.cjs',
+  '*.conf',
+  '*.css',
   '*.cts',
+  '*.html',
   '*.js',
   '*.jsx',
   '*.json',
@@ -30,6 +33,8 @@ const requiredLfGitAttributes = [
   '*.mts',
   '*.md',
   '*.sql',
+  '*.service',
+  '*.sh',
   '*.ts',
   '*.tsx',
   '*.yaml',
@@ -38,6 +43,7 @@ const requiredLfGitAttributes = [
 
 const expectedGitAttributes = [
   '* text=auto',
+  '.gitattributes text eol=lf',
   '',
   ...requiredLfGitAttributes.map((pattern) => `${pattern} text eol=lf`),
   '',
@@ -318,7 +324,7 @@ export function validateDeploymentWorkflow(workflow) {
   const workflowDigest = createHash('sha256')
     .update(workflow.replaceAll('\r\n', '\n'))
     .digest('hex');
-  if (workflowDigest !== '8d2b92fc5866e6bf66203c9879e37e671f63ca98066bb338ca679d2a92282030') {
+  if (workflowDigest !== '5244ce5a1277eb8f71de258a1dc13579100e7f8be9c6bc67a8608249aebad5b1') {
     errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
   }
   const definition = parseCiWorkflow(workflow, errors);
@@ -410,6 +416,14 @@ export function validateDeploymentWorkflow(workflow) {
   }
   for (const requiredText of [
     'pnpm architecture:gate',
+    'pnpm --filter @better-agent/web build',
+    'apps/web/dist/server.js',
+    'apps/web/public/index.html',
+    'deploy/systemd/better-agent-web.service',
+    'deploy/nginx/better-agent.location.conf',
+    'scripts/deployment/install-production-web.sh',
+    'Verify public Better Agent web route',
+    'https://songuu.top/better-agent/api/healthz',
     'BETTER_AGENT_POSTGRES_ROOT',
     'scripts/deployment/configure-production-postgres.mjs',
     'Remove deployment key',

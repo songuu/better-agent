@@ -1,0 +1,20 @@
+{
+  "name": "@better-agent/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Same-origin Better Agent web runtime",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json --pretty false --stopBuildOnErrors",
+    "lint": "biome lint src test vitest.config.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run --config vitest.config.ts --configLoader native",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

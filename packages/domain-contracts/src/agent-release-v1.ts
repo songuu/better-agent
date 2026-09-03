@@ -531,141 +531,149 @@ export const InstructionSkillBindingV1Schema = z.strictObject({
   script_mode: z.literal('inert'),
 });
 
-export const AgentReleaseV1Schema = z
-  .strictObject({
-    schema_version: z.literal('agent-release/1'),
-    agent_id: NonEmptyStringSchema,
-    agent_release_id: NonEmptyStringSchema,
-    release_number: PositiveIntegerSchema,
-    source_draft_revision_id: NonEmptyStringSchema,
-    role: JsonObjectSchema,
-    input_contract: JsonObjectSchema,
-    output_contract: JsonObjectSchema.optional(),
-    model_policy: JsonObjectSchema,
-    strategy: AgentStrategyPinV1Schema,
-    gate_specs: z.array(AgentGateSpecV1Schema),
-    instruction_skill_bindings: z.array(InstructionSkillBindingV1Schema),
-    capability_bindings: z.array(CapabilityBindingV1Schema),
-    public_capability_handles: z.array(PublicCapabilityHandleV1Schema),
-    task_templates: z.array(JsonObjectSchema),
-    authorization_policy: JsonObjectSchema,
-    runtime_limits: JsonObjectSchema,
-    capability_closure_hash: ContractHashSchema,
-    compiled_hash: ContractHashSchema,
-  })
-  .superRefine((release, ctx) => {
-    if (!hasUniqueBy(release.gate_specs, (gate) => gate.gate_spec_id)) {
-      addCustomIssue(ctx, ['gate_specs'], 'gate spec ids must be unique within a release');
-    }
-    if (!hasUniqueBy(release.capability_bindings, (binding) => binding.binding_id)) {
-      addCustomIssue(
-        ctx,
-        ['capability_bindings'],
-        'capability binding ids must be unique within a release',
-      );
-    }
-    const credentialRequirementIds = release.capability_bindings.flatMap((binding) =>
-      binding.credential_requirement === undefined
-        ? []
-        : [binding.credential_requirement.requirement_id],
+const AgentExecutableBodySchema = z.strictObject({
+  agent_id: NonEmptyStringSchema,
+  agent_release_id: NonEmptyStringSchema,
+  release_number: PositiveIntegerSchema,
+  source_draft_revision_id: NonEmptyStringSchema,
+  role: JsonObjectSchema,
+  input_contract: JsonObjectSchema,
+  output_contract: JsonObjectSchema.optional(),
+  model_policy: JsonObjectSchema,
+  strategy: AgentStrategyPinV1Schema,
+  gate_specs: z.array(AgentGateSpecV1Schema),
+  instruction_skill_bindings: z.array(InstructionSkillBindingV1Schema),
+  capability_bindings: z.array(CapabilityBindingV1Schema),
+  public_capability_handles: z.array(PublicCapabilityHandleV1Schema),
+  task_templates: z.array(JsonObjectSchema),
+  authorization_policy: JsonObjectSchema,
+  runtime_limits: JsonObjectSchema,
+});
+
+function validateAgentExecutableBody(
+  release: z.infer<typeof AgentExecutableBodySchema>,
+  ctx: z.RefinementCtx,
+): void {
+  if (!hasUniqueBy(release.gate_specs, (gate) => gate.gate_spec_id)) {
+    addCustomIssue(ctx, ['gate_specs'], 'gate spec ids must be unique within a release');
+  }
+  if (!hasUniqueBy(release.capability_bindings, (binding) => binding.binding_id)) {
+    addCustomIssue(
+      ctx,
+      ['capability_bindings'],
+      'capability binding ids must be unique within a release',
     );
-    if (!hasUniqueStrings(credentialRequirementIds)) {
-      addCustomIssue(
-        ctx,
-        ['capability_bindings'],
-        'credential requirement ids must be unique across capability bindings',
-      );
-    }
-    if (!hasUniqueBy(release.instruction_skill_bindings, (binding) => binding.binding_id)) {
-      addCustomIssue(
-        ctx,
-        ['instruction_skill_bindings'],
-        'instruction skill binding ids must be unique within a release',
-      );
-    }
-    if (!hasUniqueBy(release.public_capability_handles, (handle) => handle.public_handle)) {
-      addCustomIssue(
-        ctx,
-        ['public_capability_handles'],
-        'public capability handles must be unique within a release',
-      );
-    }
+  }
+  const credentialRequirementIds = release.capability_bindings.flatMap((binding) =>
+    binding.credential_requirement === undefined
+      ? []
+      : [binding.credential_requirement.requirement_id],
+  );
+  if (!hasUniqueStrings(credentialRequirementIds)) {
+    addCustomIssue(
+      ctx,
+      ['capability_bindings'],
+      'credential requirement ids must be unique across capability bindings',
+    );
+  }
+  if (!hasUniqueBy(release.instruction_skill_bindings, (binding) => binding.binding_id)) {
+    addCustomIssue(
+      ctx,
+      ['instruction_skill_bindings'],
+      'instruction skill binding ids must be unique within a release',
+    );
+  }
+  if (!hasUniqueBy(release.public_capability_handles, (handle) => handle.public_handle)) {
+    addCustomIssue(
+      ctx,
+      ['public_capability_handles'],
+      'public capability handles must be unique within a release',
+    );
+  }
 
-    const gateIds = new Set(release.gate_specs.map((gate) => gate.gate_spec_id));
-    for (const gateId of release.strategy.allowed_gate_spec_ids) {
-      if (!gateIds.has(gateId)) {
-        addCustomIssue(
-          ctx,
-          ['strategy', 'allowed_gate_spec_ids'],
-          `strategy references unknown gate spec ${gateId}`,
-        );
-      }
+  const gateIds = new Set(release.gate_specs.map((gate) => gate.gate_spec_id));
+  for (const gateId of release.strategy.allowed_gate_spec_ids) {
+    if (!gateIds.has(gateId)) {
+      addCustomIssue(
+        ctx,
+        ['strategy', 'allowed_gate_spec_ids'],
+        `strategy references unknown gate spec ${gateId}`,
+      );
     }
+  }
 
-    const capabilityIds = new Set(release.capability_bindings.map((binding) => binding.binding_id));
-    for (const bindingId of release.strategy.allowed_capability_binding_ids) {
+  const capabilityIds = new Set(release.capability_bindings.map((binding) => binding.binding_id));
+  for (const bindingId of release.strategy.allowed_capability_binding_ids) {
+    if (!capabilityIds.has(bindingId)) {
+      addCustomIssue(
+        ctx,
+        ['strategy', 'allowed_capability_binding_ids'],
+        `strategy references unknown capability binding ${bindingId}`,
+      );
+    }
+  }
+  for (const skill of release.instruction_skill_bindings) {
+    for (const bindingId of skill.allowed_capability_binding_ids) {
       if (!capabilityIds.has(bindingId)) {
         addCustomIssue(
           ctx,
-          ['strategy', 'allowed_capability_binding_ids'],
-          `strategy references unknown capability binding ${bindingId}`,
+          ['instruction_skill_bindings'],
+          `instruction skill references unknown capability binding ${bindingId}`,
         );
       }
     }
-    for (const skill of release.instruction_skill_bindings) {
-      for (const bindingId of skill.allowed_capability_binding_ids) {
-        if (!capabilityIds.has(bindingId)) {
-          addCustomIssue(
-            ctx,
-            ['instruction_skill_bindings'],
-            `instruction skill references unknown capability binding ${bindingId}`,
-          );
-        }
-      }
-    }
-    for (const handle of release.public_capability_handles) {
-      if (!capabilityIds.has(handle.binding_id)) {
-        addCustomIssue(
-          ctx,
-          ['public_capability_handles'],
-          `public handle references unknown capability binding ${handle.binding_id}`,
-        );
-      }
-    }
-
-    const approvalGates = new Set(
-      release.gate_specs
-        .filter((gate) => gate.kind === 'approval')
-        .map((gate) => gate.gate_spec_id),
-    );
-    for (const binding of release.capability_bindings) {
-      if (
-        binding.side_effect.approval === 'required' &&
-        !approvalGates.has(binding.side_effect.approval_gate_spec_id)
-      ) {
-        addCustomIssue(
-          ctx,
-          ['capability_bindings'],
-          `binding ${binding.binding_id} references a missing or non-approval gate`,
-        );
-      }
-    }
-
-    const forcedOrders = release.capability_bindings
-      .filter((binding) => binding.kind === 'knowledge' && binding.config.selection === 'force')
-      .map((binding) =>
-        binding.kind === 'knowledge' && binding.config.selection === 'force'
-          ? binding.config.forced_execution.order.toString()
-          : '',
+  }
+  for (const handle of release.public_capability_handles) {
+    if (!capabilityIds.has(handle.binding_id)) {
+      addCustomIssue(
+        ctx,
+        ['public_capability_handles'],
+        `public handle references unknown capability binding ${handle.binding_id}`,
       );
-    if (!hasUniqueStrings(forcedOrders)) {
+    }
+  }
+
+  const approvalGates = new Set(
+    release.gate_specs.filter((gate) => gate.kind === 'approval').map((gate) => gate.gate_spec_id),
+  );
+  for (const binding of release.capability_bindings) {
+    if (
+      binding.side_effect.approval === 'required' &&
+      !approvalGates.has(binding.side_effect.approval_gate_spec_id)
+    ) {
       addCustomIssue(
         ctx,
         ['capability_bindings'],
-        'forced knowledge execution order must be unique within a release',
+        `binding ${binding.binding_id} references a missing or non-approval gate`,
       );
     }
-  });
+  }
+
+  const forcedOrders = release.capability_bindings
+    .filter((binding) => binding.kind === 'knowledge' && binding.config.selection === 'force')
+    .map((binding) =>
+      binding.kind === 'knowledge' && binding.config.selection === 'force'
+        ? binding.config.forced_execution.order.toString()
+        : '',
+    );
+  if (!hasUniqueStrings(forcedOrders)) {
+    addCustomIssue(
+      ctx,
+      ['capability_bindings'],
+      'forced knowledge execution order must be unique within a release',
+    );
+  }
+}
+
+export const AgentExecutableSourceV1Schema = AgentExecutableBodySchema.extend({
+  schema_version: z.literal('agent-executable-source/1'),
+}).superRefine(validateAgentExecutableBody);
+
+export const AgentReleaseV1Schema = AgentExecutableBodySchema.extend({
+  schema_version: z.literal('agent-release/1'),
+  capability_closure_hash: ContractHashSchema,
+  compiled_hash: ContractHashSchema,
+}).superRefine(validateAgentExecutableBody);
 
 export type BindingKindV1 = z.infer<typeof BindingKindV1Schema>;
 export type PublishedResourceKindV1 = z.infer<typeof PublishedResourceKindV1Schema>;
@@ -674,3 +682,4 @@ export type AgentStrategyPinV1 = z.infer<typeof AgentStrategyPinV1Schema>;
 export type CredentialRequirementV1 = z.infer<typeof CredentialRequirementV1Schema>;
 export type CapabilityBindingV1 = z.infer<typeof CapabilityBindingV1Schema>;
 export type AgentReleaseV1 = z.infer<typeof AgentReleaseV1Schema>;
+export type AgentExecutableSourceV1 = z.infer<typeof AgentExecutableSourceV1Schema>;

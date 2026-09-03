@@ -8,6 +8,6 @@
     "sourceMap": true,
     "tsBuildInfoFile": "node_modules/.cache/tsbuild/build.tsbuildinfo"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.mjs"],
   "exclude": ["test/**/*.ts", "vitest.config.ts"]
 }

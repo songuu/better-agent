@@ -23,6 +23,59 @@ export const hashA = `sha256:${'a'.repeat(64)}` as const;
 export const hashB = `sha256:${'b'.repeat(64)}` as const;
 export const hashC = `sha256:${'c'.repeat(64)}` as const;
 
+export const emptyCapabilityRequirements = {
+  schema_version: 'capability-requirements/1',
+  credential_requirements: [],
+  principal_modes: ['none'],
+  egress: [],
+  readable_data_classification: 'public',
+  output_data_classification: 'public',
+  side_effect_class: 'safe',
+  approval_required: false,
+  operation_contract_hashes: [],
+  minimum_limits: {
+    calls: 0,
+    depth: 0,
+    parallelism: 0,
+    budget: {
+      schema_version: 'capability-budget/1',
+      amount_credits: '0',
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      duration_ms: 0,
+    },
+  },
+} as const;
+
+export const emptyCapabilityRequirementExpression = {
+  schema_version: 'capability-requirement-expression/1',
+  expression_kind: 'leaf',
+  requirements: emptyCapabilityRequirements,
+} as const;
+
+export const callCapabilityRequirements = {
+  schema_version: 'capability-invocation-requirements/1',
+  credential_requirements: [],
+  principal_modes: ['none'],
+  egress: [],
+  readable_data_classification: 'public',
+  output_data_classification: 'public',
+  minimum_limits: {
+    calls: 1,
+    depth: 0,
+    parallelism: 1,
+    budget: {
+      schema_version: 'capability-budget/1',
+      amount_credits: '0',
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      duration_ms: 1,
+    },
+  },
+} as const;
+
 export function makeStrategyRelease() {
   const candidate = {
     schema_version: 'agent-strategy-release/1',

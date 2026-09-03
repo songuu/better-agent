@@ -13,7 +13,10 @@ import {
 describe('validateGitAttributes', () => {
   const requiredLfPatterns = [
     '*.cjs',
+    '*.conf',
+    '*.css',
     '*.cts',
+    '*.html',
     '*.js',
     '*.jsx',
     '*.json',
@@ -21,6 +24,8 @@ describe('validateGitAttributes', () => {
     '*.mts',
     '*.md',
     '*.sql',
+    '*.service',
+    '*.sh',
     '*.ts',
     '*.tsx',
     '*.yaml',
@@ -28,6 +33,7 @@ describe('validateGitAttributes', () => {
   ];
   const validAttributes = [
     '* text=auto',
+    '.gitattributes text eol=lf',
     '',
     ...requiredLfPatterns.map((pattern) => `${pattern} text eol=lf`),
     '',
@@ -41,9 +47,10 @@ describe('validateGitAttributes', () => {
     expect(validateGitAttributes(validAttributes)).toEqual([]);
   });
 
-  it('rejects a missing MTS rule that would turn declarations into CRLF on Windows', () => {
+  it('rejects missing source rules that would turn formatted files into CRLF on Windows', () => {
     for (const attributes of [
       validAttributes.replace('*.mts text eol=lf\n', ''),
+      validAttributes.replace('*.css text eol=lf\n', ''),
       `${validAttributes}*.mts text eol=crlf\n`,
       `${validAttributes}*.mts -text\n`,
       `${validAttributes}* text=auto eol=crlf\n`,
@@ -135,6 +142,61 @@ describe('validateDeploymentWorkflow', () => {
         workflow.replace('scripts/deployment/resolve-current-release.mjs', 'readlink -f'),
       ),
     ).not.toEqual([]);
+  });
+
+  it('requires the attested release to build and contain the public web runtime', () => {
+    for (const [requiredText, weakened] of [
+      [
+        'pnpm --filter @better-agent/web build',
+        workflow.replace('          pnpm --filter @better-agent/web build\n', ''),
+      ],
+      [
+        'apps/web/dist/server.js',
+        workflow.replaceAll('apps/web/dist/server.js', 'apps/web/dist/missing.js'),
+      ],
+      [
+        'apps/web/public/index.html',
+        workflow.replaceAll('apps/web/public/index.html', 'apps/web/public/missing.html'),
+      ],
+    ] as const) {
+      expect(validateDeploymentWorkflow(weakened)).toContain(
+        `.github/workflows/deploy-foundation.yml: missing ${requiredText}`,
+      );
+    }
+  });
+
+  it('requires managed service installation and public Web acceptance', () => {
+    for (const [requiredText, weakened] of [
+      [
+        'deploy/systemd/better-agent-web.service',
+        workflow.replaceAll(
+          'deploy/systemd/better-agent-web.service',
+          'deploy/systemd/missing.service',
+        ),
+      ],
+      [
+        'deploy/nginx/better-agent.location.conf',
+        workflow.replaceAll('deploy/nginx/better-agent.location.conf', 'deploy/nginx/missing.conf'),
+      ],
+      [
+        'scripts/deployment/install-production-web.sh',
+        workflow.replaceAll(
+          'scripts/deployment/install-production-web.sh',
+          'scripts/deployment/missing.sh',
+        ),
+      ],
+      [
+        'https://songuu.top/better-agent/api/healthz',
+        workflow.replace(
+          'https://songuu.top/better-agent/api/healthz',
+          'http://127.0.0.1:4310/healthz',
+        ),
+      ],
+    ] as const) {
+      expect(validateDeploymentWorkflow(weakened)).toContain(
+        `.github/workflows/deploy-foundation.yml: missing ${requiredText}`,
+      );
+    }
   });
 
   it('requires current-link validation before the database migration side effect', () => {
