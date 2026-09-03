@@ -243,6 +243,20 @@ test('rejects OpenAPI and package-script drift', () => {
     () => validateArchitectureInventory(manifest, changedScript),
     /DB integration script/u,
   );
+
+  const missingWebPackage = inventory();
+  missingWebPackage.workspaceTests.pop();
+  assert.throws(
+    () => validateArchitectureInventory(manifest, missingWebPackage),
+    /workspace test package inventory/u,
+  );
+
+  const reorderedWorkspacePackages = inventory();
+  reorderedWorkspacePackages.workspaceTests.reverse();
+  assert.throws(
+    () => validateArchitectureInventory(manifest, reorderedWorkspacePackages),
+    /workspace test package inventory/u,
+  );
 });
 
 test('requires one semantic, successful result for every registered gate', () => {

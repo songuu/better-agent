@@ -147,14 +147,14 @@
     {
       "packageName": "@better-agent/domain-contracts",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 152,
-      "successMarker": "@better-agent/domain-contracts:test:       Tests  152 passed (152)"
+      "testCount": 162,
+      "successMarker": "@better-agent/domain-contracts:test:       Tests  162 passed (162)"
     },
     {
       "packageName": "@better-agent/release-core",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 729,
-      "successMarker": "@better-agent/release-core:test:       Tests  729 passed (729)"
+      "testCount": 982,
+      "successMarker": "@better-agent/release-core:test:       Tests  982 passed (982)"
     },
     {
       "packageName": "@better-agent/run-core",
@@ -165,8 +165,14 @@
     {
       "packageName": "@better-agent/test-support",
       "script": "vitest run --config vitest.config.ts --configLoader native && node --test ../../tests/deployment/*.test.mjs",
-      "testCount": 21,
-      "successMarker": "@better-agent/test-support:test:       Tests  21 passed (21)"
+      "testCount": 23,
+      "successMarker": "@better-agent/test-support:test:       Tests  23 passed (23)"
+    },
+    {
+      "packageName": "@better-agent/web",
+      "script": "vitest run --config vitest.config.ts --configLoader native",
+      "testCount": 20,
+      "successMarker": "@better-agent/web:test:       Tests  20 passed (20)"
     }
   ],
   "scripts": {
@@ -192,17 +198,18 @@
       "args": ["check"],
       "mode": "real",
       "successMarkers": [
-        "workspace smoke passed for 9 package(s)",
+        "workspace smoke passed for 10 package(s)",
         "Contract gate passed: 11 operations, 314 local references, bundle a19ddd228941e51a9658c109c87af7405d3a0c22324c00757cf987549117cf04, TypeScript a92a2c8b4cd61df15626282b64abd5cb3138622ab32e4dca2f16cd39cc5e6d07, response baseline e383d1ce5fe4494056280c1c36fdd19f769ec194dd97ad46678e2ceabd0f5828",
         "@better-agent/api:test:       Tests  80 passed (80)",
         "@better-agent/api-contract:test: # pass 16",
         "@better-agent/auth:test:       Tests  48 passed (48)",
         "@better-agent/billing-core:test:       Tests  43 passed (43)",
         "@better-agent/db:test:       Tests  85 passed (85)",
-        "@better-agent/domain-contracts:test:       Tests  152 passed (152)",
-        "@better-agent/release-core:test:       Tests  729 passed (729)",
+        "@better-agent/domain-contracts:test:       Tests  162 passed (162)",
+        "@better-agent/release-core:test:       Tests  982 passed (982)",
         "@better-agent/run-core:test:       Tests  103 passed (103)",
-        "@better-agent/test-support:test:       Tests  21 passed (21)"
+        "@better-agent/test-support:test:       Tests  23 passed (23)",
+        "@better-agent/web:test:       Tests  20 passed (20)"
       ],
       "forbidSkippedOutput": true,
       "timeoutMs": 300000

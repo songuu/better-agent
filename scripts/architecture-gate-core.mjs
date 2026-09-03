@@ -128,14 +128,14 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/domain-contracts',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 152,
-    successMarker: '@better-agent/domain-contracts:test:       Tests  152 passed (152)',
+    testCount: 162,
+    successMarker: '@better-agent/domain-contracts:test:       Tests  162 passed (162)',
   }),
   Object.freeze({
     packageName: '@better-agent/release-core',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 729,
-    successMarker: '@better-agent/release-core:test:       Tests  729 passed (729)',
+    testCount: 982,
+    successMarker: '@better-agent/release-core:test:       Tests  982 passed (982)',
   }),
   Object.freeze({
     packageName: '@better-agent/run-core',
@@ -147,8 +147,14 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
     packageName: '@better-agent/test-support',
     script:
       'vitest run --config vitest.config.ts --configLoader native && node --test ../../tests/deployment/*.test.mjs',
-    testCount: 21,
-    successMarker: '@better-agent/test-support:test:       Tests  21 passed (21)',
+    testCount: 23,
+    successMarker: '@better-agent/test-support:test:       Tests  23 passed (23)',
+  }),
+  Object.freeze({
+    packageName: '@better-agent/web',
+    script: 'vitest run --config vitest.config.ts --configLoader native',
+    testCount: 20,
+    successMarker: '@better-agent/web:test:       Tests  20 passed (20)',
   }),
 ]);
 
@@ -172,7 +178,7 @@ const EXPECTED_GATE_COMMANDS = Object.freeze([
     args: Object.freeze(['check']),
     timeoutMs: 300_000,
     successMarkers: Object.freeze([
-      'workspace smoke passed for 9 package(s)',
+      'workspace smoke passed for 10 package(s)',
       EXPECTED_CONTRACT_SUCCESS_MARKER,
       ...EXPECTED_WORKSPACE_TESTS.map(({ successMarker }) => successMarker),
     ]),
