@@ -59,3 +59,22 @@ test('installs transactionally and verifies loopback plus TLS-routed health', ()
   assert.match(installer, /\^\[0-9a-f\]\{40\}\$/u);
   assert.doesNotMatch(installer, /StrictHostKeyChecking=no|ssh-keyscan|chmod\s+777/u);
 });
+
+test('retries TLS acceptance while nginx retires workers with the old route table', () => {
+  const reloadIndex = installer.lastIndexOf('systemctl reload nginx');
+  const acceptanceEndIndex = installer.indexOf('\ntrap - ERR', reloadIndex);
+  assert.ok(reloadIndex >= 0);
+  assert.ok(acceptanceEndIndex > reloadIndex);
+  const publicAcceptance = installer.slice(reloadIndex, acceptanceEndIndex);
+
+  assert.equal(installer.match(/for attempt in \{1\.\.20\};/gu)?.length, 2);
+  assert.match(
+    publicAcceptance,
+    /for attempt in \{1\.\.20\};[\s\S]*if curl[\s\S]*https:\/\/songuu\.top\/better-agent\/api\/healthz[\s\S]*&&[\s\\]+node -e[\s\S]*h\.build_sha!==process\.argv\[2\][\s\S]*"\$\{ACCEPTED_SHA\}"; then\s+break/u,
+  );
+  assert.match(
+    publicAcceptance,
+    /if \[\[ "\$\{attempt\}" == 20 \]\]; then false; fi\s+sleep 1\s+done/u,
+  );
+  assert.equal(publicAcceptance.match(/for attempt in \{1\.\.20\};/gu)?.length, 1);
+});
