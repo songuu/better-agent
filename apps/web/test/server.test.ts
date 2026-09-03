@@ -1,15 +1,112 @@
+import { execFile, spawn } from 'node:child_process';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   type BetterAgentWebOptions,
   createBetterAgentWebServer,
+  isInvokedEntrypoint,
   WEB_BASE_PATH,
 } from '../src/server.js';
 
 const openServers: Awaited<ReturnType<typeof createBetterAgentWebServer>>[] = [];
+const execFileAsync = promisify(execFile);
+
+async function compileServer(packageDirectory: string, releaseDirectory: string): Promise<void> {
+  const compilerPath = join(
+    packageDirectory,
+    '..',
+    '..',
+    'node_modules',
+    'typescript',
+    'lib',
+    'tsc.js',
+  );
+  try {
+    await execFileAsync(
+      process.execPath,
+      [
+        compilerPath,
+        join(packageDirectory, 'src', 'server.ts'),
+        '--ignoreConfig',
+        '--module',
+        'nodenext',
+        '--moduleResolution',
+        'nodenext',
+        '--outDir',
+        join(releaseDirectory, 'dist'),
+        '--skipLibCheck',
+        '--target',
+        'es2022',
+        '--types',
+        'node',
+      ],
+      { maxBuffer: 8_192 },
+    );
+  } catch (error) {
+    throw new Error('failed to compile the current web server fixture', { cause: error });
+  }
+}
+
+async function waitForListeningOrigin(child: ReturnType<typeof spawn>): Promise<string> {
+  if (child.stdout === null || child.stderr === null) {
+    throw new Error('web child process must expose stdout and stderr');
+  }
+  const stdoutStream = child.stdout;
+  const stderrStream = child.stderr;
+  return await new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`web child did not listen before timeout; stderr=${stderr}`));
+    }, 5_000);
+    timeout.unref();
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      stdoutStream.off('data', onStdout);
+      stderrStream.off('data', onStderr);
+      child.off('error', onError);
+      child.off('exit', onExit);
+    };
+    const onStdout = (chunk: Buffer) => {
+      stdout = `${stdout}${chunk.toString('utf8')}`.slice(-8_192);
+      const match = stdout.match(/listening on (http:\/\/127\.0\.0\.1:\d+)\/better-agent\//u);
+      if (match?.[1] !== undefined) {
+        cleanup();
+        resolve(match[1]);
+      }
+    };
+    const onStderr = (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString('utf8')}`.slice(-8_192);
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      reject(
+        new Error(
+          `web child exited before listening; code=${String(code)} signal=${String(signal)} stderr=${stderr.trim()}`,
+        ),
+      );
+    };
+
+    stdoutStream.on('data', onStdout);
+    stderrStream.on('data', onStderr);
+    child.once('error', onError);
+    child.once('exit', onExit);
+  });
+}
 
 async function start(options: BetterAgentWebOptions = {}): Promise<string> {
   const server = await createBetterAgentWebServer({
@@ -57,6 +154,42 @@ async function rawGet(
   });
 }
 
+async function localRequest(
+  origin: string,
+  path: string,
+  options: { readonly method?: string } = {},
+): Promise<Response> {
+  const target = new URL(origin);
+  return await new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: target.hostname,
+        method: options.method ?? 'GET',
+        path,
+        port: target.port,
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.once('end', () => {
+          const headers = new Headers();
+          for (let index = 0; index < response.rawHeaders.length; index += 2) {
+            headers.append(response.rawHeaders[index] ?? '', response.rawHeaders[index + 1] ?? '');
+          }
+          resolve(
+            new Response(options.method === 'HEAD' ? null : Buffer.concat(chunks), {
+              headers,
+              status: response.statusCode ?? 500,
+            }),
+          );
+        });
+      },
+    );
+    request.once('error', reject);
+    request.end();
+  });
+}
+
 afterEach(async () => {
   await Promise.all(
     openServers.splice(0).map(
@@ -69,9 +202,89 @@ afterEach(async () => {
 });
 
 describe('Better Agent web runtime', () => {
+  it('recognizes the production entrypoint through the current-release directory symlink', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'better-agent-web-entrypoint-'));
+    const releaseDirectory = join(directory, 'release');
+    const currentDirectory = join(directory, 'current');
+    const serverPath = join(releaseDirectory, 'server.js');
+    const importedPath = join(releaseDirectory, 'imported.js');
+    try {
+      await mkdir(releaseDirectory);
+      await writeFile(serverPath, 'export {};\n');
+      await writeFile(importedPath, 'export {};\n');
+      await symlink(
+        releaseDirectory,
+        currentDirectory,
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+
+      expect(
+        isInvokedEntrypoint(pathToFileURL(serverPath), join(currentDirectory, 'server.js')),
+      ).toBe(true);
+      expect(isInvokedEntrypoint(pathToFileURL(serverPath), importedPath)).toBe(false);
+      expect(isInvokedEntrypoint(pathToFileURL(serverPath), undefined)).toBe(false);
+      expect(isInvokedEntrypoint(pathToFileURL(serverPath), join(directory, 'missing.js'))).toBe(
+        false,
+      );
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it('starts the compiled CLI through the current-release directory symlink', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'better-agent-web-process-'));
+    const releaseDirectory = join(directory, 'release');
+    const currentDirectory = join(directory, 'current');
+    const packageDirectory = join(import.meta.dirname, '..');
+    let child: ReturnType<typeof spawn> | undefined;
+    let childClosed: Promise<void> | undefined;
+    try {
+      await mkdir(join(releaseDirectory, 'dist'), { recursive: true });
+      await writeFile(join(releaseDirectory, 'package.json'), '{"type":"module"}\n');
+      await compileServer(packageDirectory, releaseDirectory);
+      await symlink(
+        join(packageDirectory, 'public'),
+        join(releaseDirectory, 'public'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+      await symlink(
+        releaseDirectory,
+        currentDirectory,
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+      child = spawn(process.execPath, [join(currentDirectory, 'dist', 'server.js')], {
+        env: {
+          ...process.env,
+          BETTER_AGENT_BUILD_SHA: 'b'.repeat(40),
+          BETTER_AGENT_WEB_HOST: '127.0.0.1',
+          BETTER_AGENT_WEB_PORT: '0',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const spawnedChild = child;
+      childClosed = new Promise((resolve) => spawnedChild.once('close', () => resolve()));
+      const origin = await waitForListeningOrigin(child);
+      const response = await localRequest(origin, '/better-agent/api/healthz');
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        build_sha: 'b'.repeat(40),
+        status: 'ok',
+      });
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+    } finally {
+      if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+        child.kill();
+      }
+      await childClosed;
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   it('redirects the base path to its canonical trailing-slash form', async () => {
     const origin = await start();
-    const response = await fetch(`${origin}/better-agent`, { redirect: 'manual' });
+    const response = await localRequest(origin, '/better-agent');
 
     expect(response.status).toBe(308);
     expect(response.headers.get('location')).toBe(WEB_BASE_PATH);
@@ -79,7 +292,7 @@ describe('Better Agent web runtime', () => {
 
   it('serves the application shell at the canonical public route', async () => {
     const origin = await start();
-    const response = await fetch(`${origin}${WEB_BASE_PATH}`);
+    const response = await localRequest(origin, WEB_BASE_PATH);
     const body = await response.text();
 
     expect(response.status).toBe(200);
@@ -94,7 +307,7 @@ describe('Better Agent web runtime', () => {
     ['/better-agent/assets/app.js', 'text/javascript; charset=utf-8', '/better-agent/api/healthz'],
   ])('serves the allowlisted asset %s', async (path, contentType, marker) => {
     const origin = await start();
-    const response = await fetch(`${origin}${path}`);
+    const response = await localRequest(origin, path);
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(contentType);
@@ -103,7 +316,7 @@ describe('Better Agent web runtime', () => {
 
   it('reports bounded same-origin runtime identity without environment secrets', async () => {
     const origin = await start({ buildSha: 'a'.repeat(40) });
-    const response = await fetch(`${origin}/better-agent/api/healthz`);
+    const response = await localRequest(origin, '/better-agent/api/healthz');
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -118,7 +331,7 @@ describe('Better Agent web runtime', () => {
 
   it('does not reflect malformed build identity into the health contract', async () => {
     const origin = await start({ buildSha: '<script>secret</script>' });
-    const response = await fetch(`${origin}/better-agent/api/healthz`);
+    const response = await localRequest(origin, '/better-agent/api/healthz');
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(body.build_sha).toBe('development');
@@ -126,8 +339,10 @@ describe('Better Agent web runtime', () => {
 
   it('answers HEAD without a response body while preserving representation length', async () => {
     const origin = await start();
-    const getResponse = await fetch(`${origin}/better-agent/assets/app.css`);
-    const headResponse = await fetch(`${origin}/better-agent/assets/app.css`, { method: 'HEAD' });
+    const getResponse = await localRequest(origin, '/better-agent/assets/app.css');
+    const headResponse = await localRequest(origin, '/better-agent/assets/app.css', {
+      method: 'HEAD',
+    });
 
     expect(headResponse.status).toBe(200);
     expect(headResponse.headers.get('content-length')).toBe(
@@ -140,7 +355,7 @@ describe('Better Agent web runtime', () => {
     'rejects the unsupported %s method before route handling',
     async (method) => {
       const origin = await start();
-      const response = await fetch(`${origin}/better-agent/api/healthz`, { method });
+      const response = await localRequest(origin, '/better-agent/api/healthz', { method });
 
       expect(response.status).toBe(405);
       expect(response.headers.get('allow')).toBe('GET, HEAD');
@@ -151,9 +366,9 @@ describe('Better Agent web runtime', () => {
   it('keeps unknown API and page routes distinct and closed', async () => {
     const origin = await start();
     const [apiResponse, pageResponse, foreignResponse] = await Promise.all([
-      fetch(`${origin}/better-agent/api/missing`),
-      fetch(`${origin}/better-agent/missing`),
-      fetch(`${origin}/agent-build/`),
+      localRequest(origin, '/better-agent/api/missing'),
+      localRequest(origin, '/better-agent/missing'),
+      localRequest(origin, '/agent-build/'),
     ]);
 
     expect(await apiResponse.json()).toEqual({ error: 'api_route_not_found' });
@@ -198,7 +413,7 @@ describe('Better Agent web runtime', () => {
   it('applies browser isolation and content security headers to HTML, API and errors', async () => {
     const origin = await start();
     for (const path of ['/better-agent/', '/better-agent/api/healthz', '/missing']) {
-      const response = await fetch(`${origin}${path}`);
+      const response = await localRequest(origin, path);
       const policy = response.headers.get('content-security-policy');
 
       expect(policy).toContain("default-src 'none'");
