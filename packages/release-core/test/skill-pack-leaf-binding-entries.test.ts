@@ -1,10 +1,15 @@
 import { CompiledBindingEntryV1Schema } from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
 
+import { prepareNonRecursiveAgentCapabilityClosure } from '../src/agent-capability-closure.js';
 import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
 import { prepareAgentRootResourceGraph } from '../src/agent-root-resource-graph.js';
 import { canonicalResourceNodeId } from '../src/closure-identity.js';
-import { deriveDependencyManifest, publishedResourcePinKey } from '../src/dependency-manifest.js';
+import {
+  compareCanonicalStrings,
+  deriveDependencyManifest,
+  publishedResourcePinKey,
+} from '../src/dependency-manifest.js';
 import { prepareExecutableSource } from '../src/executable-source.js';
 import { canonicalSha256 } from '../src/hash.js';
 import { prepareLeafResourceSource } from '../src/leaf-resource-source.js';
@@ -525,6 +530,39 @@ describe('Skill Pack leaf Binding entry assembly', () => {
         rootPolicyInput,
       ),
     ).toThrow('CLOSURE_BINDING_ENTRY_NOT_CLOSED');
+  });
+
+  it('seals a leaf-only Pack with retained descendant Bindings and exact graph provenance', () => {
+    const value = graphFixture({ packOnly: true });
+    const slice = prepareGraphBoundSkillPackLeafBindingEntrySet(
+      value.graph,
+      value.graphCandidate,
+      value.root,
+      value.packInput,
+      [value.leafInput],
+      value.policies,
+    );
+    const entrySet = prepareAgentRootBindingEntrySet(value.root, value.graph.graph_hash, [slice], {
+      schema_version: 'agent-root-binding-policy-input/1',
+      workspace_ceiling: value.ceiling,
+      root_ceiling: value.ceiling,
+      binding_ceilings: value.policies.pack_binding_ceilings,
+    });
+    const result = prepareNonRecursiveAgentCapabilityClosure(value.root, value.graph, entrySet);
+    expect(result.bindings).toEqual(
+      [...entrySet.entries, ...entrySet.descendant_binding_entries].sort((left, right) =>
+        compareCanonicalStrings(left.binding_path, right.binding_path),
+      ),
+    );
+    expect(result.dependency_edges).toHaveLength(5);
+    expect(result.dependency_edges.map((edge) => edge.relation).sort()).toEqual([
+      'binding_target',
+      'binding_target',
+      'binding_target',
+      'binding_target',
+      'typed_internal_dependency',
+    ]);
+    expect(Object.isFrozen(result.bindings)).toBe(true);
   });
 
   it('retains disabled Pack descendant paths in the root entry set', () => {

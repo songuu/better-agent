@@ -1,6 +1,7 @@
 import { AgentExecutableSourceV1Schema } from '@better-agent/domain-contracts';
 import { describe, expect, it } from 'vitest';
 
+import { prepareNonRecursiveAgentCapabilityClosure } from '../src/agent-capability-closure.js';
 import { prepareGraphBoundAgentLeafBindingEntrySet } from '../src/agent-leaf-binding-entries.js';
 import { prepareAgentRootBindingEntrySet } from '../src/agent-root-binding-entry-set.js';
 import { prepareAgentRootResourceGraph } from '../src/agent-root-resource-graph.js';
@@ -618,6 +619,65 @@ describe('Agent root direct resource-graph assembly', () => {
           leafPolicy,
         ].sort((left, right) => left.node_id.localeCompare(right.node_id)),
       }),
+    ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
+  });
+});
+
+describe('non-recursive Agent capability closure assembly', () => {
+  function prepared(disabled = false) {
+    const value = fixture(disabled);
+    const entrySet = prepareAgentRootBindingEntrySet(
+      value.root,
+      value.graph.graph_hash,
+      [value.slice],
+      rootPolicy(value),
+    );
+    return { ...value, entrySet };
+  }
+
+  it('seals and re-verifies the complete direct-leaf Agent closure', () => {
+    const value = prepared();
+    const result = prepareNonRecursiveAgentCapabilityClosure(
+      value.root,
+      value.graph,
+      value.entrySet,
+    );
+    expect(result.root).toEqual(prepareExecutableSource(value.root).root);
+    expect(result.assembly_pins).toEqual(
+      prepareExecutableSource(value.root).dependency_manifest.dependencies,
+    );
+    expect(result.bindings).toEqual(value.entrySet.entries);
+    expect(result.resource_nodes).toHaveLength(value.graph.nodes.length);
+    expect(result.closure_hash).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('retains disabled Binding evidence without granting aggregate authority', () => {
+    const value = prepared(true);
+    const result = prepareNonRecursiveAgentCapabilityClosure(
+      value.root,
+      value.graph,
+      value.entrySet,
+    );
+    expect(result.bindings).toHaveLength(1);
+    expect(result.disabled_binding_paths).toEqual(value.entrySet.disabled_binding_paths);
+    expect(result.aggregate_limits).toMatchObject({
+      principal_modes: ['none'],
+      operation_contract_hashes: [],
+    });
+  });
+
+  it('rejects a valid graph and entry set that belong to a different Agent source', () => {
+    const value = prepared();
+    const otherFixture = fixture(false, true);
+    const otherEntrySet = prepareAgentRootBindingEntrySet(
+      otherFixture.root,
+      otherFixture.graph.graph_hash,
+      [otherFixture.slice],
+      rootPolicy(otherFixture),
+    );
+    expect(() =>
+      prepareNonRecursiveAgentCapabilityClosure(value.root, otherFixture.graph, otherEntrySet),
     ).toThrow('COMPILED_CAPABILITY_CLOSURE_INVALID');
   });
 });
