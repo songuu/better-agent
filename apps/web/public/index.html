@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f1efe8" />
+    <title>Better Agent · Studio</title>
+    <link rel="stylesheet" href="/better-agent/assets/app.css" />
+    <script src="/better-agent/assets/app.js" type="module"></script>
+  </head>
+  <body>
+    <div class="app-frame">
+      <header class="topbar">
+        <a class="brand" href="/better-agent/" aria-label="Better Agent 首页">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>BETTER<span class="brand-cut">/</span>AGENT</span>
+        </a>
+        <div class="workspace-chip">
+          <span class="workspace-orbit" aria-hidden="true"></span>
+          <span><small>WORKSPACE</small>独立工作区</span>
+        </div>
+        <div class="runtime-state" id="runtime-state" aria-live="polite">
+          <span class="state-light" aria-hidden="true"></span>
+          <span><small>RUNTIME</small><b id="runtime-label">连接中</b></span>
+        </div>
+      </header>
+
+      <aside class="rail" aria-label="主导航">
+        <nav>
+          <a class="rail-link is-active" href="#overview" data-route="overview"><span>01</span>总览</a>
+          <a class="rail-link" href="#agents" data-route="agents"><span>02</span>Agents</a>
+          <a class="rail-link" href="#flows" data-route="flows"><span>03</span>Flows</a>
+          <a class="rail-link" href="#runs" data-route="runs"><span>04</span>Runs</a>
+          <a class="rail-link" href="#resources" data-route="resources"><span>05</span>资源</a>
+        </nav>
+        <div class="rail-foot">
+          <span>PRIVATE PLANE</span>
+          <strong>CN / 01</strong>
+        </div>
+      </aside>
+
+      <main id="overview" class="workspace">
+        <section class="hero" aria-labelledby="page-title">
+          <div class="hero-copy">
+            <p class="eyebrow"><span></span>AGENT OPERATIONS ATELIER</p>
+            <h1 id="page-title">把智能体从想法<br />送进<span>可控运行</span>。</h1>
+            <p class="hero-lead">
+              同一个工作面完成 Agent、Flow、资源、发布与运行治理。当前入口已连接独立 Web
+              运行时，Studio 数据操作将在服务端持久化链路闭合后开放。
+            </p>
+          </div>
+          <fieldset class="hero-telemetry" aria-label="运行时遥测">
+            <div class="telemetry-dial" aria-hidden="true"><span>BA</span></div>
+            <dl>
+              <div><dt>TRANSPORT</dt><dd>SAME ORIGIN</dd></div>
+              <div><dt>POLICY</dt><dd>FAIL CLOSED</dd></div>
+              <div><dt>BUILD</dt><dd id="build-label">PENDING</dd></div>
+            </dl>
+          </fieldset>
+        </section>
+
+        <section class="work-grid" aria-label="产品工作面">
+          <article class="primary-board" id="agents">
+            <header class="board-head">
+              <div><p>BUILD PLANE / 01</p><h2>Agent Studio</h2></div>
+              <span class="phase-tag">接线中</span>
+            </header>
+            <div class="studio-map" aria-hidden="true">
+              <div class="map-line line-a"></div><div class="map-line line-b"></div>
+              <div class="map-node node-role"><span>01</span><b>角色</b><small>ROLE</small></div>
+              <div class="map-node node-model"><span>02</span><b>模型</b><small>MODEL</small></div>
+              <div class="map-node node-skill"><span>03</span><b>能力</b><small>SKILLS</small></div>
+              <div class="map-core"><span>COMPILE</span><strong>AGENT</strong><i></i></div>
+              <div class="map-node node-release"><span>04</span><b>发布</b><small>RELEASE</small></div>
+            </div>
+            <footer class="board-note">
+              <span>下一闭环</span>
+              <p>创建 Draft → 编译安全闭包 → 发布不可变版本 → Web 会话运行</p>
+            </footer>
+          </article>
+
+          <div class="side-stack">
+            <article class="module-card" id="flows">
+              <span class="module-index">02</span><p>ORCHESTRATION</p><h2>Flow Studio</h2>
+              <div class="mini-flow" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+              <small>节点编排与变量映射将在 Agent 纵向闭环后开放。</small>
+            </article>
+            <article class="module-card dark" id="runs">
+              <span class="module-index">03</span><p>OBSERVABILITY</p><h2>Run Console</h2>
+              <div class="run-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+              <small>运行、步骤、用量和审计将来自同一持久事实链。</small>
+            </article>
+          </div>
+        </section>
+
+        <section class="readiness" id="resources" aria-labelledby="readiness-title">
+          <header><p>DELIVERY LEDGER</p><h2 id="readiness-title">交付状态不是装饰，是可验证事实。</h2></header>
+          <ol>
+            <li class="is-done"><span>01</span><div><b>基础架构门禁</b><small>Contracts / PostgreSQL / admission</small></div><em>VERIFIED</em></li>
+            <li class="is-done"><span>02</span><div><b>Web 运行边界</b><small>Same-origin shell / health</small></div><em id="web-ledger">PROBING</em></li>
+            <li><span>03</span><div><b>Studio 持久化闭环</b><small>Draft / release / deployment</small></div><em>NEXT</em></li>
+            <li><span>04</span><div><b>模型与 Worker</b><small>Execution / stream / recovery</small></div><em>QUEUED</em></li>
+          </ol>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

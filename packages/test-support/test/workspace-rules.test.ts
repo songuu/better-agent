@@ -137,6 +137,27 @@ describe('validateDeploymentWorkflow', () => {
     ).not.toEqual([]);
   });
 
+  it('requires the attested release to build and contain the public web runtime', () => {
+    for (const [requiredText, weakened] of [
+      [
+        'pnpm --filter @better-agent/web build',
+        workflow.replace('          pnpm --filter @better-agent/web build\n', ''),
+      ],
+      [
+        'apps/web/dist/server.js',
+        workflow.replaceAll('apps/web/dist/server.js', 'apps/web/dist/missing.js'),
+      ],
+      [
+        'apps/web/public/index.html',
+        workflow.replaceAll('apps/web/public/index.html', 'apps/web/public/missing.html'),
+      ],
+    ] as const) {
+      expect(validateDeploymentWorkflow(weakened)).toContain(
+        `.github/workflows/deploy-foundation.yml: missing ${requiredText}`,
+      );
+    }
+  });
+
   it('requires current-link validation before the database migration side effect', () => {
     const resolver =
       '          previous_release="$(node "${REMOTE_RELEASE}/scripts/deployment/resolve-current-release.mjs" "${RELEASE_ROOT}" "${CURRENT_LINK}")"\n';

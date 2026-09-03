@@ -318,7 +318,7 @@ export function validateDeploymentWorkflow(workflow) {
   const workflowDigest = createHash('sha256')
     .update(workflow.replaceAll('\r\n', '\n'))
     .digest('hex');
-  if (workflowDigest !== '8d2b92fc5866e6bf66203c9879e37e671f63ca98066bb338ca679d2a92282030') {
+  if (workflowDigest !== '72d56a09cfc572a016b26c6665023f5789d4a6d4551109445be2207b764b1886') {
     errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
   }
   const definition = parseCiWorkflow(workflow, errors);
@@ -410,6 +410,9 @@ export function validateDeploymentWorkflow(workflow) {
   }
   for (const requiredText of [
     'pnpm architecture:gate',
+    'pnpm --filter @better-agent/web build',
+    'apps/web/dist/server.js',
+    'apps/web/public/index.html',
     'BETTER_AGENT_POSTGRES_ROOT',
     'scripts/deployment/configure-production-postgres.mjs',
     'Remove deployment key',

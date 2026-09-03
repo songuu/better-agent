@@ -59,7 +59,14 @@ jobs:
         run: pnpm architecture:gate
 
       - name: Build deployable database tooling
-        run: pnpm --filter @better-agent/db build
+        run: |
+          set -euo pipefail
+          pnpm --filter @better-agent/db build
+          pnpm --filter @better-agent/web build
+          test -f apps/web/dist/server.js
+          test -f apps/web/public/index.html
+          test -f apps/web/public/assets/app.css
+          test -f apps/web/public/assets/app.js
 
       - name: Package immutable release
         env:
@@ -164,9 +171,13 @@ jobs:
             mkdir -p "${staging_release}"
             tar -xzf "${REMOTE_ARCHIVE}" -C "${staging_release}"
             test -f "${staging_release}/packages/db/dist/cli.js"
+            test -f "${staging_release}/apps/web/dist/server.js"
+            test -f "${staging_release}/apps/web/public/index.html"
             mv "${staging_release}" "${REMOTE_RELEASE}"
           fi
           test -f "${REMOTE_RELEASE}/packages/db/dist/cli.js"
+          test -f "${REMOTE_RELEASE}/apps/web/dist/server.js"
+          test -f "${REMOTE_RELEASE}/apps/web/public/index.html"
 
           previous_release="$(node "${REMOTE_RELEASE}/scripts/deployment/resolve-current-release.mjs" "${RELEASE_ROOT}" "${CURRENT_LINK}")"
           BETTER_AGENT_POSTGRES_ROOT="${SHARED_ROOT}/postgres" \
