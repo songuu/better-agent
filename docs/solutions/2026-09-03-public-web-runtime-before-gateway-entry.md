@@ -21,7 +21,15 @@ related:
 
 ## 验证
 
-- Web HTTP 回归：20/20。
-- 全仓 `pnpm check`：通过 10 个 workspace。
-- 架构门禁：31/31。
-- 当前边界：仅完成可部署 runtime 与发布包接线，尚未声明生产路由或首页入口完成。
+- Web HTTP 回归：22/22；部署资产回归：26/26。
+- G0-08 架构门禁：37/37，mutation、quality、PostgreSQL 16 均通过并保持 clean-before/clean-after。
+- GitHub `main` CI 与生产部署工作流均成功；systemd active/enabled，独立 PostgreSQL running/healthy。
+- 公网 `/better-agent/`、health、CSS、JS 均为 200，health 精确返回 accepted build SHA。
+- `songuu.top` gateway 显示 07 routes，Better Agent 卡片与无脚本入口均指向 `/better-agent/`，浏览器点击验收通过。
+
+## 部署踩坑与预防
+
+- 通过 release 软链启动时，入口文件判断必须比较 `realpath`，否则服务会加载模块后立即退出。
+- Nginx graceful reload 期间旧 worker 可能短暂返回旧路由 404；TLS 验收应在有界次数内重试，并且每次同时校验 health 状态与 accepted build SHA。
+- 工作流页面 marker 必须取自实际发布 HTML，并由测试双向绑定；禁止依赖已经删除的展示文案。
+- gateway 发布采用上传哈希校验、旧首页备份、原子安装和本机 HTTPS 验收，失败自动恢复备份。
