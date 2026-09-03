@@ -150,11 +150,18 @@ node -e 'const fs=require("node:fs");const h=JSON.parse(fs.readFileSync(process.
 
 nginx -t
 systemctl reload nginx
-curl --fail --silent --show-error --max-time 5 --noproxy '*' \
-  --resolve songuu.top:443:127.0.0.1 \
-  https://songuu.top/better-agent/api/healthz > "${backup_dir}/public-health.json"
-node -e 'const fs=require("node:fs");const h=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(h.status!=="ok"||h.build_sha!==process.argv[2])process.exit(1)' \
-  "${backup_dir}/public-health.json" "${ACCEPTED_SHA}"
+for attempt in {1..20}; do
+  if curl --fail --silent --show-error --max-time 5 --noproxy '*' \
+    --resolve songuu.top:443:127.0.0.1 \
+    https://songuu.top/better-agent/api/healthz > "${backup_dir}/public-health.json" && \
+    node -e 'const fs=require("node:fs");const h=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(h.status!=="ok"||h.build_sha!==process.argv[2])process.exit(1)' \
+      "${backup_dir}/public-health.json" "${ACCEPTED_SHA}"; then
+    break
+  fi
+  # nginx reload is asynchronous; old workers may briefly serve the pre-deploy route table.
+  if [[ "${attempt}" == 20 ]]; then false; fi
+  sleep 1
+done
 
 trap - ERR INT TERM
 rm -rf -- "${backup_dir}"
