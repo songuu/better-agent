@@ -67,6 +67,9 @@ jobs:
           test -f apps/web/public/index.html
           test -f apps/web/public/assets/app.css
           test -f apps/web/public/assets/app.js
+          test -f deploy/systemd/better-agent-web.service
+          test -f deploy/nginx/better-agent.location.conf
+          test -f scripts/deployment/install-production-web.sh
 
       - name: Package immutable release
         env:
@@ -158,7 +161,7 @@ jobs:
           test "${ACCEPTED_SHA}" = "$(git ls-remote https://github.com/${GITHUB_REPOSITORY}.git refs/heads/main | cut -f1)"
           ssh -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "RELEASE_ROOT='${RELEASE_ROOT}' SHARED_ROOT='${SHARED_ROOT}' CURRENT_LINK='${CURRENT_LINK}' REMOTE_ARCHIVE='/tmp/better-agent-${ACCEPTED_SHA}.tgz' REMOTE_RELEASE='${RELEASE_ROOT}/better-agent-${ACCEPTED_SHA}' bash -s" <<'REMOTE_SCRIPT'
+            "RELEASE_ROOT='${RELEASE_ROOT}' SHARED_ROOT='${SHARED_ROOT}' CURRENT_LINK='${CURRENT_LINK}' ACCEPTED_SHA='${ACCEPTED_SHA}' REMOTE_ARCHIVE='/tmp/better-agent-${ACCEPTED_SHA}.tgz' REMOTE_RELEASE='${RELEASE_ROOT}/better-agent-${ACCEPTED_SHA}' bash -s" <<'REMOTE_SCRIPT'
           set -euo pipefail
           staging_release="${REMOTE_RELEASE}.staging.$$"
           trap 'rm -f "${REMOTE_ARCHIVE}" "${CURRENT_LINK}.next"; rm -rf "${staging_release}"' EXIT
@@ -173,17 +176,25 @@ jobs:
             test -f "${staging_release}/packages/db/dist/cli.js"
             test -f "${staging_release}/apps/web/dist/server.js"
             test -f "${staging_release}/apps/web/public/index.html"
+            test -f "${staging_release}/scripts/deployment/install-production-web.sh"
             mv "${staging_release}" "${REMOTE_RELEASE}"
           fi
           test -f "${REMOTE_RELEASE}/packages/db/dist/cli.js"
           test -f "${REMOTE_RELEASE}/apps/web/dist/server.js"
           test -f "${REMOTE_RELEASE}/apps/web/public/index.html"
+          test -f "${REMOTE_RELEASE}/scripts/deployment/install-production-web.sh"
 
           previous_release="$(node "${REMOTE_RELEASE}/scripts/deployment/resolve-current-release.mjs" "${RELEASE_ROOT}" "${CURRENT_LINK}")"
           BETTER_AGENT_POSTGRES_ROOT="${SHARED_ROOT}/postgres" \
             node "${REMOTE_RELEASE}/scripts/deployment/configure-production-postgres.mjs" up
           BETTER_AGENT_POSTGRES_ROOT="${SHARED_ROOT}/postgres" \
             node "${REMOTE_RELEASE}/scripts/deployment/configure-production-postgres.mjs" status
+
+          RELEASE_ROOT="${RELEASE_ROOT}" \
+            SHARED_ROOT="${SHARED_ROOT}" \
+            REMOTE_RELEASE="${REMOTE_RELEASE}" \
+            ACCEPTED_SHA="${ACCEPTED_SHA}" \
+            bash "${REMOTE_RELEASE}/scripts/deployment/install-production-web.sh"
 
           test "${previous_release}" = "$(node "${REMOTE_RELEASE}/scripts/deployment/resolve-current-release.mjs" "${RELEASE_ROOT}" "${CURRENT_LINK}")"
           receipt="${SHARED_ROOT}/last-deployment"
@@ -215,6 +226,13 @@ jobs:
           done
           echo "CURRENT_RELEASE=${current_release}"
           REMOTE_SCRIPT
+
+      - name: Verify public Better Agent web route
+        run: |
+          set -euo pipefail
+          health="$(curl --fail --silent --show-error --max-time 10 https://songuu.top/better-agent/api/healthz)"
+          HEALTH="${health}" node -e 'const h=JSON.parse(process.env.HEALTH);if(h.status!=="ok"||h.build_sha!==process.argv[1])process.exit(1)' "${ACCEPTED_SHA}"
+          curl --fail --silent --show-error --max-time 10 https://songuu.top/better-agent/ | grep -Fq 'BETTER AGENT / STUDIO'
 
       - name: Remove deployment key
         if: always()

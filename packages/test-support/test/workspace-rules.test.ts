@@ -158,6 +158,40 @@ describe('validateDeploymentWorkflow', () => {
     }
   });
 
+  it('requires managed service installation and public Web acceptance', () => {
+    for (const [requiredText, weakened] of [
+      [
+        'deploy/systemd/better-agent-web.service',
+        workflow.replaceAll(
+          'deploy/systemd/better-agent-web.service',
+          'deploy/systemd/missing.service',
+        ),
+      ],
+      [
+        'deploy/nginx/better-agent.location.conf',
+        workflow.replaceAll('deploy/nginx/better-agent.location.conf', 'deploy/nginx/missing.conf'),
+      ],
+      [
+        'scripts/deployment/install-production-web.sh',
+        workflow.replaceAll(
+          'scripts/deployment/install-production-web.sh',
+          'scripts/deployment/missing.sh',
+        ),
+      ],
+      [
+        'https://songuu.top/better-agent/api/healthz',
+        workflow.replace(
+          'https://songuu.top/better-agent/api/healthz',
+          'http://127.0.0.1:4310/healthz',
+        ),
+      ],
+    ] as const) {
+      expect(validateDeploymentWorkflow(weakened)).toContain(
+        `.github/workflows/deploy-foundation.yml: missing ${requiredText}`,
+      );
+    }
+  });
+
   it('requires current-link validation before the database migration side effect', () => {
     const resolver =
       '          previous_release="$(node "${REMOTE_RELEASE}/scripts/deployment/resolve-current-release.mjs" "${RELEASE_ROOT}" "${CURRENT_LINK}")"\n';

@@ -318,7 +318,7 @@ export function validateDeploymentWorkflow(workflow) {
   const workflowDigest = createHash('sha256')
     .update(workflow.replaceAll('\r\n', '\n'))
     .digest('hex');
-  if (workflowDigest !== '72d56a09cfc572a016b26c6665023f5789d4a6d4551109445be2207b764b1886') {
+  if (workflowDigest !== '5244ce5a1277eb8f71de258a1dc13579100e7f8be9c6bc67a8608249aebad5b1') {
     errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
   }
   const definition = parseCiWorkflow(workflow, errors);
@@ -413,6 +413,11 @@ export function validateDeploymentWorkflow(workflow) {
     'pnpm --filter @better-agent/web build',
     'apps/web/dist/server.js',
     'apps/web/public/index.html',
+    'deploy/systemd/better-agent-web.service',
+    'deploy/nginx/better-agent.location.conf',
+    'scripts/deployment/install-production-web.sh',
+    'Verify public Better Agent web route',
+    'https://songuu.top/better-agent/api/healthz',
     'BETTER_AGENT_POSTGRES_ROOT',
     'scripts/deployment/configure-production-postgres.mjs',
     'Remove deployment key',
