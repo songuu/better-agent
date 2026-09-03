@@ -46,3 +46,4 @@
 - Child-call invocation requirements 要同时测试缺失、零成本、自报 operation/effect/approval、schema drift、parent/child 同 ID 隔离以及深冻结；仅验证 call operation pin 不足以生成 composite policy。
 - 完整 requirements envelope 回归要逐轴覆盖 credential scope 并集、合取 mode 交集、alternative mode 并集、分类/effect 最大值、approval OR、egress/operation 规范集合、同 requirement ID 的 authority alias 冲突，以及 permutation stability/deep freeze；数值编译结果还要与既有 limit envelope 逐字一致。
 - Composite Binding entry 要证明 child operation 参与 ceiling 可满足性校验，但不会出现在 parent entry 的 operation allow-set；同时覆盖 exact path ceiling 缺失/重复、depth 不足、dependency pin 边界误传和重封 child closure 后的重新验证。
+- 递归 descendant 投影回归必须覆盖 Agent/Flow 两类、同 child 多 mount 的笛卡尔积、8,192 exact/+1、父 ceiling 缺 operation、disabled parent/source/ancestor、兄弟不受污染、Pack route path+hash 重算，以及 root assembler 对伪造 digest、跨 parent path、交换 dependency pin 和删除 disabled evidence 的拒绝。
