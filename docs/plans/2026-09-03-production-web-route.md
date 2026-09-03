@@ -1,11 +1,11 @@
 ---
 title: "Better Agent 生产 Web 路由"
 type: sprint
-status: in-progress
+status: completed
 created: "2026-09-03"
 updated: "2026-09-03"
 tasks_total: 5
-tasks_completed: 4
+tasks_completed: 5
 tags: [sprint, deployment, systemd, nginx, production]
 invariants:
   - "Better Agent 使用独立 loopback 端口、systemd unit、release symlink 与 Nginx snippet"
@@ -43,12 +43,17 @@ invariant_tests:
 - [x] T2 增加幂等、可回滚的生产 Web 安装脚本。
 - [x] T3 增加部署资产与失败关闭约束测试。
 - [x] T4 接入受保护工作流并更新部署文档/冻结门禁。
-- [ ] T5 上传 accepted main、验证 Actions、宿主与公网，再登记首页入口。
+- [x] T5 上传 accepted main、验证 Actions、宿主与公网，再登记首页入口。
 
 ## Phase 4: 审查结果
 
-待实施后填写。
+- 架构、质量与测试独立复审均无 P0/P1/P2。
+- `main` CI 与生产部署工作流均成功；production release 为 `c7339026084de9e0508282dfa04260d663502fc3`。
+- systemd active/enabled，独立 PostgreSQL running/healthy；公网 health、HTML、CSS、JS 与 gateway 点击链路均验收通过。
 
 ## Phase 5: 复利记录
 
-待实施后填写。
+- release symlink 启动判断必须比较真实路径，不能直接比较仍含软链的 `import.meta.url`。
+- Nginx graceful reload 后旧 worker 可能短暂响应旧路由；部署验收需在有界窗口内同时重试 TLS health 与 accepted build SHA。
+- 页面验收 marker 必须绑定发布制品实际拥有的稳定标记，并通过回归测试防止 workflow 与页面漂移。
+- 首页入口只在应用公网验收成功后登记，并同步动态入口与 `<noscript>` 导航。
