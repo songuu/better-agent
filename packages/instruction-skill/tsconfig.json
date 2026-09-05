@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@better-agent/domain-contracts": ["../domain-contracts/src/index.ts"],
+      "@better-agent/release-core": ["../release-core/src/index.ts"]
+    },
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
+  "references": [
+    { "path": "../domain-contracts/tsconfig.build.json" },
+    { "path": "../release-core/tsconfig.build.json" }
+  ]
+}

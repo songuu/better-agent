@@ -1,4 +1,5 @@
 import {
+  boundedDataSnapshot,
   preparePublishedResource,
   type PreparedPublishedResourceV1,
   type SupportedPublishedResourceKindV1,
@@ -70,10 +71,17 @@ function hasExactKeys(
   return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
 }
 
-function assertInput(input: PublishResourceBoundaryInput): void {
-  if (!hasExactKeys(input, publishInputKeys) || typeof input.workspaceId !== 'string') {
+function snapshotInput(input: PublishResourceBoundaryInput): PublishResourceBoundaryInput {
+  let snapshot: unknown;
+  try {
+    snapshot = boundedDataSnapshot(input, 'source');
+  } catch {
     throw new ReleaseBoundaryError('RELEASE_BOUNDARY_INPUT_INVALID');
   }
+  if (!hasExactKeys(snapshot, publishInputKeys) || typeof snapshot.workspaceId !== 'string') {
+    throw new ReleaseBoundaryError('RELEASE_BOUNDARY_INPUT_INVALID');
+  }
+  return snapshot as unknown as PublishResourceBoundaryInput;
 }
 
 async function prepareAndPersist(
@@ -86,13 +94,13 @@ async function prepareAndPersist(
   ) => Promise<string>,
   expectedDeploymentSchemaVersion?: 'agent-deployment/1' | 'flow-deployment/1',
 ): Promise<PublishedResourceReceipt> {
-  assertInput(input);
+  const snapshot = snapshotInput(input);
   try {
     return await withTransaction(async (transaction) => {
       let registeredDependencyPins: readonly unknown[];
       try {
         registeredDependencyPins = await transaction.loadRegisteredDependencyPins(
-          input.workspaceId,
+          snapshot.workspaceId,
         );
         if (!Array.isArray(registeredDependencyPins)) {
           throw new Error('dependency pin loader returned a non-array result');
@@ -106,9 +114,9 @@ async function prepareAndPersist(
         prepared = preparePublishedResource({
           schema_version: 'publishable-resource-candidate/1',
           source_kind: 'sealed_candidate',
-          workspace_id: input.workspaceId,
+          workspace_id: snapshot.workspaceId,
           declared_kind: kind,
-          document: input.document,
+          document: snapshot.document,
           registered_dependency_pins: registeredDependencyPins,
         });
         if (expectedDeploymentSchemaVersion !== undefined) {

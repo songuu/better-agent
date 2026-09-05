@@ -103,6 +103,10 @@ describe('domain contract registry', () => {
       expect.arrayContaining([
         'agent-release/1',
         'flow-ir/1',
+        'flow-llm-node-config/1',
+        'compiled-flow-plan/1',
+        'flow-step-checkpoint/1',
+        'flow-model-usage-receipt/1',
         'compiled-capability-closure/1',
         'agent-strategy-start/1',
         'agent-strategy-checkpoint/1',
@@ -110,6 +114,10 @@ describe('domain contract registry', () => {
         'flow-binding/1',
         'subagent-binding/1',
         'strategy-gate-request/1',
+        'production-evaluation-policy/1',
+        'evaluation-suite-release/1',
+        'evaluation-run/1',
+        'evaluation-evidence-bundle/1',
       ]),
     );
     expect(new Set(domainContractSchemaVersions).size).toBe(domainContractSchemaVersions.length);

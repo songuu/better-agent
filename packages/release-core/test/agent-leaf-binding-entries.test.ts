@@ -251,6 +251,41 @@ describe('Agent leaf compiled Binding entry assembly', () => {
 });
 
 describe('complete Agent root leaf Binding entry set', () => {
+  it('retains an empty leaf slice for a tool-free Agent without masking composite bindings', () => {
+    const value = mountedTwice();
+    const root = structuredClone(value.root);
+    const document = record(root.document);
+    document.capability_bindings = [];
+    record(document.strategy).allowed_capability_binding_ids = [];
+    const source = prepareExecutableSource(root);
+    const graphCandidate = {
+      schema_version: 'pinned-dependency-graph-candidate/1' as const,
+      root: source.root,
+      root_dependencies: source.dependency_manifest.dependencies,
+      resources: source.dependency_manifest.dependencies.map((pin) => {
+        const { contract_hash: _hash, binding_mode: _mode, ...owner } = pin;
+        return {
+          schema_version: 'pinned-dependency-record/1' as const,
+          pin,
+          publication_state: 'sealed' as const,
+          dependency_manifest: deriveDependencyManifest(owner, []),
+        };
+      }),
+    };
+    const graph = preparePinnedDependencyGraph(graphCandidate);
+    const policy = { ...value.policies, binding_ceilings: [] };
+    const result = prepareGraphBoundAgentLeafBindingEntrySet(
+      graph,
+      graphCandidate,
+      root,
+      [],
+      policy,
+    );
+    expect(result.prepared_entries.entries).toEqual([]);
+    expect(result.prepared_entries.dependencies).toEqual([]);
+    expect(result.graph_hash).toBe(graph.graph_hash);
+  });
+
   function mountedTwice() {
     const value = fixture('KNOWLEDGE_INDEX_GENERATION');
     const second = structuredClone(value.binding);

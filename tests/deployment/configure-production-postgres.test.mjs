@@ -111,6 +111,10 @@ test('runs migrations as the NOLOGIN migrator capability owner', async () => {
     source,
     /psqlAs\('better_agent_migrator', `SET ROLE ba_migrator;\\n\$\{await renderMigrations\(\)\}`\)/u,
   );
+  assert.match(
+    source,
+    /replaceAll\('\\nRESET ROLE;', '\\nRESET ROLE;\\nSET LOCAL ROLE ba_migrator;'\)/u,
+  );
 });
 
 test('repairs an existing empty ledger ACL before migration re-entry', () => {
@@ -134,6 +138,21 @@ test('uses the project migration ledger schema rather than public', async () => 
   assert.match(source, /pg_catalog\.pg_attribute/u);
   assert.match(source, /owned_object_count/u);
   assert.doesNotMatch(source, /public\.schema_migrations/u);
+});
+
+test('derives the accepted migration count and provisions a private product environment', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(
+    new URL('../../scripts/deployment/configure-production-postgres.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /readdirSync\(migrationDirectory\)/u);
+  assert.match(source, /loadOrCreateProductEnvironment\(credentials\)/u);
+  assert.match(source, /BETTER_AGENT_PRODUCT_WORKSPACE_ID=/u);
+  assert.match(source, /BETTER_AGENT_ADMIN_PASSWORD=/u);
+  assert.match(source, /BETTER_AGENT_SESSION_SECRET=/u);
+  assert.match(source, /flag: 'wx'/u);
+  assert.doesNotMatch(source, /expected exactly 6 applied migrations/u);
 });
 
 test('TCP authentication sends credentials on stdin rather than process arguments', async () => {
@@ -171,4 +190,10 @@ test('rejects a broad configured production data root before invoking Docker', (
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /BETTER_AGENT_POSTGRES_ROOT must be/u);
+});
+
+test('treats a Windows private root on another drive as outside the repository', async () => {
+  const { win32 } = await import('node:path');
+  const relative = win32.relative('E:\\project\\ai\\better-agent', 'C:\\private\\postgres');
+  assert.equal(win32.isAbsolute(relative), true);
 });

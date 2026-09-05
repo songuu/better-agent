@@ -148,10 +148,14 @@ promotion and security transitions are available only through fixed-kind
 functions physically exist for the typed persistence schema, but remain
 executable only by the NOLOGIN `ba_authorization_owner`: the control role cannot
 self-assert a document, dependency-manifest, compiler or change-set hash. They
-must not be granted to an executable application role until a DB-verifiable
-compiler/preimage attestation is implemented. The disposable integration
-harness temporarily grants them only to seed downstream fixtures and revokes
-every grant before completion.
+are never granted to an executable application role. Migration 009 instead adds
+fixed-kind attested wrappers: an isolated management issuer reviews the exact
+prepared storage bytes and issues a short-lived proof bound to Workspace,
+publisher login, full pin and database-computed storage digest. The isolated
+control executor can consume that proof exactly once; wrong bytes, verifier,
+login, kind, expiry, revocation or replay fail closed. A failed underlying
+publication rolls the consumption back. The disposable integration harness uses
+the raw owner-only functions only to seed independent readback fixtures.
 
 `ba_runtime` receives only Agent/Flow service admission and browser-session
 authentication functions; the subject verifier receives only atomic browser
@@ -270,7 +274,7 @@ node packages/db/dist/cli.js status
 node packages/db/dist/cli.js down --to 0 --allow-down
 ```
 
-The six integration harnesses under `infra/test/postgres` are the evidence path
+The registered integration harnesses under `infra/test/postgres` are the evidence path
 for an empty database, idempotent apply, checksum tamper rejection, exact G0-05
 catalog restoration after empty G0-06 down/reapply, non-empty down protection,
 FORCE RLS/ACL attacks, typed admission, Flow/Agent Chat facts, billing, terminal
@@ -279,3 +283,32 @@ attestation/ACL isolation, lease fencing, recovery, and backend/client failure
 injection. Run the complete serial gate with
 `pnpm --filter @better-agent/db test:integration`. It is local disposable
 PostgreSQL evidence only, not production-state evidence.
+
+Migration `011_g1_knowledge_database_capability` adds the G1-A3 durable
+Knowledge-query and read-only Database-operation receipts. Both tables are
+immutable, owner-only and FORCE RLS. Execution can write only through fixed
+lease/fence-checked functions; exact source pins are checked by a narrow
+authorization-owner projection, without granting the run owner raw registry
+access. Non-empty rollback is rejected.
+
+Migrations `012_g1_agent_strategy_execution` and
+`013_g1_worker_human_gate` retain the reviewed AgentPlan, fenced Strategy
+state/actions/results and replay-first Human Gate decisions behind phase-local
+functions and immutable FORCE-RLS facts.
+
+Migrations `014_g1_join_child_execution`, `015_g1_join_child_settlement` and
+`016_g1_join_child_terminalization` implement the join-only descendant path.
+The execution phase can create only an exact Plan-authorized child allocation
+and immutable terminal intent under a live lease. The billing phase alone can
+settle that allocation against the root reservation, and the finalizer consumes
+the retained intent to publish the exact terminal event and tombstone. Root,
+child and grandchild replay/conflict, concurrent settlement and guarded
+rollback are exercised by the registered PostgreSQL 16 harness.
+
+Migrations `017_g1_public_run_events` and
+`018_g1_browser_run_event_session` add the strict external SSE projection and
+the browser EventSource bridge. Public events are immutable and independently
+validated; browser capabilities are bound to one Run and one canonical Origin,
+expire within 60 seconds, store only HMAC verifier material in the private auth
+schema, and recheck the session, principal, Deployment and original Run before
+readback.

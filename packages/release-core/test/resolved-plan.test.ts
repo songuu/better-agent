@@ -27,7 +27,6 @@ import {
   hashA,
   hashB,
   makeFlowIr,
-  makeAgentReleasePin,
   makeExperiencePin,
   makePolicyPin,
   makeCredentialRequirement,
@@ -691,6 +690,166 @@ describe('typed ResolvedPlan admission', () => {
     expect(plan.capability_closure_hash).toBe(value.closure.closure_hash);
     expect(plan.observed_revoke_epoch).toBe(7);
     expect(Object.isFrozen(plan.enabled_bindings)).toBe(true);
+  });
+
+  it('resolves capability-bearing Flow root credentials into explicit root authority', () => {
+    const base = fixture();
+    const requirement = makeCredentialRequirement();
+    const mapping = makeServiceMapping('flow');
+    const revisionCandidate = {
+      ...base.revision,
+      credential_mappings: [mapping],
+      credential_mapping_hash: calculateCredentialMappingSetHash('flow', [mapping]),
+      revision_contract_hash: hashA,
+    };
+    const revision = {
+      ...revisionCandidate,
+      revision_contract_hash: canonicalSha256ExcludingRootKeys(revisionCandidate, [
+        'revision_contract_hash',
+      ]),
+    };
+    const snapshotCandidate = {
+      ...base.snapshot,
+      flow_deployment_revision_contract_hash: revision.revision_contract_hash,
+      credential_mapping_hash: revision.credential_mapping_hash,
+      snapshot_hash: hashA,
+    };
+    const snapshot = {
+      ...snapshotCandidate,
+      snapshot_hash: canonicalSha256ExcludingRootKeys(snapshotCandidate, ['snapshot_hash']),
+    };
+    const requirements = {
+      ...emptyCapabilityRequirements,
+      credential_requirements: [requirement],
+      principal_modes: ['service_principal'],
+      minimum_limits: {
+        ...emptyCapabilityRequirements.minimum_limits,
+        calls: 1,
+        parallelism: 1,
+        budget: {
+          schema_version: 'capability-budget/1' as const,
+          amount_credits: '1000',
+          input_tokens: 4096,
+          output_tokens: 512,
+          total_tokens: 4608,
+          duration_ms: 45_000,
+        },
+      },
+    } as const;
+    const expression = {
+      schema_version: 'capability-requirement-expression/1',
+      expression_kind: 'leaf',
+      requirements,
+    } as const;
+    const effectivePolicy = {
+      ...base.closure.aggregate_limits,
+      credential_requirements: [requirement],
+      principal_modes: ['service_principal'],
+      max_calls: 1,
+      max_parallelism: 1,
+      budget: requirements.minimum_limits.budget,
+    } as const;
+    const closureCandidate = {
+      ...base.closure,
+      resource_nodes: base.closure.resource_nodes.map((node) =>
+        node.node_role === 'root' ? { ...node, intrinsic_policy: expression } : node,
+      ),
+      aggregate_limits: effectivePolicy,
+      closure_hash: hashA,
+    };
+    const closure = {
+      ...closureCandidate,
+      closure_hash: canonicalSha256ExcludingRootKeys(closureCandidate, ['closure_hash']),
+    };
+    const { credential_requirements: _requirements, ...limits } = effectivePolicy;
+    const policyCeiling = {
+      schema_version: 'capability-policy-ceiling/1',
+      credential_allowances: [
+        {
+          provider_id: requirement.provider_id,
+          audience: requirement.audience,
+          allowed_scopes: requirement.required_scopes,
+          principal_modes: requirement.allowed_principal_modes,
+        },
+      ],
+      ...limits,
+    } as const;
+    const credentialMaterial = {
+      credential_id: 'root-model-credential-1',
+      credential_version_id: 'material-version-1',
+      provider_id: requirement.provider_id,
+      audience: requirement.audience,
+      granted_scopes: [...requirement.required_scopes],
+      principal_mode: 'service_principal' as const,
+      credential_subject_id: principalId,
+      credential_handle_hash: hashA,
+      material_fingerprint_hash: hashB,
+    };
+    const credentialEpoch = {
+      source_kind: 'credential' as const,
+      source_id: credentialMaterial.credential_id,
+      source_subkey: canonicalSha256({
+        schema_version: 'credential-material-identity/1',
+        ...credentialMaterial,
+      }),
+      observed_epoch: 3,
+    };
+    const epochSources = [
+      ...base.decision.epoch_sources,
+      {
+        source_kind: 'credential_policy' as const,
+        source_id: makePolicyPin('service_principal').policy_id,
+        source_subkey: requirement.requirement_id,
+        observed_epoch: 1,
+      },
+      {
+        source_kind: 'service_principal' as const,
+        source_id: principalId,
+        source_subkey: requirement.requirement_id,
+        observed_epoch: 2,
+      },
+      credentialEpoch,
+    ].sort(compareEpochSource);
+    const decisionCandidate = {
+      ...base.decision,
+      deployment_revision_contract_hash: revision.revision_contract_hash,
+      capability_closure_hash: closure.closure_hash,
+      admission_snapshot_hash: snapshot.snapshot_hash,
+      epoch_sources: epochSources,
+      root_authority: {
+        policy_ceiling: policyCeiling,
+        credential_bindings: [
+          {
+            requirement_id: requirement.requirement_id,
+            mapping_hash: mapping.mapping_hash,
+            ...credentialMaterial,
+            epoch_source: credentialEpoch,
+          },
+        ],
+      },
+      decision_hash: hashA,
+    };
+    const decision = {
+      ...decisionCandidate,
+      decision_hash: canonicalSha256ExcludingRootKeys(decisionCandidate, ['decision_hash']),
+    };
+    const published = sealPublishedFixture({ ...base, closure, revision, snapshot, decision });
+    const plan = resolveExecutionPlan({
+      closure: published.closure,
+      deployment_revision: published.revision,
+      admission_snapshot: published.snapshot,
+      authorization_decision: published.decision,
+      entry_purpose: 'flow_run',
+      ...common(published),
+    });
+    expect(plan.root_authority?.credential_bindings[0]).toMatchObject({
+      requirement_id: requirement.requirement_id,
+      credential_subject_id: principalId,
+      material_fingerprint_hash: hashB,
+    });
+    expect(plan.root_authority?.effective_policy_hash).toBe(
+      canonicalSha256(plan.root_authority?.effective_policy),
+    );
   });
 
   it('uses the separate Agent deployment profile without Flow field borrowing', () => {
@@ -1958,6 +2117,7 @@ describe('typed ResolvedPlan admission', () => {
           observed_epoch: 1,
         },
       ].sort(compareEpochSource),
+      root_authority: { policy_ceiling: ceiling, credential_bindings: [] },
       allowed_bindings: [
         { binding_path: value.bindingPath, policy_ceiling: ceiling, credential_bindings: [] },
       ],

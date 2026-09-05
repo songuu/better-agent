@@ -345,6 +345,7 @@ function parseSlice(input: unknown, index: number): ParsedSlice {
           (entry.binding_kind === 'subagent' &&
             entry.target.published_resource_kind === 'A2A_AGENT_RELEASE'),
         `${path}.prepared_entries.entries`,
+        true,
       ),
       requirement_expressions: parseExpressions(
         prepared.requirement_expressions,

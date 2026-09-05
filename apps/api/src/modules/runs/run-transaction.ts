@@ -67,8 +67,8 @@ export interface ServiceOriginalRunAuthorizationCommand {
   readonly workspaceId: string;
   readonly credentialId: string;
   readonly runId: string;
-  readonly targetKind: 'agent' | 'flow';
-  readonly requiredScope: 'run:read';
+  readonly targetKind?: 'agent' | 'flow';
+  readonly requiredScope: 'run:read' | 'run:events:read';
 }
 
 export interface BrowserSessionIdentityCommand {
@@ -106,7 +106,7 @@ export interface BrowserOriginalRunAuthorizationCommand {
   readonly deploymentAuthorizationEpoch: number;
   readonly runId: string;
   readonly targetKind: 'agent';
-  readonly requiredScope: 'run:read' | 'run:cancel';
+  readonly requiredScope: 'run:read' | 'run:cancel' | 'run:events:read';
 }
 
 export interface OriginalRunAuthorizationFacts {
@@ -115,7 +115,7 @@ export interface OriginalRunAuthorizationFacts {
   readonly acceptedPrincipal: ConversationPrincipalV1;
   readonly targetKind: 'agent' | 'flow';
   readonly deploymentId: string;
-  readonly authorizedScope: 'run:read' | 'run:cancel';
+  readonly authorizedScope: 'run:read' | 'run:cancel' | 'run:events:read';
   readonly browserSessionId?: string;
   readonly sessionAuthorizationEpoch?: number;
   readonly principalAuthorizationEpoch?: number;

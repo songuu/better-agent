@@ -136,6 +136,31 @@ describe('G0-05 Release API composition boundary', () => {
     expect(transaction.publishAgentStrategyRelease).not.toHaveBeenCalled();
   });
 
+  it('snapshots caller data before the first authority await', async () => {
+    let releaseRegistry: ((value: readonly unknown[]) => void) | undefined;
+    const registry = new Promise<readonly unknown[]>((resolve) => {
+      releaseRegistry = resolve;
+    });
+    const transaction = createTransaction({
+      loadRegisteredDependencyPins: vi.fn(async () => registry),
+    });
+    const { boundary } = createBoundary(transaction);
+    const document = makeStrategyRelease();
+
+    const pending = boundary.publishAgentStrategyRelease({ workspaceId, document });
+    (document as { strategy_release_id: string }).strategy_release_id =
+      '018f47f2-c541-7cc6-9292-4a2c35303eff';
+    releaseRegistry?.([]);
+    const receipt = await pending;
+
+    expect(receipt.resource_version_id).toBe(strategyReleaseId);
+    expect(transaction.publishAgentStrategyRelease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        full_pin: expect.objectContaining({ resource_version_id: strategyReleaseId }),
+      }),
+    );
+  });
+
   it('rejects a mismatched database receipt', async () => {
     const transaction = createTransaction({
       publishAgentStrategyRelease: vi.fn(async () => '018f47f2-c541-7cc6-9292-4a2c35303eff'),

@@ -78,6 +78,46 @@ export const CanonicalAuthorizationEpochSourcesV1Schema = z
     'authorization epoch sources must be canonically sorted',
   );
 
+export const ResolvedCredentialBindingV1Schema = z.strictObject({
+  requirement_id: NonEmptyStringSchema,
+  mapping_hash: Sha256HexV1Schema,
+  principal_mode: z.enum(['caller_delegated', 'service_principal', 'team_shared']),
+  credential_subject_id: NonEmptyStringSchema,
+  credential_id: NonEmptyStringSchema,
+  credential_version_id: NonEmptyStringSchema,
+  provider_id: NonEmptyStringSchema,
+  audience: NonEmptyStringSchema,
+  granted_scopes: z
+    .array(NonEmptyStringSchema)
+    .max(128)
+    .refine(hasUniqueStrings)
+    .refine((values) =>
+      values.every((value, index) => index === 0 || (values[index - 1] ?? '') < value),
+    ),
+  credential_handle_hash: Sha256HexV1Schema,
+  material_fingerprint_hash: Sha256HexV1Schema,
+  epoch_source: AuthorizationEpochSourceV1Schema.extend({
+    source_kind: z.literal('credential'),
+    source_subkey: Sha256HexV1Schema,
+  }),
+});
+
+const ResolvedCredentialBindingsV1Schema = z
+  .array(ResolvedCredentialBindingV1Schema)
+  .max(32)
+  .refine(
+    (values) => hasUniqueBy(values, (value) => value.requirement_id),
+    'credential bindings must be unique by requirement',
+  )
+  .refine(
+    (values) =>
+      values.every(
+        (value, index) =>
+          index === 0 || (values[index - 1]?.requirement_id ?? '') < value.requirement_id,
+      ),
+    'credential bindings must be sorted',
+  );
+
 export const AdmissionAuthorizationDecisionV1Schema = z.strictObject({
   schema_version: z.literal('admission-authorization-decision/1'),
   decision_id: NonEmptyStringSchema,
@@ -91,50 +131,18 @@ export const AdmissionAuthorizationDecisionV1Schema = z.strictObject({
   admission_activation_epoch: NonNegativeIntegerSchema,
   expires_at: z.iso.datetime({ offset: true }),
   epoch_sources: CanonicalAuthorizationEpochSourcesV1Schema,
+  root_authority: z
+    .strictObject({
+      policy_ceiling: CapabilityPolicyCeilingV1Schema,
+      credential_bindings: ResolvedCredentialBindingsV1Schema,
+    })
+    .optional(),
   allowed_bindings: z
     .array(
       z.strictObject({
         binding_path: CanonicalBindingPathV1Schema,
         policy_ceiling: CapabilityPolicyCeilingV1Schema,
-        credential_bindings: z
-          .array(
-            z.strictObject({
-              requirement_id: NonEmptyStringSchema,
-              mapping_hash: Sha256HexV1Schema,
-              principal_mode: z.enum(['caller_delegated', 'service_principal', 'team_shared']),
-              credential_subject_id: NonEmptyStringSchema,
-              credential_id: NonEmptyStringSchema,
-              credential_version_id: NonEmptyStringSchema,
-              provider_id: NonEmptyStringSchema,
-              audience: NonEmptyStringSchema,
-              granted_scopes: z
-                .array(NonEmptyStringSchema)
-                .max(128)
-                .refine(hasUniqueStrings)
-                .refine((values) =>
-                  values.every((value, index) => index === 0 || (values[index - 1] ?? '') < value),
-                ),
-              credential_handle_hash: Sha256HexV1Schema,
-              material_fingerprint_hash: Sha256HexV1Schema,
-              epoch_source: AuthorizationEpochSourceV1Schema.extend({
-                source_kind: z.literal('credential'),
-                source_subkey: Sha256HexV1Schema,
-              }),
-            }),
-          )
-          .max(32)
-          .refine(
-            (values) => hasUniqueBy(values, (value) => value.requirement_id),
-            'credential bindings must be unique by requirement',
-          )
-          .refine(
-            (values) =>
-              values.every(
-                (value, index) =>
-                  index === 0 || (values[index - 1]?.requirement_id ?? '') < value.requirement_id,
-              ),
-            'credential bindings must be sorted',
-          ),
+        credential_bindings: ResolvedCredentialBindingsV1Schema,
       }),
     )
     .max(8_192)
@@ -198,45 +206,7 @@ const ResolvedBindingV1Schema = z.strictObject({
       (values) => values.every((value, index) => index === 0 || (values[index - 1] ?? '') < value),
       'credential mapping hashes must be sorted',
     ),
-  credential_bindings: z
-    .array(
-      z.strictObject({
-        requirement_id: NonEmptyStringSchema,
-        mapping_hash: Sha256HexV1Schema,
-        principal_mode: z.enum(['caller_delegated', 'service_principal', 'team_shared']),
-        credential_subject_id: NonEmptyStringSchema,
-        credential_id: NonEmptyStringSchema,
-        credential_version_id: NonEmptyStringSchema,
-        provider_id: NonEmptyStringSchema,
-        audience: NonEmptyStringSchema,
-        granted_scopes: z
-          .array(NonEmptyStringSchema)
-          .max(128)
-          .refine(hasUniqueStrings)
-          .refine((values) =>
-            values.every((value, index) => index === 0 || (values[index - 1] ?? '') < value),
-          ),
-        credential_handle_hash: Sha256HexV1Schema,
-        material_fingerprint_hash: Sha256HexV1Schema,
-        epoch_source: AuthorizationEpochSourceV1Schema.extend({
-          source_kind: z.literal('credential'),
-          source_subkey: Sha256HexV1Schema,
-        }),
-      }),
-    )
-    .max(32)
-    .refine(
-      (values) => hasUniqueBy(values, (value) => value.requirement_id),
-      'credential bindings must be unique by requirement',
-    )
-    .refine(
-      (values) =>
-        values.every(
-          (value, index) =>
-            index === 0 || (values[index - 1]?.requirement_id ?? '') < value.requirement_id,
-        ),
-      'credential bindings must be sorted',
-    ),
+  credential_bindings: ResolvedCredentialBindingsV1Schema,
 });
 
 const resolvedPlanBase = {
@@ -253,6 +223,20 @@ const resolvedPlanBase = {
   authorization_decision_hash: Sha256HexV1Schema,
   authorization_epoch_vector_hash: Sha256HexV1Schema,
   authorization_expires_at: z.iso.datetime({ offset: true }),
+  root_authority: z
+    .strictObject({
+      effective_policy: EffectiveCapabilityPolicyV1Schema,
+      effective_policy_hash: Sha256HexV1Schema,
+      credential_mapping_hashes: z
+        .array(Sha256HexV1Schema)
+        .max(32)
+        .refine(hasUniqueStrings)
+        .refine((values) =>
+          values.every((value, index) => index === 0 || (values[index - 1] ?? '') < value),
+        ),
+      credential_bindings: ResolvedCredentialBindingsV1Schema,
+    })
+    .optional(),
   enabled_bindings: z
     .array(ResolvedBindingV1Schema)
     .max(8_192)

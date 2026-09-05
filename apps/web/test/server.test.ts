@@ -15,6 +15,7 @@ import {
   isInvokedEntrypoint,
   WEB_BASE_PATH,
 } from '../src/server.js';
+import type { AgentDraft, AgentDraftInput, ProductStore } from '../src/product-store.js';
 
 const openServers: Awaited<ReturnType<typeof createBetterAgentWebServer>>[] = [];
 const execFileAsync = promisify(execFile);
@@ -157,7 +158,11 @@ async function rawGet(
 async function localRequest(
   origin: string,
   path: string,
-  options: { readonly method?: string } = {},
+  options: {
+    readonly body?: string;
+    readonly headers?: Readonly<Record<string, string>>;
+    readonly method?: string;
+  } = {},
 ): Promise<Response> {
   const target = new URL(origin);
   return await new Promise((resolve, reject) => {
@@ -167,6 +172,7 @@ async function localRequest(
         method: options.method ?? 'GET',
         path,
         port: target.port,
+        headers: options.headers,
       },
       (response) => {
         const chunks: Buffer[] = [];
@@ -186,8 +192,63 @@ async function localRequest(
       },
     );
     request.once('error', reject);
-    request.end();
+    request.end(options.body);
   });
+}
+
+function productFixture(): {
+  readonly agents: AgentDraft[];
+  readonly store: ProductStore;
+} {
+  const agents: AgentDraft[] = [];
+  const timestamp = '2026-09-03T00:00:00.000Z';
+  const store: ProductStore = {
+    async listAgents() {
+      return agents;
+    },
+    async createAgent(_workspaceId, _actorId, input) {
+      const agent: AgentDraft = {
+        ...input,
+        createdAt: timestamp,
+        id: '11111111-1111-4111-8111-111111111111',
+        revision: 1,
+        status: 'draft',
+        updatedAt: timestamp,
+      };
+      agents.push(agent);
+      return agent;
+    },
+    async updateAgent(_workspaceId, agentId, expectedRevision, input: AgentDraftInput) {
+      const index = agents.findIndex((agent) => agent.id === agentId);
+      const current = agents[index];
+      if (current === undefined || current.revision !== expectedRevision)
+        throw new Error('agent revision conflict');
+      const agent: AgentDraft = {
+        ...current,
+        ...input,
+        revision: current.revision + 1,
+        status: 'draft',
+        updatedAt: timestamp,
+      };
+      agents[index] = agent;
+      return agent;
+    },
+    async publishAgent(_workspaceId, _actorId, agentId, expectedRevision) {
+      const index = agents.findIndex((agent) => agent.id === agentId);
+      const current = agents[index];
+      if (current === undefined || current.revision !== expectedRevision)
+        throw new Error('agent revision conflict');
+      const agent: AgentDraft = {
+        ...current,
+        revision: current.revision + 1,
+        status: 'published',
+        updatedAt: timestamp,
+      };
+      agents[index] = agent;
+      return agent;
+    },
+  };
+  return { agents, store };
 }
 
 afterEach(async () => {
@@ -327,6 +388,102 @@ describe('Better Agent web runtime', () => {
       build_sha: 'a'.repeat(40),
       started_at: '2026-09-03T00:00:00.000Z',
     });
+  });
+
+  it('authenticates a workspace and persists the Agent draft-to-release lifecycle', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    expect(login.status).toBe(200);
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0];
+    expect(cookie).toMatch(/^ba_session=/u);
+    const authenticatedHeaders = { ...mutationHeaders, Cookie: cookie ?? '' };
+
+    const created = await localRequest(origin, '/better-agent/api/product/agents', {
+      body: JSON.stringify({
+        description: '研究公开资料',
+        instructions: '只使用可验证来源。',
+        model: 'gpt-5.6-sol',
+        name: '研究员',
+      }),
+      headers: authenticatedHeaders,
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    const createdAgent = ((await created.json()) as { agent: AgentDraft }).agent;
+    expect(createdAgent).toMatchObject({ revision: 1, status: 'draft' });
+
+    const updated = await localRequest(
+      origin,
+      `/better-agent/api/product/agents/${createdAgent.id}`,
+      {
+        body: JSON.stringify({
+          description: '研究并总结公开资料',
+          expected_revision: 1,
+          instructions: '只使用可验证来源，并标注出处。',
+          model: 'gpt-5.6-sol',
+          name: '高级研究员',
+        }),
+        headers: authenticatedHeaders,
+        method: 'PUT',
+      },
+    );
+    expect(updated.status).toBe(200);
+    expect(((await updated.json()) as { agent: AgentDraft }).agent.revision).toBe(2);
+
+    const published = await localRequest(
+      origin,
+      `/better-agent/api/product/agents/${createdAgent.id}/publish`,
+      {
+        body: JSON.stringify({ expected_revision: 2 }),
+        headers: authenticatedHeaders,
+        method: 'POST',
+      },
+    );
+    expect(published.status).toBe(200);
+    expect(((await published.json()) as { agent: AgentDraft }).agent).toMatchObject({
+      revision: 3,
+      status: 'published',
+    });
+
+    const listed = await localRequest(origin, '/better-agent/api/product/agents', {
+      headers: { Cookie: cookie ?? '' },
+    });
+    expect(listed.status).toBe(200);
+    expect(((await listed.json()) as { agents: AgentDraft[] }).agents).toHaveLength(1);
+  });
+
+  it('requires the product CSRF header before authenticating mutation routes', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const response = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'csrf_guard_required' });
   });
 
   it('does not reflect malformed build identity into the health contract', async () => {

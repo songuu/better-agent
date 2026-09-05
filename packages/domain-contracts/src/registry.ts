@@ -43,6 +43,7 @@ import {
   SubagentContextProjectionV1Schema,
 } from './agent-release-v1.js';
 import { AgentStrategyReleaseV1Schema } from './agent-strategy-release-v1.js';
+import { CompiledAgentPlanV1Schema } from './agent-plan-v1.js';
 import {
   AgentStrategySourceV1Schema,
   AgentStrategySourceCandidateV1Schema,
@@ -89,7 +90,18 @@ import {
   ConversationV1Schema,
 } from './conversation-v1.js';
 import { ImmutableDeploymentPolicyPinV1Schema } from './deployment-common-v1.js';
+import {
+  G1BoundedChildDelegationV1Schema,
+  G1JoinChildAdmissionV1Schema,
+  G1JoinChildSettlementV1Schema,
+} from './join-child-v1.js';
 import { ExperienceReleaseV1Schema } from './experience-release-v1.js';
+import {
+  EvaluationEvidenceBundleV1Schema,
+  EvaluationRunV1Schema,
+  EvaluationSuiteReleaseV1Schema,
+  ProductionEvaluationPolicyV1Schema,
+} from './evaluation-v1.js';
 import {
   FlowDeploymentActivePointerV1Schema,
   FlowDeploymentCredentialMappingV1Schema,
@@ -99,7 +111,12 @@ import {
   FlowDeploymentSecurityStateV1Schema,
   FlowDeploymentV1Schema,
 } from './flow-deployment-v1.js';
-import { FlowGateSpecV1Schema, FlowIrV1Schema } from './flow-ir-v1.js';
+import { FlowGateSpecV1Schema, FlowIrV1Schema, FlowLlmNodeConfigV1Schema } from './flow-ir-v1.js';
+import {
+  CompiledFlowPlanV1Schema,
+  FlowModelUsageReceiptV1Schema,
+  FlowStepCheckpointV1Schema,
+} from './flow-plan-v1.js';
 import { HumanGateResumeIntentV1Schema, HumanGateV1Schema } from './human-gate-v1.js';
 import {
   ArchiveApprovalReceiptV1Schema,
@@ -430,6 +447,17 @@ export const domainContractSchemaEntries = [
   },
   { schemaVersion: 'subagent-binding/1', schema: SubagentBindingConfigV1Schema },
   { schemaVersion: 'flow-ir/1', schema: FlowIrV1Schema },
+  { schemaVersion: 'flow-llm-node-config/1', schema: FlowLlmNodeConfigV1Schema },
+  { schemaVersion: 'compiled-flow-plan/1', schema: CompiledFlowPlanV1Schema },
+  { schemaVersion: 'compiled-agent-plan/1', schema: CompiledAgentPlanV1Schema },
+  {
+    schemaVersion: 'g1-bounded-child-delegation/1',
+    schema: G1BoundedChildDelegationV1Schema,
+  },
+  { schemaVersion: 'g1-join-child-admission/1', schema: G1JoinChildAdmissionV1Schema },
+  { schemaVersion: 'g1-join-child-settlement/1', schema: G1JoinChildSettlementV1Schema },
+  { schemaVersion: 'flow-step-checkpoint/1', schema: FlowStepCheckpointV1Schema },
+  { schemaVersion: 'flow-model-usage-receipt/1', schema: FlowModelUsageReceiptV1Schema },
   { schemaVersion: 'human-gate/1', schema: FlowGateSpecV1Schema },
   {
     schemaVersion: 'canonical-egress-rule/1',
@@ -463,6 +491,19 @@ export const domainContractSchemaEntries = [
   {
     schemaVersion: 'production-promotion-gate-decision/1',
     schema: ProductionPromotionGateDecisionV1Schema,
+  },
+  {
+    schemaVersion: 'production-evaluation-policy/1',
+    schema: ProductionEvaluationPolicyV1Schema,
+  },
+  {
+    schemaVersion: 'evaluation-suite-release/1',
+    schema: EvaluationSuiteReleaseV1Schema,
+  },
+  { schemaVersion: 'evaluation-run/1', schema: EvaluationRunV1Schema },
+  {
+    schemaVersion: 'evaluation-evidence-bundle/1',
+    schema: EvaluationEvidenceBundleV1Schema,
   },
   { schemaVersion: 'agent-strategy-start/1', schema: StrategyStartV1Schema },
   { schemaVersion: 'strategy-gate-request/1', schema: StrategyGateRequestV1Schema },

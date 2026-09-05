@@ -155,3 +155,4 @@ export const StrategyCheckpointV1Schema = z.strictObject({
 export type StrategyStartV1 = z.infer<typeof StrategyStartV1Schema>;
 export type StrategyDecisionV1 = z.infer<typeof StrategyDecisionV1Schema>;
 export type StrategyCheckpointV1 = z.infer<typeof StrategyCheckpointV1Schema>;
+export type StrategyTerminationReasonV1 = z.infer<typeof StrategyTerminationReasonV1Schema>;

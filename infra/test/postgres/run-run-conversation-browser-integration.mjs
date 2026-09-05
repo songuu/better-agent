@@ -8,13 +8,14 @@ import {
   renderUpMigrationSql,
   selectMigrationMilestone,
 } from '../../../packages/db/dist/index.js';
-
+import { runG1VerticalExtension } from './g1-vertical-extension.mjs';
 import { assertEqual, assertRejected, createPostgresHarness } from './harness.mjs';
 
 const harnessDirectory = path.dirname(fileURLToPath(import.meta.url));
 const composeFile = path.join(harnessDirectory, 'compose.yaml');
 const migrationDirectory = path.resolve(harnessDirectory, '../../../packages/db/migrations');
 const harness = createPostgresHarness('g006-run-conversation-browser');
+const isG1VerticalAcceptance = process.env.BETTER_AGENT_G1_VERTICAL === '1';
 
 function fixtureUuid(index) {
   return `b6000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`;
@@ -40,6 +41,7 @@ const ids = Object.freeze({
   admin: fixtureUuid(1),
   ownerAttestation: fixtureUuid(2),
   workspace: fixtureUuid(3),
+  controlAttestation: fixtureUuid(4),
   agent: fixtureUuid(10),
   agentDraft: fixtureUuid(11),
   agentRelease: fixtureUuid(12),
@@ -67,6 +69,9 @@ const ids = Object.freeze({
   session2: fixtureUuid(61),
   sessionFence: fixtureUuid(62),
   principalFenceSession: fixtureUuid(63),
+  publishCredential: fixtureUuid(64),
+  publishCredentialKey: fixtureUuid(65),
+  browserExchangeGrant: fixtureUuid(66),
   conversation: fixtureUuid(70),
   conversationState: fixtureUuid(71),
   raceConversation: fixtureUuid(80),
@@ -76,6 +81,7 @@ const ids = Object.freeze({
 const material = Object.freeze({
   issuerSubject: randomBytes(32).toString('hex'),
   ownerAttestation: randomBytes(32).toString('hex'),
+  controlAttestation: randomBytes(32).toString('hex'),
   principal1Subject: randomBytes(32).toString('hex'),
   principal2Subject: randomBytes(32).toString('hex'),
   assertion1Nonce: randomBytes(32).toString('hex'),
@@ -86,6 +92,7 @@ const material = Object.freeze({
   session2Verifier: randomBytes(32).toString('hex'),
   sessionFenceVerifier: randomBytes(32).toString('hex'),
   principalFenceVerifier: randomBytes(32).toString('hex'),
+  publishCredentialVerifier: randomBytes(32).toString('hex'),
 });
 
 const hashes = Object.freeze({
@@ -161,6 +168,15 @@ COMMIT;`;
 
 function ownerPsql(owner, body, options = {}) {
   return harness.psql('ba_migrator_test', ownerControlContextSql(owner, body), options);
+}
+
+function controlContextSql(body) {
+  return `BEGIN;
+SELECT auth.establish_control_workspace_context(
+  '${ids.controlAttestation}', ${bytea(material.controlAttestation)}
+);
+${body}
+COMMIT;`;
 }
 
 function openInteractivePsql(role) {
@@ -491,7 +507,9 @@ function acceptanceFact(base, conversationId, idempotencyKey, acceptedAt) {
     next_variables_redacted: { turn: 1 },
     principal_kind: 'end_user',
     receipt_id: fixtureUuid(base + 3),
-    reservation_expires_at: '2026-08-28T12:00:00.000Z',
+    reservation_expires_at: isG1VerticalAcceptance
+      ? new Date(Date.now() + 15 * 60_000).toISOString()
+      : '2026-08-28T12:00:00.000Z',
     reservation_id: fixtureUuid(base + 7),
     reserve_billing_intent_hash: hash(`reserve-intent:${base}`),
     reserve_charge_attribution_hash: acceptedPlanHash,
@@ -622,11 +640,9 @@ function namespaceProbeBody(fact) {
 
 async function installFreshSchema() {
   const loadedMigrations = await loadMigrations(migrationDirectory);
-  const migrations = selectMigrationMilestone(
-    loadedMigrations,
-    '004',
-    'G0-06 Agent Chat/browser integration',
-  );
+  const migrations = isG1VerticalAcceptance
+    ? loadedMigrations
+    : selectMigrationMilestone(loadedMigrations, '004', 'G0-06 Agent Chat/browser integration');
   await harness.psql('ba_migrator_test', renderUpMigrationSql(migrations), {
     echoErrors: true,
   });
@@ -644,8 +660,12 @@ async function installFreshSchema() {
       `SELECT string_agg(version::text, ',' ORDER BY version)
 FROM better_agent_migrations.schema_migrations;`,
     ),
-    '0,1,2,3,4',
-    'fresh database applied exactly migrations 000 through 004',
+    isG1VerticalAcceptance
+      ? loadedMigrations.map((migration) => String(migration.version)).join(',')
+      : '0,1,2,3,4',
+    isG1VerticalAcceptance
+      ? 'fresh G1 acceptance database applied the exact migration set'
+      : 'fresh database applied exactly migrations 000 through 004',
   );
   return migrations;
 }
@@ -672,10 +692,47 @@ VALUES ('${ids.workspace}', '${ids.admin}', 'admin');`,
   clock_timestamp() + interval '10 minutes'
 );`,
   );
+  await harness.psql(
+    'ba_management_issuer_test',
+    `SELECT auth.issue_control_session_attestation(
+  '${ids.controlAttestation}',
+  '${ids.workspace}',
+  '${ids.admin}',
+  'ba_control_test',
+  'g006-agent-chat-control-idp',
+  ${bytea(material.issuerSubject)},
+  ${bytea(material.controlAttestation)},
+  clock_timestamp() + interval '10 minutes'
+);`,
+  );
 }
 
 async function publishBrowserDeployment() {
   const fixtures = resourceFixtures();
+  const browserExchangeGrant = {
+    agent_deployment_id: ids.deployment,
+    authorization_epoch: 0,
+    credential_id: ids.publishCredential,
+    credential_kind: 'publish',
+    entry_audience: 'browser_session_exchange',
+    entry_grant_id: ids.browserExchangeGrant,
+    ingress_channel: 'browser',
+    principal_mode: 'issuer_asserted_end_user',
+    schema_version: 'agent-deployment-entry-grant/1',
+    scope: 'browser-session:exchange',
+    status: 'ACTIVE',
+    target_cardinality: 'exactly_one_agent_deployment',
+    workspace_id: ids.workspace,
+  };
+  await harness.psql(
+    'ba_control_test',
+    controlContextSql(`SELECT auth.create_api_credential(
+  '${ids.publishCredential}', '${ids.publishCredentialKey}', 'g006-browser-publish',
+  'publish', ${bytea(material.publishCredentialVerifier)},
+  ARRAY['browser-session:exchange']::text[], ARRAY['https://app.example']::text[],
+  NULL, NULL, NULL
+);`),
+  );
   await ownerPsql(
     'ba_authorization_owner',
     `SELECT app.create_publishable_resource_root('AGENT_RELEASE', '${ids.agent}');
@@ -721,6 +778,10 @@ SELECT app.promote_agent_deployment(
 );
 SELECT app.transition_agent_deployment_security('${ids.deployment}', 0, 'ACTIVE');`,
   );
+  await ownerPsql(
+    'ba_authorization_owner',
+    `SELECT app.create_agent_deployment_entry_grant(${jsonb(browserExchangeGrant)});`,
+  );
 }
 
 async function seedBrowserIdentityFacts() {
@@ -729,12 +790,6 @@ async function seedBrowserIdentityFacts() {
     [ids.assertion2, ids.principal1, material.principal1Subject, material.assertion2Nonce],
     [ids.assertion3, ids.principal1, material.principal1Subject, material.assertion3Nonce],
     [ids.assertion4, ids.principal2, material.principal2Subject, material.assertion4Nonce],
-  ];
-  const sessions = [
-    [ids.session1, ids.principal1, ids.assertion1],
-    [ids.session2, ids.principal1, ids.assertion2],
-    [ids.sessionFence, ids.principal1, ids.assertion3],
-    [ids.principalFenceSession, ids.principal2, ids.assertion4],
   ];
   await ownerPsql(
     'ba_authorization_owner',
@@ -759,61 +814,38 @@ INSERT INTO public.end_user_principals (
   ('${ids.principal1}', '${ids.workspace}', '${ids.issuerConfig}',
    'https://issuer.example', ${bytea(material.principal1Subject)}, 'active', 0),
   ('${ids.principal2}', '${ids.workspace}', '${ids.issuerConfig}',
-   'https://issuer.example', ${bytea(material.principal2Subject)}, 'active', 0);
-INSERT INTO public.browser_subject_assertion_uses (
-  id, workspace_id, issuer_config_id, principal_id, assertion_nonce_hash,
-  subject_hash, audience, canonical_origin, key_version,
-  assertion_issued_at, assertion_expires_at
-) VALUES
-  ${assertions
-    .map(
-      ([assertionId, principalId, subjectHash, nonceHash]) =>
-        `('${assertionId}', '${ids.workspace}', '${ids.issuerConfig}', '${principalId}',
-   ${bytea(nonceHash)}, ${bytea(subjectHash)}, 'better-agent:browser-exchange',
-   'https://app.example', 1, clock_timestamp() - interval '1 second',
-   clock_timestamp() + interval '5 minutes')`,
-    )
-    .join(',\n  ')};
-INSERT INTO public.browser_sessions (
-  id, workspace_id, agent_deployment_id, principal_id, assertion_use_id,
-  client_channel, canonical_origin, token_audience,
-  observed_principal_session_epoch, observed_deployment_revoke_epoch,
-  session_epoch, status, issued_at, expires_at
-) VALUES
-  ${sessions
-    .map(
-      ([sessionId, principalId, assertionId]) =>
-        `('${sessionId}', '${ids.workspace}', '${ids.deployment}', '${principalId}',
-   '${assertionId}', 'WEB_SDK', 'https://app.example', 'agent_browser_api',
-   0, 1, 0, 'ACTIVE', clock_timestamp(), clock_timestamp() + interval '10 minutes')`,
-    )
-    .join(',\n  ')};`,
+   'https://issuer.example', ${bytea(material.principal2Subject)}, 'active', 0);`,
   );
 
-  const verifierRows = [
-    [ids.session1, material.session1Verifier],
-    [ids.session2, material.session2Verifier],
-    [ids.sessionFence, material.sessionFenceVerifier],
-    [ids.principalFenceSession, material.principalFenceVerifier],
+  const sessions = [
+    [ids.session1, material.session1Verifier, ...assertions[0]],
+    [ids.session2, material.session2Verifier, ...assertions[1]],
+    [ids.sessionFence, material.sessionFenceVerifier, ...assertions[2]],
+    [ids.principalFenceSession, material.principalFenceVerifier, ...assertions[3]],
   ];
-  await ownerPsql(
-    'ba_auth_owner',
-    `INSERT INTO auth.browser_session_auth_index (
-  browser_session_id, workspace_id, verifier_hmac, verifier_algorithm,
-  status, session_epoch, expires_at
-)
-SELECT session_row.id, session_row.workspace_id, fixture.verifier_hmac,
-       'hmac-sha-256', 'ACTIVE', session_row.session_epoch,
-       session_row.expires_at
-FROM (VALUES
-  ${verifierRows
-    .map(([sessionId, verifier]) => `('${sessionId}'::uuid, ${bytea(verifier)})`)
-    .join(',\n  ')}
-) AS fixture(session_id, verifier_hmac)
-JOIN public.browser_sessions AS session_row
-  ON session_row.id = fixture.session_id
- AND session_row.workspace_id = '${ids.workspace}';`,
-  );
+  for (const [sessionId, sessionVerifier, assertionId, , subjectHash, nonceHash] of sessions) {
+    assertEqual(
+      await harness.queryScalar(
+        'ba_assertion_verifier_test',
+        `SELECT exchange.browser_session_id
+FROM auth.authenticate_publish_exchange_credential(
+  '${ids.publishCredentialKey}', ${bytea(material.publishCredentialVerifier)}
+) AS authenticated
+CROSS JOIN LATERAL auth.exchange_browser_subject_assertion_for_session(
+  '${sessionId}', ${bytea(sessionVerifier)},
+  CASE WHEN authenticated.workspace_id = '${ids.workspace}'::uuid
+    THEN 'g006-browser-agent' ELSE NULL END,
+  'WEB_SDK', 'https://app.example', 'agent_browser_api',
+  clock_timestamp() + interval '4 minutes 40 seconds', '${ids.issuerConfig}',
+  'https://issuer.example', ${bytea(subjectHash)}, 'better-agent:browser-exchange', 1,
+  ${bytea(nonceHash)}, clock_timestamp() - interval '1 second',
+  clock_timestamp() + interval '4 minutes 50 seconds'
+) AS exchange;`,
+      ),
+      sessionId,
+      `browser assertion ${assertionId} exchanges atomically`,
+    );
+  }
 }
 
 async function assertOwnerOnlyAgentChatPath() {
@@ -831,7 +863,7 @@ async function assertOwnerOnlyAgentChatPath() {
     'Conversation creation and Agent Chat acceptance remain owner-only',
   );
 
-  const acceptedAt = '2026-08-27T10:00:00.000Z';
+  const acceptedAt = isG1VerticalAcceptance ? new Date().toISOString() : '2026-08-27T10:00:00.000Z';
   const fact = acceptanceFact(100, ids.conversation, 'agent-chat-primary', acceptedAt);
   await ownerPsql(
     'ba_run_owner',
@@ -1580,10 +1612,31 @@ async function main() {
   await publishBrowserDeployment();
   await seedBrowserIdentityFacts();
   const primaryFact = await assertOwnerOnlyAgentChatPath();
-  const raceWinnerFact = await assertConversationCasRace();
-  await promotePointerAwayFromAcceptedRevision();
-  await assertBrowserNamespaceReadEventsAndCancel(primaryFact, raceWinnerFact);
-  await assertLifecycleFencesLeaveRunFactsUntouched(primaryFact);
+  if (isG1VerticalAcceptance) {
+    await runG1VerticalExtension({
+      harness,
+      fact: primaryFact,
+      ownerPsql,
+      controlContextSql,
+      workspaceId: ids.workspace,
+      browserSessionId: ids.session1,
+      browserSessionVerifier: material.session1Verifier,
+      replayBrowserSessionId: ids.session2,
+      replayBrowserSessionVerifier: material.session2Verifier,
+      browserIdentityBlock,
+      principalId: ids.principal1,
+      agentId: ids.agent,
+      agentReleaseId: ids.agentRelease,
+      agentContractHash: hashes.agent,
+      publishCredentialKey: ids.publishCredentialKey,
+      publishCredentialVerifier: material.publishCredentialVerifier,
+    });
+  } else {
+    const raceWinnerFact = await assertConversationCasRace();
+    await promotePointerAwayFromAcceptedRevision();
+    await assertBrowserNamespaceReadEventsAndCancel(primaryFact, raceWinnerFact);
+    await assertLifecycleFencesLeaveRunFactsUntouched(primaryFact);
+  }
   await assertNoTemporaryAclOrSecretLogLeak();
 
   process.stdout.write(

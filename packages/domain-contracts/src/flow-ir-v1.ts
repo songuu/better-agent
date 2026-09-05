@@ -118,7 +118,6 @@ const flowNodeCommonShape = {
 const actionNodeTypeSchema = z.enum([
   'start',
   'output',
-  'llm',
   'api',
   'code',
   'knowledge',
@@ -126,6 +125,28 @@ const actionNodeTypeSchema = z.enum([
   'intent',
   'classifier',
 ]);
+
+export const FlowLlmNodeConfigV1Schema = z
+  .strictObject({
+    schema_version: z.literal('flow-llm-node-config/1'),
+    model: PublishedResourcePinV1Schema.extend({
+      published_resource_kind: z.literal('SYSTEM_RELEASE'),
+    }),
+    credential_requirement_id: NonEmptyStringSchema,
+    prompt: ValueBindingV1Schema,
+    max_amount_credits: z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/u),
+    max_input_tokens: z.number().int().min(1).max(1_000_000),
+    max_output_tokens: z.number().int().min(1).max(1_000_000),
+    temperature: z.number().min(0).max(2),
+  })
+  .refine(
+    (config) => config.max_input_tokens + config.max_output_tokens <= 1_000_000,
+    'combined LLM token budget exceeds the G1 limit',
+  )
+  .refine(
+    (config) => BigInt(config.max_amount_credits) <= 9_223_372_036_854_775_807n,
+    'LLM credit budget exceeds the PostgreSQL bigint limit',
+  );
 
 export const FlowGraphV1Schema: z.ZodType<FlowGraphV1> = z.lazy(() =>
   z
@@ -304,6 +325,11 @@ export const FlowNodeV1Schema: z.ZodType<FlowNodeV1> = z.lazy(() =>
     }),
     z.strictObject({
       ...flowNodeCommonShape,
+      type: z.literal('llm'),
+      config: FlowLlmNodeConfigV1Schema,
+    }),
+    z.strictObject({
+      ...flowNodeCommonShape,
       type: z.literal('branch'),
       config: BranchConfigV1Schema,
     }),
@@ -376,6 +402,37 @@ export const FlowIrV1Schema = z
       }
       graphIds.add(graph.graph_id);
       for (const node of graph.nodes) {
+        if (node.type === 'llm') {
+          const config = node.config as z.infer<typeof FlowLlmNodeConfigV1Schema>;
+          const model = config.model;
+          const hasModel = flow.resources.some(
+            (pin) =>
+              pin.workspace_id === model.workspace_id &&
+              pin.published_resource_kind === model.published_resource_kind &&
+              pin.resource_id === model.resource_id &&
+              pin.resource_version_id === model.resource_version_id &&
+              pin.contract_hash === model.contract_hash &&
+              pin.binding_mode === model.binding_mode,
+          );
+          if (!hasModel) {
+            addCustomIssue(
+              ctx,
+              ['entry_graph'],
+              `LLM node ${node.node_id} model pin is absent from Flow resources`,
+            );
+          }
+          if (
+            !flow.credential_requirements.some(
+              (requirement) => requirement.requirement_id === config.credential_requirement_id,
+            )
+          ) {
+            addCustomIssue(
+              ctx,
+              ['entry_graph'],
+              `LLM node ${node.node_id} credential requirement is absent`,
+            );
+          }
+        }
         if (node.type === 'loop') pending.push((node.config as { body: FlowGraphV1 }).body);
         if (node.type === 'branch') {
           const config = node.config as {

@@ -9,6 +9,7 @@ User=better-agent-web
 Group=better-agent-web
 WorkingDirectory=/opt/better-agent/web-current/apps/web
 EnvironmentFile=/opt/better-agent/shared/web.env
+EnvironmentFile=/opt/better-agent/shared/postgres/env/product.env
 ExecStart=/usr/bin/node /opt/better-agent/web-current/apps/web/dist/server.js
 Restart=on-failure
 RestartSec=2s

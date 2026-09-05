@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -57,6 +57,9 @@ const privateRoot = configuredPrivateRoot
 const dataDirectory = path.join(privateRoot, 'data');
 const secretsDirectory = path.join(privateRoot, 'secrets');
 const environmentDirectory = path.join(privateRoot, 'env');
+const expectedMigrationCount = fs
+  .readdirSync(migrationDirectory)
+  .filter((entry) => /^[0-9]{3}_[a-z0-9_]+\.up\.sql$/u.test(entry)).length;
 
 function fail(message) {
   throw new Error(`business PostgreSQL configuration failed: ${message}`);
@@ -158,7 +161,9 @@ function assertPrivateRootBoundary() {
   const repositoryRelative = path.relative(repositoryRoot, privateRoot);
   if (
     repositoryRelative === '' ||
-    (!repositoryRelative.startsWith(`..${path.sep}`) && repositoryRelative !== '..')
+    (!path.isAbsolute(repositoryRelative) &&
+      !repositoryRelative.startsWith(`..${path.sep}`) &&
+      repositoryRelative !== '..')
   ) {
     fail('private PostgreSQL root must remain outside the repository');
   }
@@ -194,6 +199,56 @@ function loadOrCreateCredentials() {
     writePrivateEnvironment(path.join(environmentDirectory, `${key}.env`), user, password);
   }
   return credentials;
+}
+
+function loadOrCreateProductEnvironment(credentials) {
+  const runtime = credentials.get('runtime');
+  if (!runtime) fail('runtime credential is required for the product environment');
+  const workspaceId = ensurePrivateFile(path.join(secretsDirectory, 'product-workspace-id'), () =>
+    randomUUID(),
+  );
+  const actorId = ensurePrivateFile(path.join(secretsDirectory, 'product-actor-id'), () =>
+    randomUUID(),
+  );
+  const adminPassword = ensurePrivateFile(
+    path.join(secretsDirectory, 'product-admin.password'),
+    () => randomBytes(24).toString('base64url'),
+  );
+  const sessionSecret = ensurePrivateFile(
+    path.join(secretsDirectory, 'product-session.secret'),
+    () => randomBytes(32).toString('base64url'),
+  );
+  if (
+    ![workspaceId, actorId].every((value) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value),
+    )
+  ) {
+    fail('invalid product identity shape');
+  }
+  const file = path.join(environmentDirectory, 'product.env');
+  const contents = [
+    `PGHOST=${HOST}`,
+    `PGPORT=${PORT}`,
+    `PGDATABASE=${DATABASE_NAME}`,
+    `PGUSER=${runtime.user}`,
+    `PGPASSWORD=${runtime.password}`,
+    'PGSSLMODE=disable',
+    'PGCONNECT_TIMEOUT=5',
+    `BETTER_AGENT_PRODUCT_WORKSPACE_ID=${workspaceId}`,
+    `BETTER_AGENT_PRODUCT_ACTOR_ID=${actorId}`,
+    `BETTER_AGENT_ADMIN_PASSWORD=${adminPassword}`,
+    `BETTER_AGENT_SESSION_SECRET=${sessionSecret}`,
+    '',
+  ].join('\n');
+  const temporary = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporary, contents, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+  return { actorId, workspaceId };
 }
 
 export function renderLoginProvisioningSql(credentials) {
@@ -458,7 +513,11 @@ async function renderMigrations() {
     pathToFileURL(path.join(repositoryRoot, 'packages', 'db', 'dist', 'migrations', 'render.js'))
   );
   const migrations = await loadModule.loadMigrations(migrationDirectory);
-  return renderModule.renderUpMigrationSql(migrations);
+  // Individual migrations temporarily assume their object-owner role and then RESET ROLE.
+  // Reassert the NOLOGIN migrator owner so the next migration can delegate schema CREATE.
+  return renderModule
+    .renderUpMigrationSql(migrations)
+    .replaceAll('\nRESET ROLE;', '\nRESET ROLE;\nSET LOCAL ROLE ba_migrator;');
 }
 
 function verifyProvisioning() {
@@ -490,7 +549,9 @@ function verifyProvisioning() {
   if (!String(result.server_version).startsWith('16.')) fail('PostgreSQL 16 verification failed');
   if (result.vector_version !== '0.8.1') fail('pgvector 0.8.1 verification failed');
   if (!result.pgcrypto_version) fail('pgcrypto verification failed');
-  if (Number(result.migration_count) !== 6) fail('expected exactly six applied migrations');
+  if (Number(result.migration_count) !== expectedMigrationCount) {
+    fail(`expected exactly ${String(expectedMigrationCount)} applied migrations`);
+  }
   if (Number(result.login_count) !== expectedLogins) fail('login inventory verification failed');
   if (Number(result.membership_count) !== LOGIN_ROLES.length) {
     fail('managed capability membership count verification failed');
@@ -518,6 +579,12 @@ async function up() {
   psqlAs(ADMIN_USER, renderMigrationLedgerPreflightSql());
   psqlAs('better_agent_migrator', `SET ROLE ba_migrator;\n${await renderMigrations()}`);
   psqlAs(ADMIN_USER, renderMigrationLedgerOwnershipSql());
+  const product = loadOrCreateProductEnvironment(credentials);
+  psqlAs(
+    ADMIN_USER,
+    `INSERT INTO public.workspaces (id, name) VALUES (${sqlLiteral(product.workspaceId)}::uuid, '独立工作区') ON CONFLICT (id) DO NOTHING;`,
+  );
+  hardenPrivateTree();
   const result = verifyProvisioning();
   const authenticatedLoginCount = verifyTcpAuthentication(credentials);
   process.stdout.write(

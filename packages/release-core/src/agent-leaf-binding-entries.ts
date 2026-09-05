@@ -188,7 +188,7 @@ export function prepareAgentLeafBindingEntrySet(
   policyInput: unknown,
 ): PreparedAgentLeafBindingEntrySetV1 {
   const dependencies = boundedDataSnapshot(dependencyInputs, 'source');
-  if (!Array.isArray(dependencies) || dependencies.length === 0) notClosed('$.dependencies');
+  if (!Array.isArray(dependencies)) notClosed('$.dependencies');
   const source = prepareExecutableSource(rootInput);
   if (source.root.pin.published_resource_kind !== 'AGENT_RELEASE') notClosed('$.root');
   const document = source.preimage.document as unknown as {
@@ -202,7 +202,10 @@ export function prepareAgentLeafBindingEntrySet(
       binding.kind === 'plugin' ||
       (binding.kind === 'subagent' && binding.target_kind === 'external_a2a'),
   );
-  if (leafBindings.length === 0) notClosed('$.root.capability_bindings');
+  // A tool-free Agent still compiles its Strategy/Instruction assembly graph.
+  // An empty leaf slice cannot stand in for a composite-only Agent.
+  if (leafBindings.length === 0 && document.capability_bindings.length !== 0)
+    notClosed('$.root.capability_bindings');
   const expected = leafBindings.map((binding) => {
     const path = rootPaths.bindings.find(
       (candidate) => candidate.binding_id === binding.binding_id,

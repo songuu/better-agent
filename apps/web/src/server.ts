@@ -1,7 +1,14 @@
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
+
+import {
+  createPostgresProductStore,
+  type ProductStore,
+  validateAgentInput,
+} from './product-store.js';
 
 export const WEB_BASE_PATH = '/better-agent/';
 
@@ -22,9 +29,77 @@ interface StaticAsset {
 }
 
 export interface BetterAgentWebOptions {
+  readonly actorId?: string;
+  readonly adminPassword?: string;
   readonly buildSha?: string;
   readonly now?: () => Date;
+  readonly productStore?: ProductStore;
   readonly publicRoot?: string;
+  readonly secureCookies?: boolean;
+  readonly sessionSecret?: string;
+  readonly workspaceId?: string;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
+function safeEqualText(left: string, right: string): boolean {
+  const a = createHash('sha256').update(left).digest();
+  const b = createHash('sha256').update(right).digest();
+  return timingSafeEqual(a, b);
+}
+
+function sessionToken(workspaceId: string, actorId: string, secret: string, now: Date): string {
+  const payload = Buffer.from(
+    JSON.stringify({ actorId, expiresAt: now.valueOf() + 8 * 60 * 60 * 1000, workspaceId }),
+  ).toString('base64url');
+  const signature = createHmac('sha256', secret).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function hasSession(
+  request: IncomingMessage,
+  workspaceId: string,
+  actorId: string,
+  secret: string,
+  currentTime: Date,
+): boolean {
+  const cookie = request.headers.cookie
+    ?.split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith('ba_session='));
+  const token = cookie?.slice('ba_session='.length);
+  if (token === undefined) return false;
+  const [payload, signature, extra] = token.split('.');
+  if (payload === undefined || signature === undefined || extra !== undefined) return false;
+  const expected = createHmac('sha256', secret).update(payload).digest('base64url');
+  if (!safeEqualText(signature, expected)) return false;
+  try {
+    const value = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<
+      string,
+      unknown
+    >;
+    return (
+      value.workspaceId === workspaceId &&
+      value.actorId === actorId &&
+      typeof value.expiresAt === 'number' &&
+      value.expiresAt > currentTime.valueOf()
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.byteLength;
+    if (size > 64 * 1024) throw new Error('request_body_too_large');
+    chunks.push(bytes);
+  }
+  if (chunks.length === 0) throw new Error('request_body_required');
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 }
 
 export function isInvokedEntrypoint(moduleUrl: URL, invokedPath: string | undefined): boolean {
@@ -102,7 +177,132 @@ export async function createBetterAgentWebServer(
   const publicRoot = options.publicRoot ?? fileURLToPath(new URL('../public', import.meta.url));
   const assets = await loadAssets(publicRoot);
   const buildSha = normalizedBuildSha(options.buildSha ?? process.env.BETTER_AGENT_BUILD_SHA);
-  const startedAt = (options.now ?? (() => new Date()))().toISOString();
+  const now = options.now ?? (() => new Date());
+  const startedAt = now().toISOString();
+  const workspaceId = options.workspaceId ?? process.env.BETTER_AGENT_PRODUCT_WORKSPACE_ID;
+  const actorId = options.actorId ?? process.env.BETTER_AGENT_PRODUCT_ACTOR_ID;
+  const adminPassword = options.adminPassword ?? process.env.BETTER_AGENT_ADMIN_PASSWORD;
+  const sessionSecret = options.sessionSecret ?? process.env.BETTER_AGENT_SESSION_SECRET;
+  const secureCookies =
+    options.secureCookies ?? process.env.BETTER_AGENT_SECURE_COOKIES !== 'false';
+  const databaseUrl = process.env.BETTER_AGENT_RUNTIME_DATABASE_URL;
+  const hasPostgresEnvironment = databaseUrl !== undefined || process.env.PGHOST !== undefined;
+  const productStore =
+    options.productStore ??
+    (hasPostgresEnvironment ? await createPostgresProductStore(databaseUrl) : undefined);
+  const productConfigured =
+    productStore !== undefined &&
+    workspaceId !== undefined &&
+    actorId !== undefined &&
+    adminPassword !== undefined &&
+    sessionSecret !== undefined &&
+    UUID.test(workspaceId) &&
+    UUID.test(actorId) &&
+    adminPassword.length >= 12 &&
+    sessionSecret.length >= 32;
+
+  const handleProductApi = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+    path: string,
+  ): Promise<boolean> => {
+    if (!path.startsWith(`${WEB_BASE_PATH}api/product/`)) return false;
+    if (
+      !productConfigured ||
+      productStore === undefined ||
+      workspaceId === undefined ||
+      actorId === undefined ||
+      adminPassword === undefined ||
+      sessionSecret === undefined
+    ) {
+      sendJson(request, response, 503, { error: 'product_runtime_not_configured' });
+      return true;
+    }
+    const isMutation = request.method === 'POST' || request.method === 'PUT';
+    if (isMutation && request.headers['x-better-agent-csrf'] !== '1') {
+      sendJson(request, response, 403, { error: 'csrf_guard_required' });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/login` && request.method === 'POST') {
+      const payload = (await readJsonBody(request)) as Record<string, unknown>;
+      if (typeof payload.password !== 'string' || !safeEqualText(payload.password, adminPassword)) {
+        sendJson(request, response, 401, { error: 'invalid_credentials' });
+        return true;
+      }
+      response.setHeader(
+        'Set-Cookie',
+        `ba_session=${sessionToken(workspaceId, actorId, sessionSecret, now())}; Path=${WEB_BASE_PATH}; HttpOnly;${secureCookies ? ' Secure;' : ''} SameSite=Strict; Max-Age=28800`,
+      );
+      sendJson(request, response, 200, {
+        actor_id: actorId,
+        authenticated: true,
+        workspace_id: workspaceId,
+      });
+      return true;
+    }
+    if (!hasSession(request, workspaceId, actorId, sessionSecret, now())) {
+      sendJson(request, response, 401, { error: 'authentication_required' });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/session` && request.method === 'GET') {
+      sendJson(request, response, 200, {
+        actor_id: actorId,
+        authenticated: true,
+        workspace_id: workspaceId,
+      });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/agents` && request.method === 'GET') {
+      sendJson(request, response, 200, { agents: await productStore.listAgents(workspaceId) });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/agents` && request.method === 'POST') {
+      const agent = await productStore.createAgent(
+        workspaceId,
+        actorId,
+        validateAgentInput(await readJsonBody(request)),
+      );
+      sendJson(request, response, 201, { agent });
+      return true;
+    }
+    const match = new RegExp(
+      `^${WEB_BASE_PATH}api/product/agents/([0-9a-f-]{36})(/publish)?$`,
+      'u',
+    ).exec(path);
+    if (match !== null && UUID.test(match[1] ?? '')) {
+      if (match[2] === '/publish' && request.method === 'POST') {
+        const payload = (await readJsonBody(request)) as Record<string, unknown>;
+        const expectedRevision = payload.expected_revision;
+        if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1)
+          throw new Error('invalid_expected_revision');
+        const agent = await productStore.publishAgent(
+          workspaceId,
+          actorId,
+          match[1] as string,
+          Number(expectedRevision),
+        );
+        sendJson(request, response, 200, { agent });
+        return true;
+      }
+      if (match[2] === undefined && request.method === 'PUT') {
+        const payload = (await readJsonBody(request)) as Record<string, unknown>;
+        const expectedRevision = payload.expected_revision;
+        if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1)
+          throw new Error('invalid_expected_revision');
+        const { expected_revision: _, ...agentPayload } = payload;
+        const agent = await productStore.updateAgent(
+          workspaceId,
+          match[1] as string,
+          Number(expectedRevision),
+          validateAgentInput(agentPayload),
+        );
+        sendJson(request, response, 200, { agent });
+        return true;
+      }
+    }
+    sendJson(request, response, 404, { error: 'product_route_not_found' });
+    return true;
+  };
 
   const server = createServer(
     { maxHeaderSize: 16_384, requireHostHeader: true },
@@ -110,6 +310,22 @@ export async function createBetterAgentWebServer(
       const path = requestPath(request);
       if (path === null) {
         sendJson(request, response, 400, { error: 'invalid_request_path' });
+        return;
+      }
+      if (path.startsWith(`${WEB_BASE_PATH}api/product/`)) {
+        void handleProductApi(request, response, path).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'unknown_product_error';
+          const status = message.includes('revision conflict')
+            ? 409
+            : message.startsWith('invalid_') ||
+                message.includes('payload') ||
+                message.includes('request_body')
+              ? 400
+              : 500;
+          sendJson(request, response, status, {
+            error: status === 500 ? 'product_operation_failed' : message,
+          });
+        });
         return;
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') {

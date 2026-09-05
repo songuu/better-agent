@@ -324,7 +324,7 @@ export function validateDeploymentWorkflow(workflow) {
   const workflowDigest = createHash('sha256')
     .update(workflow.replaceAll('\r\n', '\n'))
     .digest('hex');
-  if (workflowDigest !== '81a7e5658e7af0c642a14cfedd1a8899407dc54fca0c2b5daf8690bd2fd6bbec') {
+  if (workflowDigest !== '9159cfad78359a58de1288ec06ea7e9cfb449cd885e367284651b373e94e554d') {
     errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
   }
   const definition = parseCiWorkflow(workflow, errors);
@@ -417,6 +417,8 @@ export function validateDeploymentWorkflow(workflow) {
   for (const requiredText of [
     'pnpm architecture:gate',
     'pnpm --filter @better-agent/web build',
+    'pnpm --config.inject-workspace-packages=true --filter @better-agent/web',
+    'web-runtime/node_modules/pg/package.json',
     'apps/web/dist/server.js',
     'apps/web/public/index.html',
     'deploy/systemd/better-agent-web.service',

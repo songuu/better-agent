@@ -13,6 +13,530 @@
   --display: "Bahnschrift Condensed", "Arial Narrow", "Microsoft YaHei", sans-serif;
 }
 
+/* Product Studio — dense industrial control plane. */
+.studio-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  background: #07110f;
+  color: #e8efe9;
+  font-family: "IBM Plex Mono", "Noto Sans SC", monospace;
+  background-image:
+    radial-gradient(circle at 78% 8%, rgba(65, 245, 172, 0.08), transparent 30%),
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size:
+    auto,
+    32px 32px,
+    32px 32px;
+}
+.studio-rail {
+  border-right: 1px solid #25332e;
+  padding: 28px 20px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: rgba(4, 12, 10, 0.9);
+}
+.studio-rail .brand {
+  color: #f5faf6;
+  text-decoration: none;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+.studio-rail .brand-mark {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #45f2ac;
+  display: grid;
+  place-items: center;
+  transform: rotate(45deg);
+}
+.studio-rail .brand-mark i {
+  display: block;
+  width: 3px;
+  height: 3px;
+  background: #45f2ac;
+  margin: 1px;
+}
+.studio-rail .brand-mark i:first-child {
+  width: 10px;
+}
+.rail-caption {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: #61736b;
+  margin: 54px 8px 14px;
+}
+.studio-nav {
+  display: grid;
+  gap: 4px;
+}
+.studio-nav button {
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: #778a81;
+  text-align: left;
+  padding: 14px 12px;
+  font: 600 12px inherit;
+  letter-spacing: 0.02em;
+}
+.studio-nav button span {
+  display: inline-block;
+  width: 34px;
+  font-size: 9px;
+  color: #45574f;
+}
+.studio-nav button.is-active {
+  color: #e9fff2;
+  border-left-color: #45f2ac;
+  background: linear-gradient(90deg, rgba(69, 242, 172, 0.12), transparent);
+}
+.studio-nav button:disabled {
+  opacity: 0.48;
+}
+.rail-status {
+  margin-top: auto;
+  border-top: 1px solid #24322d;
+  padding: 22px 8px 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.rail-status i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #45f2ac;
+  box-shadow: 0 0 18px #45f2ac;
+}
+.rail-status small {
+  display: block;
+  color: #61736b;
+  font-size: 8px;
+  letter-spacing: 0.15em;
+}
+.rail-status b {
+  font-size: 11px;
+}
+.studio-main {
+  min-width: 0;
+  padding: 30px 34px;
+}
+.studio-topbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #26332f;
+}
+.studio-topbar p,
+.agent-form header p,
+.inspector > p {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: #71827b;
+  margin: 0 0 8px;
+}
+.studio-topbar h1 {
+  font:
+    700 30px / 1 "Arial Narrow",
+    "Noto Sans SC",
+    sans-serif;
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.top-actions span {
+  font-size: 9px;
+  color: #71827b;
+}
+.button {
+  border: 1px solid #3b4b44;
+  padding: 10px 16px;
+  background: transparent;
+  color: #dce7e0;
+  font: 700 11px inherit;
+  cursor: pointer;
+}
+.button:hover {
+  border-color: #45f2ac;
+}
+.button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.button-primary {
+  background: #45f2ac;
+  border-color: #45f2ac;
+  color: #07110f;
+}
+.button-ghost {
+  background: #0b1713;
+}
+.studio-grid {
+  display: grid;
+  grid-template-columns: 250px minmax(520px, 1fr) 230px;
+  min-height: calc(100vh - 120px);
+}
+.agent-catalog {
+  border-right: 1px solid #26332f;
+  padding: 22px 18px 22px 0;
+}
+.catalog-head {
+  display: flex;
+  justify-content: space-between;
+  color: #71827b;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  padding: 0 8px 18px;
+}
+.catalog-head b {
+  color: #45f2ac;
+}
+.agent-list {
+  display: grid;
+  gap: 6px;
+}
+.empty-note {
+  color: #61736b;
+  font-size: 11px;
+  line-height: 1.8;
+  padding: 18px 8px;
+}
+.agent-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 12px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #dfe9e3;
+  cursor: pointer;
+}
+.agent-row:hover,
+.agent-row.is-current {
+  border-color: #33453d;
+  background: #0c1a16;
+}
+.agent-row i {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  background: #14251e;
+  color: #45f2ac;
+  font-style: normal;
+}
+.agent-row b,
+.agent-row small {
+  display: block;
+}
+.agent-row b {
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.agent-row small {
+  font-size: 8px;
+  color: #687b72;
+}
+.agent-row em {
+  font-size: 8px;
+  color: #45f2ac;
+  font-style: normal;
+}
+.agent-workbench {
+  padding: 38px 42px;
+}
+.welcome-panel {
+  max-width: 620px;
+  margin: 11vh auto;
+}
+.eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: #45f2ac;
+}
+.welcome-panel h2 {
+  font:
+    800 clamp(40px, 5vw, 74px) / 0.98 "Arial Narrow",
+    "Noto Sans SC",
+    sans-serif;
+  letter-spacing: -0.065em;
+  margin: 24px 0;
+}
+.welcome-panel > p:not(.eyebrow) {
+  max-width: 510px;
+  color: #82968d;
+  line-height: 1.9;
+  font-size: 13px;
+  margin-bottom: 30px;
+}
+.agent-form {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.agent-form header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  margin-bottom: 30px;
+}
+.agent-form h2 {
+  font:
+    700 30px "Arial Narrow",
+    "Noto Sans SC",
+    sans-serif;
+  margin: 0;
+}
+.agent-form header > span {
+  font-size: 9px;
+  color: #71827b;
+}
+.agent-form label {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.agent-form label > span {
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: #7f9389;
+}
+.agent-form input,
+.agent-form select,
+.agent-form textarea,
+.login-dialog input {
+  border: 1px solid #304039;
+  background: #091511;
+  color: #edf6f0;
+  padding: 13px 14px;
+  font: 500 12px / 1.6 inherit;
+  outline: none;
+}
+.agent-form input:focus,
+.agent-form select:focus,
+.agent-form textarea:focus,
+.login-dialog input:focus {
+  border-color: #45f2ac;
+  box-shadow: 0 0 0 2px rgba(69, 242, 172, 0.08);
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 220px;
+  gap: 16px;
+}
+.agent-form textarea {
+  min-height: 320px;
+  resize: vertical;
+}
+.prompt-field {
+  position: relative;
+}
+.prompt-field small {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  color: #597067;
+  font-size: 8px;
+}
+.agent-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.inspector {
+  border-left: 1px solid #26332f;
+  padding: 28px 0 20px 24px;
+}
+.signal-orbit {
+  height: 180px;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+.signal-orbit span {
+  width: 70px;
+  height: 70px;
+  border: 1px solid #45f2ac;
+  display: grid;
+  place-items: center;
+  color: #45f2ac;
+  transform: rotate(45deg);
+}
+.signal-orbit span::first-line {
+  transform: rotate(-45deg);
+}
+.signal-orbit i {
+  position: absolute;
+  border: 1px solid #263d34;
+  border-radius: 50%;
+  width: 130px;
+  height: 130px;
+}
+.signal-orbit i:last-child {
+  width: 166px;
+  height: 166px;
+  border-style: dashed;
+  animation: spin 18s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.inspector dl {
+  margin: 10px 0;
+}
+.inspector dl div {
+  border-top: 1px solid #24332d;
+  padding: 14px 0;
+}
+.inspector dt {
+  color: #61756b;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+}
+.inspector dd {
+  margin: 5px 0 0;
+  font-size: 10px;
+}
+.activity {
+  margin-top: 30px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #75887e;
+  font-size: 9px;
+}
+.activity span {
+  width: 5px;
+  height: 5px;
+  background: #45f2ac;
+}
+.login-dialog {
+  border: 1px solid #375047;
+  background: #091511;
+  color: #eef7f1;
+  padding: 0;
+  box-shadow: 0 30px 90px #000;
+  max-width: 420px;
+  width: calc(100% - 40px);
+}
+.login-dialog::backdrop {
+  background: rgba(2, 8, 6, 0.84);
+  backdrop-filter: blur(8px);
+}
+.login-dialog form {
+  padding: 36px;
+  display: grid;
+  gap: 16px;
+}
+.login-dialog p {
+  font-size: 9px;
+  color: #45f2ac;
+  letter-spacing: 0.2em;
+  margin: 0;
+}
+.login-dialog h2 {
+  font:
+    800 32px "Arial Narrow",
+    "Noto Sans SC",
+    sans-serif;
+  margin: 0;
+}
+.login-dialog > form > span {
+  color: #7d9087;
+  font-size: 11px;
+}
+.login-dialog label {
+  display: grid;
+  gap: 8px;
+}
+.login-dialog label span {
+  font-size: 9px;
+  color: #7d9087;
+}
+.login-dialog output {
+  min-height: 16px;
+  color: #ff7b70;
+  font-size: 10px;
+}
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  padding: 13px 18px;
+  background: #45f2ac;
+  color: #07110f;
+  font: 700 10px inherit;
+  transform: translateY(80px);
+  opacity: 0;
+  transition: 0.25s;
+}
+.toast.is-visible {
+  transform: none;
+  opacity: 1;
+}
+.toast.is-error {
+  background: #ff7b70;
+}
+@media (max-width: 1050px) {
+  .studio-grid {
+    grid-template-columns: 210px 1fr;
+  }
+  .inspector {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .studio-shell {
+    display: block;
+  }
+  .studio-rail {
+    min-height: auto;
+    padding: 18px;
+  }
+  .studio-nav,
+  .rail-caption,
+  .rail-status {
+    display: none;
+  }
+  .studio-main {
+    padding: 20px;
+  }
+  .studio-topbar {
+    align-items: center;
+  }
+  .studio-grid {
+    display: block;
+  }
+  .agent-catalog {
+    border: 0;
+    border-bottom: 1px solid #26332f;
+    padding-right: 0;
+  }
+  .agent-workbench {
+    padding: 30px 0;
+  }
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .top-actions span {
+    display: none;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

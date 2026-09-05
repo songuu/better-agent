@@ -430,6 +430,14 @@ interface GateBarrierV1 {
 
 任何校验失败均不得发布，也不得创建 Run。编译缓存键为 `flow_version_id + compiled_hash`；缓存未命中仅影响性能，不能改变结果。
 
+G1-A2 的首个可执行子集固定为 `Start → LLM → Output`。`flow-llm-node-config/1` 必须引用一个完整 `SYSTEM_RELEASE` pin 和一个 Flow 内已声明的 credential requirement；模型、凭据、credits、input/output/total token 与 timeout demand 进入同一个 closure root requirement expression。准入决策以 `root_authority` 对该 demand 再做一次 narrowing-only policy meet，并把实际 credential mapping、非秘密 material identity 与 epoch evidence 固定进 `ResolvedExecutionPlanV1`。缺少该 root authority 时不得生成 Plan。
+
+`compiled-flow-plan/1` 只从重新验证的 source、pinned graph、closure 和受信 ResolvedPlan hash 编译，固定三个 step 的稳定拓扑 rank、前驱、canonical node-path hash、输入绑定、输出 schema hash、模型 pin、凭据映射/material identity、prompt、temperature、预算和 retry/timeout；`compiled_hash` 覆盖除自身外的完整 canonical artifact。`flow-step-checkpoint/1` 使用 PostgreSQL-compatible UUID、字符串 sequence/fence、上一提交 hash 和实际前驱 checkpoint hash 集；LLM checkpoint 还必须逐字绑定一个自验证的 `flow-model-usage-receipt/1`。usage receipt 固定逻辑 model-attempt operation key、模型 pin、provider request/result hash 和实际 usage，实际 usage 不得超过对应 Plan step budget。
+
+模型调用恢复的唯一动作序列是：effect envelope 前 `INVOKE_WITH_KEY`；envelope 已提交但 receipt 缺失时以同一 key `RETRY_WITH_SAME_KEY`；receipt 已提交时只补 checkpoint；checkpoint 已提交时只推进下游。receipt 不得先于 envelope，checkpoint 不得脱离 receipt，`run_usage_attributions(workspace_id, run_id, producer_operation_key)` 的既有唯一键负责最终 usage 去重。
+
+迁移 010 将这条边界落实为三个 owner-only 永久事实。独立 management reviewer 先为具体 Workspace、Run、FlowExecution、execution login 和完整 Plan 签发最多 15 分钟、只能消费一次的 proof；错误登录、verifier、Plan 字节、过期、撤销或重放均失败，注册事务失败时 proof 消费也回滚。`flow_executions` 随后在有效 execution lease/fence 下把 admitted Flow Run 固定到唯一 `compiled-flow-plan/1`；数据库用与 TypeScript 相同的 canonical JSON profile 重算 `compiled_hash`，并核对 Run 的 Workspace、Flow/version 与 `accepted_plan_hash`。`flow_model_usage_receipts` 只接受同一 Plan 的 LLM step、模型 pin、重试次数和预算内 usage，并要求 `operation_key` 对应的 `requires_key` effect envelope 及其 `CONFIRMED` receipt 分别逐字绑定 provider request/result hash；随后在同一事务调用通用 usage attribution。`flow_step_checkpoints` 再独立重算 checkpoint hash，核对 Plan node/path、单调 sequence、上一提交、精确前驱和 LLM receipt，然后原子写入通用 Run checkpoint 投影。三张运行表与 proof 表均 FORCE RLS、受控不可变，execution login 仅能执行固定函数而没有表 DML；已提交的同一 receipt/checkpoint 可在原 lease 失效后精确重放，但不能产生第二笔 usage 或 checkpoint。
+
 ### 5.2 Plan
 
 顶层入口的 `plan(compiled_flow, flow_admission_profile, request)` 在创建顶层 Flow Run 时原子完成，且在实际调用节点前完成积分预留。它必须：

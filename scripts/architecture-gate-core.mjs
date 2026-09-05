@@ -6,6 +6,16 @@ const REQUIRED_EVIDENCE_DOMAINS = Object.freeze([
   'migration-lifecycle',
   'auth-rls',
   'release-deployment',
+  'executable-closure-storage',
+  'g1-published-source-registry',
+  'g1-flow-execution',
+  'g1-knowledge-database',
+  'g1-agent-strategy',
+  'g1-worker-human-gate',
+  'g1-join-child',
+  'g1-public-run-events',
+  'g1-production-evaluation',
+  'g1-vertical-agent',
   'run-billing',
   'run-conversation-browser',
   'runtime-security',
@@ -21,14 +31,14 @@ const EXPECTED_SCRIPTS = Object.freeze({
     'pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build',
   rootPostgres16: 'pnpm --filter @better-agent/db test:integration',
   dbIntegration:
-    'pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs',
+    'pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs',
 });
 
 const EXPECTED_POSTGRES_SUITES = Object.freeze([
   Object.freeze({
     id: 'migration-lifecycle',
     file: 'infra/test/postgres/run-integration.mjs',
-    sha256: '94195c4cb926fd45e26ce2d4faab17ccad09d4030727604dfa02cad77954154c',
+    sha256: 'bc253c82a811c76e4daab88461d5a5aa71a283c900aa876ecaf4081441a114ab',
     successMarker: 'architecture-gate-suite/1 migration-lifecycle pass',
   }),
   Object.freeze({
@@ -44,6 +54,66 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
     successMarker: 'architecture-gate-suite/1 release-deployment pass',
   }),
   Object.freeze({
+    id: 'executable-closure-storage',
+    file: 'infra/test/postgres/run-executable-closure-storage-integration.mjs',
+    sha256: '82aff28c7ee15d6884388f9ab1bc24ca4a6f835c83dfd38a284fe69792d65e7a',
+    successMarker: 'architecture-gate-suite/1 executable-closure-storage pass',
+  }),
+  Object.freeze({
+    id: 'g1-published-source-registry',
+    file: 'infra/test/postgres/run-g1-published-source-registry-integration.mjs',
+    sha256: '92e57bad613a600cd224013843489e5e2f025134e09d6eb90be92118d9d2c585',
+    successMarker: 'architecture-gate-suite/1 g1-published-source-registry pass',
+  }),
+  Object.freeze({
+    id: 'g1-flow-execution',
+    file: 'infra/test/postgres/run-g1-flow-execution-integration.mjs',
+    sha256: '991995df189e8186505cb16878a7a0a33804e55248ee9fce6236e6ce0ec24134',
+    successMarker: 'architecture-gate-suite/1 g1-flow-execution pass',
+  }),
+  Object.freeze({
+    id: 'g1-knowledge-database',
+    file: 'infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs',
+    sha256: '177db40336829f16a8d35a9e5a4f905f7be95c1fb2c6b2bc48cd80a3465a5c52',
+    successMarker: 'architecture-gate-suite/1 g1-knowledge-database pass',
+  }),
+  Object.freeze({
+    id: 'g1-agent-strategy',
+    file: 'infra/test/postgres/run-g1-agent-strategy-integration.mjs',
+    sha256: 'a3f961744f9f2df5e09d7cebad5c351d3b4b62027cc17e185a164a618127700f',
+    successMarker: 'architecture-gate-suite/1 g1-agent-strategy pass',
+  }),
+  Object.freeze({
+    id: 'g1-worker-human-gate',
+    file: 'infra/test/postgres/run-g1-worker-human-gate-integration.mjs',
+    sha256: '92f6fa0bbedbc33b6e6df1c8d90094ac9dda2fe5450e1361825a6e26e46873a7',
+    successMarker: 'architecture-gate-suite/1 g1-worker-human-gate pass',
+  }),
+  Object.freeze({
+    id: 'g1-join-child',
+    file: 'infra/test/postgres/run-g1-join-child-integration.mjs',
+    sha256: '145c5738e75057cdd8d4d548a673a56bff17f6a3d7997a80b4c81a81d9a43727',
+    successMarker: 'architecture-gate-suite/1 g1-join-child pass',
+  }),
+  Object.freeze({
+    id: 'g1-public-run-events',
+    file: 'infra/test/postgres/run-g1-public-run-events-integration.mjs',
+    sha256: 'ca6d764e764a82c9272d3094dd1e75434a5de7ceae475ee4af707c98d29cee23',
+    successMarker: 'architecture-gate-suite/1 g1-public-run-events pass',
+  }),
+  Object.freeze({
+    id: 'g1-production-evaluation',
+    file: 'infra/test/postgres/run-g1-production-evaluation-integration.mjs',
+    sha256: 'e85cde0fd342b1369db23e2fb3cf5b71f9f0c5e6351c62a54f0774e39c3de18e',
+    successMarker: 'architecture-gate-suite/1 g1-production-evaluation pass',
+  }),
+  Object.freeze({
+    id: 'g1-vertical-agent',
+    file: 'infra/test/postgres/run-g1-vertical-agent-integration.mjs',
+    sha256: '4a28c8ce3f50e7ed9c29818e12e4be6a55d908332f525fcc4a98504b3a173618',
+    successMarker: 'architecture-gate-suite/1 g1-vertical-agent pass',
+  }),
+  Object.freeze({
     id: 'run-billing',
     file: 'infra/test/postgres/run-run-billing-integration.mjs',
     sha256: '8af4e842a7371e9920c8e85444b36e395834db101eb70e11895bf5a1a3326e0d',
@@ -52,7 +122,7 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
   Object.freeze({
     id: 'run-conversation-browser',
     file: 'infra/test/postgres/run-run-conversation-browser-integration.mjs',
-    sha256: 'b03cfaa1f9ba0024bb73714ca3d13f6e1edc36ccbad10db853f093dd25d1c476',
+    sha256: '3c77c57e14b92a9613cb5a60d455138e571006709aeb4547084ce0d99a78c49e',
     successMarker: 'architecture-gate-suite/1 run-conversation-browser pass',
   }),
   Object.freeze({
@@ -66,7 +136,7 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
 const EXPECTED_POSTGRES_SUPPORT_FILES = Object.freeze([
   Object.freeze({
     file: 'infra/test/postgres/README.md',
-    sha256: '47bc1673ab3d36fe942d8b26b87152b0973152fe5ba084efedb07e79e427a592',
+    sha256: 'cfb96c1b6d37c96aa1943c931ee942f6221db4119625605edb3237190187684f',
   }),
   Object.freeze({
     file: 'infra/test/postgres/bootstrap-test.sql',
@@ -89,6 +159,14 @@ const EXPECTED_POSTGRES_SUPPORT_FILES = Object.freeze([
     sha256: '80642827bb35415f5809d5df75912f4e0420194eb12711853d14bf06ce8d82f0',
   }),
   Object.freeze({
+    file: 'infra/test/postgres/g1-vertical-extension.mjs',
+    sha256: 'cd1e0a50f97f3ee30bb934ee83874bef04c152f76fe9a304c66d1506cd9e1d66',
+  }),
+  Object.freeze({
+    file: 'infra/test/postgres/g1-vertical-sources.mjs',
+    sha256: 'e3dd6f3114ad437ef101ecb0f3c3d4bde5e049d63a6c5bdaad29d5b46a7fe549',
+  }),
+  Object.freeze({
     file: 'infra/test/postgres/harness.mjs',
     sha256: '1a29abb9b081ff77e7d71f4daeb361f1a8f535b0f8d07dc6ab2fc48c248adb66',
   }),
@@ -98,8 +176,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/api',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 80,
-    successMarker: '@better-agent/api:test:       Tests  80 passed (80)',
+    testCount: 130,
+    successMarker: '@better-agent/api:test:       Tests  130 passed (130)',
   }),
   Object.freeze({
     packageName: '@better-agent/api-contract',
@@ -110,8 +188,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/auth',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 48,
-    successMarker: '@better-agent/auth:test:       Tests  48 passed (48)',
+    testCount: 54,
+    successMarker: '@better-agent/auth:test:       Tests  54 passed (54)',
   }),
   Object.freeze({
     packageName: '@better-agent/billing-core',
@@ -120,28 +198,46 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
     successMarker: '@better-agent/billing-core:test:       Tests  43 passed (43)',
   }),
   Object.freeze({
+    packageName: '@better-agent/database-capability',
+    script: 'vitest run --config vitest.config.ts --configLoader native --passWithNoTests',
+    testCount: 8,
+    successMarker: '@better-agent/database-capability:test:       Tests  8 passed (8)',
+  }),
+  Object.freeze({
     packageName: '@better-agent/db',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 85,
-    successMarker: '@better-agent/db:test:       Tests  85 passed (85)',
+    testCount: 153,
+    successMarker: '@better-agent/db:test:       Tests  153 passed (153)',
   }),
   Object.freeze({
     packageName: '@better-agent/domain-contracts',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 169,
-    successMarker: '@better-agent/domain-contracts:test:       Tests  169 passed (169)',
+    testCount: 193,
+    successMarker: '@better-agent/domain-contracts:test:       Tests  193 passed (193)',
+  }),
+  Object.freeze({
+    packageName: '@better-agent/instruction-skill',
+    script: 'vitest run --config vitest.config.ts --configLoader native --passWithNoTests',
+    testCount: 8,
+    successMarker: '@better-agent/instruction-skill:test:       Tests  8 passed (8)',
+  }),
+  Object.freeze({
+    packageName: '@better-agent/knowledge-core',
+    script: 'vitest run --config vitest.config.ts --configLoader native --passWithNoTests',
+    testCount: 7,
+    successMarker: '@better-agent/knowledge-core:test:       Tests  7 passed (7)',
   }),
   Object.freeze({
     packageName: '@better-agent/release-core',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 1069,
-    successMarker: '@better-agent/release-core:test:       Tests  1069 passed (1069)',
+    testCount: 1118,
+    successMarker: '@better-agent/release-core:test:       Tests  1118 passed (1118)',
   }),
   Object.freeze({
     packageName: '@better-agent/run-core',
     script: 'vitest run --config vitest.config.ts --configLoader native --passWithNoTests',
-    testCount: 103,
-    successMarker: '@better-agent/run-core:test:       Tests  103 passed (103)',
+    testCount: 146,
+    successMarker: '@better-agent/run-core:test:       Tests  146 passed (146)',
   }),
   Object.freeze({
     packageName: '@better-agent/test-support',
@@ -153,8 +249,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/web',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 22,
-    successMarker: '@better-agent/web:test:       Tests  22 passed (22)',
+    testCount: 28,
+    successMarker: '@better-agent/web:test:       Tests  28 passed (28)',
   }),
 ]);
 
@@ -178,7 +274,7 @@ const EXPECTED_GATE_COMMANDS = Object.freeze([
     args: Object.freeze(['check']),
     timeoutMs: 300_000,
     successMarkers: Object.freeze([
-      'workspace smoke passed for 10 package(s)',
+      'workspace smoke passed for 13 package(s)',
       EXPECTED_CONTRACT_SUCCESS_MARKER,
       ...EXPECTED_WORKSPACE_TESTS.map(({ successMarker }) => successMarker),
     ]),
@@ -313,7 +409,33 @@ function validateMigrationFiles(value) {
     migrations.set(id, current);
   }
   const ids = [...migrations.keys()].sort();
-  assertExactArray(ids, ['000', '001', '002', '003', '004', '005'], 'migration IDs');
+  assertExactArray(
+    ids,
+    [
+      '000',
+      '001',
+      '002',
+      '003',
+      '004',
+      '005',
+      '006',
+      '007',
+      '008',
+      '009',
+      '010',
+      '011',
+      '012',
+      '013',
+      '014',
+      '015',
+      '016',
+      '017',
+      '018',
+      '019',
+      '020',
+    ],
+    'migration IDs',
+  );
   for (const { id, directions } of migrations.values()) {
     if (!directions.has('up')) fail(`migration ${id} is missing its up file`);
     const expectsDown = Number.parseInt(id, 10) >= 3;

@@ -22,6 +22,8 @@
     "format:check": "biome format .",
     "lint": "biome lint . && turbo run lint",
     "test": "turbo run test",
+    "test:e2e:g1": "node scripts/g1-gate.mjs e2e",
+    "test:failure:g1": "node scripts/g1-gate.mjs failure",
     "typecheck": "turbo run typecheck",
     "workspace:smoke": "node packages/test-support/scripts/workspace-smoke.mjs"
   },

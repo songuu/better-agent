@@ -517,7 +517,15 @@ export const ProductionPromotionGateKeyV1Schema = z.strictObject({
   evaluation_policy_hash: ContractHashSchema,
   evaluation_run_ids: z
     .array(NonEmptyStringSchema)
-    .refine(hasUniqueStrings, 'evaluation run ids must be unique'),
+    .refine(hasUniqueStrings, 'evaluation run ids must be unique')
+    .refine(
+      (values) =>
+        values.every((value, index) => {
+          const previous = values[index - 1];
+          return previous === undefined || previous < value;
+        }),
+      'evaluation run ids must be canonically sorted',
+    ),
   evidence_bundle_hash: ContractHashSchema,
   observed_evidence_epoch_hash: ContractHashSchema,
   expected_activation_epoch: NonNegativeIntegerSchema,

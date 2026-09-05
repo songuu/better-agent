@@ -69,8 +69,7 @@ export function prepareGraphBoundDirectDependencies(
   const rootNode = graph.nodes.find(
     (node) => publishedResourcePinKey(node.pin) === publishedResourcePinKey(rootPin),
   );
-  if (rootNode === undefined || dependencyPins.length === 0 || dependencyPins.length > 128)
-    unresolved();
+  if (rootNode === undefined || dependencyPins.length > 128) unresolved();
   const keys = dependencyPins.map(publishedResourcePinKey);
   if (new Set(keys).size !== keys.length) unresolved();
   const dependencyNodes = keys.map((key) => {

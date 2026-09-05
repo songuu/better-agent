@@ -13,12 +13,15 @@ describe('Run state boundaries', () => {
     expect(projectRunStatus('RECOVERING')).toBe('QUEUED');
     expect(projectRunStatus('CANCELLING')).toBe('CANCEL_REQUESTED');
     expect(projectPublicRunStatus('WAITING_FOR_INPUT')).toBe('RUNNING');
+    expect(projectPublicRunStatus('WAITING_FOR_CHILD')).toBe('RUNNING');
     expect(projectPublicRunStatus('NEEDS_ATTENTION')).toBe('FAILED');
   });
 
   it('accepts listed edges and rejects illegal or terminal rewrites', () => {
     expect(assertRunStateTransition('QUEUED', 'RUNNING')).toBe('TRANSITION');
     expect(assertRunStateTransition('RUNNING', 'WAITING_FOR_APPROVAL')).toBe('TRANSITION');
+    expect(assertRunStateTransition('RUNNING', 'WAITING_FOR_CHILD')).toBe('TRANSITION');
+    expect(assertRunStateTransition('WAITING_FOR_CHILD', 'RUNNING')).toBe('TRANSITION');
     expect(assertRunStateTransition('WAITING_FOR_APPROVAL', 'RESUMING')).toBe('TRANSITION');
     expect(() => assertRunStateTransition('QUEUED', 'SUCCEEDED')).toThrowError(
       /RUN_STATE_TRANSITION_INVALID/,

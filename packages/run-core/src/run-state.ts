@@ -16,6 +16,7 @@ const schedulingToRunStatus = {
   RUNNING: 'RUNNING',
   WAITING_FOR_INPUT: 'WAITING_FOR_INPUT',
   WAITING_FOR_APPROVAL: 'WAITING_FOR_APPROVAL',
+  WAITING_FOR_CHILD: 'WAITING_FOR_CHILD',
   RESUMING: 'RESUMING',
   CANCELLING: 'CANCEL_REQUESTED',
   SUCCEEDED: 'SUCCEEDED',
@@ -30,6 +31,7 @@ const publicStatus = {
   RUNNING: 'RUNNING',
   WAITING_FOR_INPUT: 'RUNNING',
   WAITING_FOR_APPROVAL: 'RUNNING',
+  WAITING_FOR_CHILD: 'RUNNING',
   RESUMING: 'RUNNING',
   CANCEL_REQUESTED: 'CANCEL_REQUESTED',
   SUCCEEDED: 'SUCCEEDED',
@@ -59,6 +61,7 @@ const allowedTransitions: Readonly<Record<RunStatusV1, ReadonlySet<RunStatusV1>>
   RUNNING: new Set([
     'WAITING_FOR_INPUT',
     'WAITING_FOR_APPROVAL',
+    'WAITING_FOR_CHILD',
     'CANCEL_REQUESTED',
     'SUCCEEDED',
     'FAILED',
@@ -76,6 +79,14 @@ const allowedTransitions: Readonly<Record<RunStatusV1, ReadonlySet<RunStatusV1>>
   ]),
   WAITING_FOR_APPROVAL: new Set([
     'RESUMING',
+    'CANCEL_REQUESTED',
+    'FAILED',
+    'CANCELLED',
+    'TIMED_OUT',
+    'NEEDS_ATTENTION',
+  ]),
+  WAITING_FOR_CHILD: new Set([
+    'RUNNING',
     'CANCEL_REQUESTED',
     'FAILED',
     'CANCELLED',

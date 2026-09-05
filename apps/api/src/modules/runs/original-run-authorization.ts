@@ -11,10 +11,13 @@ import {
   type OriginalRunAuthorizationFacts,
   RunBoundaryError,
   type RunDatabaseTransaction,
+  type ServiceOriginalRunAuthorizationCommand,
   samePrincipal,
 } from './run-transaction.js';
 
-function credentialPrincipal(context: AuthenticatedAccessKeyContext): ConversationPrincipalV1 {
+function credentialPrincipal(
+  context: AuthenticatedAccessKeyContext,
+): Extract<ConversationPrincipalV1, { kind: 'credential' }> {
   const principal = context.tenantAuthContext.caller_principal;
   if (principal.kind !== 'credential') throw new RunBoundaryError('RUN_AUTHORIZATION_FAILED');
   return {
@@ -69,15 +72,19 @@ export function assertCancellationContext(
   return credentialPrincipal(context);
 }
 
-function assertReadContext(context: AuthenticatedAccessKeyContext): void {
+function assertReadContext(
+  context: AuthenticatedAccessKeyContext,
+  requiredScope: ServiceOriginalRunAuthorizationCommand['requiredScope'],
+): void {
   const proof = context.policyPhase;
+  const events = requiredScope === 'run:events:read';
   if (
     !isCredentialPolicyPhasePassed(proof) ||
     context.credentialKind !== 'service_api' ||
-    proof.operationId !== 'getRun' ||
-    proof.operationPurpose !== 'run_read' ||
+    proof.operationId !== (events ? 'streamRunEvents' : 'getRun') ||
+    proof.operationPurpose !== (events ? 'run_events_read' : 'run_read') ||
     proof.requiredScopes.length !== 1 ||
-    proof.requiredScopes[0] !== 'run:read' ||
+    proof.requiredScopes[0] !== requiredScope ||
     proof.remainingGate.typedGrantFamily !== 'original_run_entry_grant' ||
     proof.remainingGate.targetCardinality !== 'original_run_only'
   ) {
@@ -85,7 +92,10 @@ function assertReadContext(context: AuthenticatedAccessKeyContext): void {
   }
 }
 
-function readOriginalAuthorization(value: unknown): OriginalRunAuthorizationFacts {
+function readOriginalAuthorization(
+  value: unknown,
+  requiredScope: ServiceOriginalRunAuthorizationCommand['requiredScope'],
+): OriginalRunAuthorizationFacts {
   if (
     !hasExactKeys(value, [
       'acceptedPrincipal',
@@ -99,7 +109,7 @@ function readOriginalAuthorization(value: unknown): OriginalRunAuthorizationFact
     !UuidV1Schema.safeParse(value.runId).success ||
     !UuidV1Schema.safeParse(value.deploymentId).success ||
     (value.targetKind !== 'agent' && value.targetKind !== 'flow') ||
-    value.authorizedScope !== 'run:read'
+    value.authorizedScope !== requiredScope
   ) {
     throw new RunBoundaryError('RUN_NOT_FOUND');
   }
@@ -111,7 +121,7 @@ function readOriginalAuthorization(value: unknown): OriginalRunAuthorizationFact
     acceptedPrincipal: principal.data,
     targetKind: value.targetKind,
     deploymentId: value.deploymentId as string,
-    authorizedScope: 'run:read',
+    authorizedScope: requiredScope,
   });
 }
 
@@ -119,9 +129,11 @@ export function assertIndependentServiceGates(input: {
   readonly createContext: AuthenticatedAccessKeyContext;
   readonly readContext: AuthenticatedAccessKeyContext;
   readonly targetKind: 'agent' | 'flow';
+  readonly requiredScope?: ServiceOriginalRunAuthorizationCommand['requiredScope'];
 }): ConversationPrincipalV1 {
+  const requiredScope = input.requiredScope ?? 'run:read';
   assertCreateContext(input.createContext, input.targetKind);
-  assertReadContext(input.readContext);
+  assertReadContext(input.readContext, requiredScope);
   const createPrincipal = credentialPrincipal(input.createContext);
   const readPrincipal = credentialPrincipal(input.readContext);
   if (
@@ -140,20 +152,46 @@ export async function authorizeServiceOriginalRunInTransaction(input: {
   readonly readContext: AuthenticatedAccessKeyContext;
   readonly runId: string;
   readonly targetKind: 'agent' | 'flow';
+  readonly requiredScope?: ServiceOriginalRunAuthorizationCommand['requiredScope'];
 }): Promise<OriginalRunAuthorizationFacts> {
-  const principal = assertIndependentServiceGates(input);
+  const requiredScope = input.requiredScope ?? 'run:read';
+  const principal = assertIndependentServiceGates({ ...input, requiredScope });
   const value = await input.transaction.authorizeServiceOriginalRun({
     workspaceId: input.readContext.tenantAuthContext.workspace_id,
     credentialId: principal.kind === 'credential' ? principal.credential_id : '',
     runId: input.runId,
     targetKind: input.targetKind,
-    requiredScope: 'run:read',
+    requiredScope,
   });
-  const facts = readOriginalAuthorization(value);
+  const facts = readOriginalAuthorization(value, requiredScope);
   if (
     facts.workspaceId !== input.readContext.tenantAuthContext.workspace_id ||
     facts.runId !== input.runId ||
     facts.targetKind !== input.targetKind ||
+    !samePrincipal(facts.acceptedPrincipal, principal)
+  ) {
+    throw new RunBoundaryError('RUN_NOT_FOUND');
+  }
+  return facts;
+}
+
+export async function authorizeServiceEventStreamInTransaction(input: {
+  readonly transaction: RunDatabaseTransaction;
+  readonly readContext: AuthenticatedAccessKeyContext;
+  readonly runId: string;
+}): Promise<OriginalRunAuthorizationFacts> {
+  assertReadContext(input.readContext, 'run:events:read');
+  const principal = credentialPrincipal(input.readContext);
+  const value = await input.transaction.authorizeServiceOriginalRun({
+    workspaceId: input.readContext.tenantAuthContext.workspace_id,
+    credentialId: principal.credential_id,
+    runId: input.runId,
+    requiredScope: 'run:events:read',
+  });
+  const facts = readOriginalAuthorization(value, 'run:events:read');
+  if (
+    facts.workspaceId !== input.readContext.tenantAuthContext.workspace_id ||
+    facts.runId !== input.runId ||
     !samePrincipal(facts.acceptedPrincipal, principal)
   ) {
     throw new RunBoundaryError('RUN_NOT_FOUND');

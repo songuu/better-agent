@@ -29,6 +29,7 @@ test('runs the web runtime as a dedicated hardened loopback service', () => {
   assert.match(unit, /^User=better-agent-web$/m);
   assert.match(unit, /^Group=better-agent-web$/m);
   assert.match(unit, /^EnvironmentFile=\/opt\/better-agent\/shared\/web\.env$/m);
+  assert.match(unit, /^EnvironmentFile=\/opt\/better-agent\/shared\/postgres\/env\/product\.env$/m);
   assert.match(
     unit,
     /^ExecStart=\/usr\/bin\/node \/opt\/better-agent\/web-current\/apps\/web\/dist\/server\.js$/m,
@@ -92,4 +93,13 @@ test('verifies the deployed page with a marker owned by the public HTML', () => 
   assert.ok(publicHtml.includes(publicPageMarker));
   assert.ok(deploymentWorkflow.includes(`grep -Fq '${publicPageMarker}'`));
   assert.doesNotMatch(deploymentWorkflow, /BETTER AGENT \/ STUDIO/u);
+});
+
+test('packages the PostgreSQL client dependency required by the product runtime', () => {
+  assert.match(
+    deploymentWorkflow,
+    /pnpm --config\.inject-workspace-packages=true --filter @better-agent\/web/u,
+  );
+  assert.match(deploymentWorkflow, /web-runtime\/node_modules\/pg\/package\.json/u);
+  assert.match(deploymentWorkflow, /apps\/web\/node_modules/u);
 });

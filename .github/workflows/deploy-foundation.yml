@@ -76,9 +76,18 @@ jobs:
           ACCEPTED_SHA: ${{ steps.accepted.outputs.sha }}
         run: |
           set -euo pipefail
+          pnpm --config.inject-workspace-packages=true --filter @better-agent/web \
+            deploy --prod "${RUNNER_TEMP}/web-runtime"
+          test -f "${RUNNER_TEMP}/web-runtime/node_modules/pg/package.json"
+          mkdir -p "${RUNNER_TEMP}/release-tree"
+          tar --exclude=.git --exclude=node_modules --exclude=.turbo -cf - . | \
+            tar -xf - -C "${RUNNER_TEMP}/release-tree"
+          mkdir -p "${RUNNER_TEMP}/release-tree/apps/web"
+          cp -a "${RUNNER_TEMP}/web-runtime/node_modules" \
+            "${RUNNER_TEMP}/release-tree/apps/web/node_modules"
           mkdir -p "${RUNNER_TEMP}/release"
           archive="${RUNNER_TEMP}/release/better-agent-${ACCEPTED_SHA}.tgz"
-          tar --exclude=.git --exclude=node_modules --exclude=.turbo -czf "${archive}" .
+          tar -C "${RUNNER_TEMP}/release-tree" -czf "${archive}" .
           sha256sum "${archive}" > "${archive}.sha256"
 
       - name: Upload attested release

@@ -42,6 +42,8 @@ export const HumanGateV1Schema = z
     barrier_generation: z.number().int().positive().safe(),
     expires_at: z.iso.datetime({ offset: true }),
     claimed_by: NonEmptyStringSchema.max(300).optional(),
+    claim_object_ref: DurableObjectRefV1Schema.optional(),
+    claim_sha256: Sha256HexV1Schema.optional(),
     claimed_at: z.iso.datetime({ offset: true }).optional(),
     decision_object_ref: DurableObjectRefV1Schema.optional(),
     decision_sha256: Sha256HexV1Schema.optional(),
@@ -60,12 +62,18 @@ export const HumanGateV1Schema = z
       addCustomIssue(ctx, ['updated_at'], 'HumanGate update cannot precede creation');
     }
 
-    const hasClaim = gate.claimed_by !== undefined && gate.claimed_at !== undefined;
-    if ((gate.claimed_by === undefined) !== (gate.claimed_at === undefined)) {
+    const claimFields = [
+      gate.claimed_by,
+      gate.claim_object_ref,
+      gate.claim_sha256,
+      gate.claimed_at,
+    ];
+    const hasClaim = claimFields.every((value) => value !== undefined);
+    if (!hasClaim && claimFields.some((value) => value !== undefined)) {
       addCustomIssue(
         ctx,
         ['claimed_by'],
-        'HumanGate claim actor and timestamp must be present or absent together',
+        'HumanGate claim evidence must be present or absent together',
       );
     }
     if ((gate.decision_object_ref === undefined) !== (gate.decision_sha256 === undefined)) {

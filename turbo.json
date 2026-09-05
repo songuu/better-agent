@@ -1,6 +1,22 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDependencies": ["docs/api/openapi.yaml"],
+  "globalPassThroughEnv": [
+    "BETTER_AGENT_G1_FAILURE_MATRIX",
+    "BETTER_AGENT_G1_VERTICAL",
+    "BETTER_AGENT_ADMIN_PASSWORD",
+    "BETTER_AGENT_PRODUCT_ACTOR_ID",
+    "BETTER_AGENT_PRODUCT_WORKSPACE_ID",
+    "BETTER_AGENT_RUNTIME_DATABASE_URL",
+    "BETTER_AGENT_SESSION_SECRET",
+    "PGDATABASE",
+    "PGHOST",
+    "PGPASSWORD",
+    "PGPORT",
+    "PGSSLMODE",
+    "PGUSER",
+    "npm_execpath"
+  ],
   "ui": "stream",
   "tasks": {
     "build": {

@@ -4,7 +4,10 @@
   "references": [
     { "path": "./packages/auth/tsconfig.build.json" },
     { "path": "./packages/db/tsconfig.build.json" },
+    { "path": "./packages/database-capability/tsconfig.build.json" },
     { "path": "./packages/domain-contracts/tsconfig.build.json" },
+    { "path": "./packages/instruction-skill/tsconfig.build.json" },
+    { "path": "./packages/knowledge-core/tsconfig.build.json" },
     { "path": "./packages/run-core/tsconfig.build.json" },
     { "path": "./packages/billing-core/tsconfig.build.json" },
     { "path": "./packages/test-support/tsconfig.build.json" },

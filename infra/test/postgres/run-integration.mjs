@@ -395,10 +395,24 @@ async function main() {
   const through003 = prefixThrough(migrations, '003');
   const through004 = prefixThrough(migrations, '004');
   const through005 = prefixThrough(migrations, '005');
+  const through006 = prefixThrough(migrations, '006');
+  const through007 = prefixThrough(migrations, '007');
+  const through009 = prefixThrough(migrations, '009');
   const probeMigration = requireMigration(migrations, formatVersion(probeVersion));
   assertMigrationIds(through003, ['000', '001', '002', '003'], 'through-003');
   assertMigrationIds(through004, ['000', '001', '002', '003', '004'], 'through-004');
   assertMigrationIds(through005, ['000', '001', '002', '003', '004', '005'], 'through-005');
+  assertMigrationIds(through006, ['000', '001', '002', '003', '004', '005', '006'], 'through-006');
+  assertMigrationIds(
+    through007,
+    ['000', '001', '002', '003', '004', '005', '006', '007'],
+    'through-007',
+  );
+  assertMigrationIds(
+    through009,
+    ['000', '001', '002', '003', '004', '005', '006', '007', '008', '009'],
+    'through-009',
+  );
   assertG005CatalogFingerprintCoverage();
   assertEqual(probeMigration.version, probeVersion, 'dynamic probe migration version');
   await harness.start();
@@ -459,7 +473,7 @@ async function main() {
 
   await harness.psql('ba_migrator_test', renderUpMigrationSql(migrations), { echoErrors: true });
   await assertAppliedMigrationIds(
-    ['000', '001', '002', '003', '004', '005', probeMigration.id],
+    [...migrations.slice(0, -1).map(({ id }) => id), probeMigration.id],
     'through dynamic probe',
   );
   const postgresVersion = await harness.queryScalar('ba_migrator_test', 'SHOW server_version;');

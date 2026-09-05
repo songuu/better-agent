@@ -477,21 +477,21 @@ test('requires one semantic, successful result for every registered gate', () =>
 
   const formattedSuccessMarker = gateResults();
   formattedSuccessMarker[1].output = formattedSuccessMarker[1].output.replace(
-    '@better-agent/api:test:       Tests  80 passed (80)',
-    '\u001b[36m@better-agent/api:test:\u001b[0m\tTests   80 passed (80)',
+    '@better-agent/api:test:       Tests  130 passed (130)',
+    '\u001b[36m@better-agent/api:test:\u001b[0m\tTests   130 passed (130)',
   );
   assert.doesNotThrow(() => validateGateResults(manifest, formattedSuccessMarker));
 
   for (const invalidMarker of [
-    '@better-agent/wrong-api:test:       Tests  80 passed (80)',
-    '@better-agent/api:test:       Tests  81 passed (81)',
-    'diagnostic @better-agent/api:test:       Tests  80 passed (80)',
-    '@better-agent/api:test:       Tests  80 passed (80)1',
-    '@better-agent/api:test:       Tests  80 passed (80), 1 failed',
+    '@better-agent/wrong-api:test:       Tests  130 passed (130)',
+    '@better-agent/api:test:       Tests  105 passed (105)',
+    'diagnostic @better-agent/api:test:       Tests  130 passed (130)',
+    '@better-agent/api:test:       Tests  130 passed (130)1',
+    '@better-agent/api:test:       Tests  130 passed (130), 1 failed',
   ]) {
     const invalidSuccessMarker = gateResults();
     invalidSuccessMarker[1].output = invalidSuccessMarker[1].output.replace(
-      '@better-agent/api:test:       Tests  80 passed (80)',
+      '@better-agent/api:test:       Tests  130 passed (130)',
       invalidMarker,
     );
     assert.throws(
@@ -504,8 +504,8 @@ test('requires one semantic, successful result for every registered gate', () =>
   for (const lineTerminator of ['\n', '\r\n', '\r', '\v', '\f', '\u0085', '\u2028', '\u2029']) {
     const splitSuccessMarker = gateResults();
     splitSuccessMarker[1].output = splitSuccessMarker[1].output.replace(
-      '@better-agent/api:test:       Tests  80 passed (80)',
-      `@better-agent/api:test:${lineTerminator}Tests  80 passed (80)`,
+      '@better-agent/api:test:       Tests  130 passed (130)',
+      `@better-agent/api:test:${lineTerminator}Tests  130 passed (130)`,
     );
     assert.throws(
       () => validateGateResults(manifest, splitSuccessMarker),
@@ -518,6 +518,16 @@ test('requires one semantic, successful result for every registered gate', () =>
     'architecture-gate-suite/1 migration-lifecycle pass',
     'architecture-gate-suite/1 auth-rls pass',
     'architecture-gate-suite/1 release-deployment pass',
+    'architecture-gate-suite/1 executable-closure-storage pass',
+    'architecture-gate-suite/1 g1-published-source-registry pass',
+    'architecture-gate-suite/1 g1-flow-execution pass',
+    'architecture-gate-suite/1 g1-knowledge-database pass',
+    'architecture-gate-suite/1 g1-agent-strategy pass',
+    'architecture-gate-suite/1 g1-worker-human-gate pass',
+    'architecture-gate-suite/1 g1-join-child pass',
+    'architecture-gate-suite/1 g1-public-run-events pass',
+    'architecture-gate-suite/1 g1-production-evaluation pass',
+    'architecture-gate-suite/1 g1-vertical-agent pass',
     'architecture-gate-suite/1 run-billing pass',
     'architecture-gate-suite/1 run-conversation-browser pass',
     'architecture-gate-suite/1 runtime-security pass',

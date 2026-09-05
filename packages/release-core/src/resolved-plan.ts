@@ -106,6 +106,15 @@ export function resolveExecutionPlan(input: ResolveExecutionPlanInputV1) {
         'authorization policy ceiling is not canonical',
       );
   }
+  if (
+    decision.root_authority !== undefined &&
+    canonicalSha256(decision.root_authority.policy_ceiling) !==
+      canonicalSha256(normalizeCapabilityPolicyCeiling(decision.root_authority.policy_ceiling))
+  )
+    fail(
+      '$.authorization_decision.root_authority.policy_ceiling',
+      'root authorization policy ceiling is not canonical',
+    );
   const expectedDecisionHash = canonicalSha256ExcludingRootKeys(decision, ['decision_hash']);
   if (decision.decision_hash !== expectedDecisionHash) {
     throw new ReleaseCoreError(
@@ -379,6 +388,91 @@ export function resolveExecutionPlan(input: ResolveExecutionPlanInputV1) {
   const mappingByRequirement = new Map(
     mappings.map((mapping) => [mapping.requirement_id, mapping]),
   );
+  const rootNode = closure.resource_nodes.find((node) => node.node_role === 'root');
+  if (rootNode === undefined) fail('$.closure.resource_nodes', 'closure omits its root authority');
+  const rootRequirements = compileCapabilityRequirementEnvelope(rootNode.intrinsic_policy);
+  const rootHasExecutableDemand =
+    rootRequirements.credential_requirements.length > 0 ||
+    rootRequirements.operation_contract_hashes.length > 0 ||
+    rootRequirements.minimum_limits.calls > 0 ||
+    rootRequirements.minimum_limits.depth > 0 ||
+    rootRequirements.minimum_limits.parallelism > 0 ||
+    rootRequirements.minimum_limits.budget.amount_credits !== '0' ||
+    rootRequirements.minimum_limits.budget.input_tokens > 0 ||
+    rootRequirements.minimum_limits.budget.output_tokens > 0 ||
+    rootRequirements.minimum_limits.budget.total_tokens > 0 ||
+    rootRequirements.minimum_limits.budget.duration_ms > 0;
+  if (
+    revision.deployment_kind === 'flow' &&
+    rootHasExecutableDemand &&
+    decision.root_authority === undefined
+  )
+    fail(
+      '$.authorization_decision.root_authority',
+      'capability-bearing Flow root requires explicit authorization and credentials',
+    );
+  const rootAuthority =
+    decision.root_authority === undefined
+      ? undefined
+      : (() => {
+          const closureCeiling = normalizeCapabilityPolicyCeiling(
+            effectivePolicyAsCeiling(closure.aggregate_limits),
+          );
+          const authorizationCeiling = normalizeCapabilityPolicyCeiling(
+            decision.root_authority.policy_ceiling,
+          );
+          const intersection = meetCapabilityPolicyCeilings(closureCeiling, authorizationCeiling);
+          if (canonicalSha256(intersection) !== canonicalSha256(authorizationCeiling))
+            fail(
+              '$.authorization_decision.root_authority.policy_ceiling',
+              'root authorization policy attempts to expand the verified closure',
+            );
+          let effectivePolicy: EffectiveCapabilityPolicyV1;
+          try {
+            effectivePolicy = resolveEffectiveCapabilityPolicy(intersection, rootRequirements);
+          } catch (error) {
+            const context = error instanceof Error ? `: ${error.message}` : '';
+            fail(
+              '$.authorization_decision.root_authority.policy_ceiling',
+              `root authorization cannot satisfy the verified Flow demand${context}`,
+            );
+          }
+          const bindings = decision.root_authority.credential_bindings;
+          const byRequirement = new Map(
+            bindings.map((binding) => [binding.requirement_id, binding]),
+          );
+          if (byRequirement.size !== effectivePolicy.credential_requirements.length)
+            fail(
+              '$.authorization_decision.root_authority.credential_bindings',
+              'Flow root must resolve every and only credential requirement',
+            );
+          const credentialMappingHashes = effectivePolicy.credential_requirements
+            .map((requirement) =>
+              verifyAdmissionCredential({
+                deployment_kind: revision.deployment_kind,
+                workspace_id: revision.workspace_id,
+                caller:
+                  snapshot.entry_source_kind === 'browser_session'
+                    ? {
+                        kind: 'browser',
+                        principal_id: snapshot.authenticated_principal.end_user_principal_id,
+                      }
+                    : { kind: 'service' },
+                requirement,
+                mapping: mappingByRequirement.get(requirement.requirement_id),
+                credential: byRequirement.get(requirement.requirement_id),
+                epoch_evidence: completeEpochEvidence,
+                path: '$.authorization_decision.root_authority.credential_bindings',
+              }),
+            )
+            .sort(compareCanonicalStrings);
+          return {
+            effective_policy: effectivePolicy,
+            effective_policy_hash: canonicalSha256(effectivePolicy),
+            credential_mapping_hashes: credentialMappingHashes,
+            credential_bindings: bindings,
+          };
+        })();
   const enabledBindings = decision.allowed_bindings
     .map((allowed, index) => {
       const binding = closureBindings.get(allowed.binding_path);
@@ -639,9 +733,10 @@ export function resolveExecutionPlan(input: ResolveExecutionPlanInputV1) {
     );
     requireGrantForPin('capability_release_grant', binding.target);
   }
-  const usedMappingHashes = new Set(
-    enabledBindings.flatMap((binding) => binding.credential_mapping_hashes),
-  );
+  const usedMappingHashes = new Set([
+    ...(rootAuthority?.credential_mapping_hashes ?? []),
+    ...enabledBindings.flatMap((binding) => binding.credential_mapping_hashes),
+  ]);
   for (const mapping of mappings.filter((candidate) =>
     usedMappingHashes.has(candidate.mapping_hash),
   )) {
@@ -682,6 +777,7 @@ export function resolveExecutionPlan(input: ResolveExecutionPlanInputV1) {
       sources: canonicalEpochSources,
     }),
     authorization_expires_at: decision.expires_at,
+    ...(rootAuthority === undefined ? {} : { root_authority: rootAuthority }),
     enabled_bindings: enabledBindings,
     disabled_binding_paths: disabledBindingPaths,
     required_binding_paths: requiredBindingPaths,
@@ -710,6 +806,38 @@ export function resolveExecutionPlan(input: ResolveExecutionPlanInputV1) {
 export function verifyResolvedExecutionPlan(input: unknown, expectedPlanHash: unknown) {
   const parsed = ResolvedExecutionPlanV1Schema.safeParse(boundedDataSnapshot(input, 'closure'));
   if (!parsed.success) fail('$.plan', 'resolved plan failed its closed output contract');
+  if (parsed.data.root_authority !== undefined) {
+    const root = parsed.data.root_authority;
+    if (
+      !sameStrings(
+        root.credential_mapping_hashes,
+        root.credential_bindings.map((credential) => credential.mapping_hash),
+      ) ||
+      !sameStrings(
+        root.credential_bindings.map((credential) => credential.requirement_id),
+        root.effective_policy.credential_requirements.map(
+          (requirement) => requirement.requirement_id,
+        ),
+      ) ||
+      root.effective_policy_hash !== canonicalSha256(root.effective_policy)
+    )
+      fail('$.plan.root_authority', 'root credential set or effective policy hash is stale');
+    for (const credential of root.credential_bindings) {
+      const requirement = root.effective_policy.credential_requirements.find(
+        (entry) => entry.requirement_id === credential.requirement_id,
+      );
+      if (
+        requirement === undefined ||
+        requirement.provider_id !== credential.provider_id ||
+        requirement.audience !== credential.audience ||
+        !sameStrings(requirement.required_scopes, credential.granted_scopes) ||
+        !requirement.allowed_principal_modes.includes(credential.principal_mode) ||
+        credential.epoch_source.source_id !== credential.credential_id ||
+        credential.epoch_source.source_subkey !== credentialMaterialIdentityHash(credential)
+      )
+        fail('$.plan.root_authority.credential_bindings', 'root credential authority is invalid');
+    }
+  }
   for (const [index, binding] of parsed.data.enabled_bindings.entries()) {
     if (
       binding.target.workspace_id !== parsed.data.workspace_id ||

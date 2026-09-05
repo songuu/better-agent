@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { canonicalSha256 } from '@better-agent/release-core';
 import { applyHumanGateMutation, evaluateRunRetentionEligibility } from '../src/index.js';
 import {
   archiveEvidence,
@@ -10,10 +11,74 @@ import {
 } from './fixtures.js';
 
 describe('HumanGate execution boundary', () => {
-  it('keeps every positive apply path unavailable in G0-06', () => {
-    expect(() => applyHumanGateMutation({ action: 'APPROVE' })).toThrowError(
-      /RUN_HUMAN_GATE_APPLY_UNAVAILABLE/,
+  const gate = {
+    schema_version: 'human-gate-instance/1' as const,
+    gate_id: '018f47f2-c541-7cc6-9292-4a2c35304001',
+    workspace_id: workspaceId,
+    run_id: runId,
+    checkpoint_id: '018f47f2-c541-7cc6-9292-4a2c35304002',
+    gate_type: 'approval' as const,
+    resolved_plan_hash: `sha256:${'a'.repeat(64)}`,
+    canonical_operation_hash: `sha256:${'b'.repeat(64)}`,
+    public_schema: {},
+    approver_policy_id: 'workspace-admin',
+    status: 'PENDING' as const,
+    barrier_generation: 1,
+    expires_at: '2026-01-02T00:00:00.000Z',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('atomically claims and approves an exact live Gate', () => {
+    const decision = { action: 'APPROVE', reason: 'reviewed' };
+    const result = applyHumanGateMutation({
+      gate,
+      expected_plan_hash: gate.resolved_plan_hash,
+      expected_operation_hash: gate.canonical_operation_hash,
+      action: 'APPROVE',
+      actor: 'user:reviewer',
+      claim_ref: 'gate-claim://1',
+      claim: { actor: 'user:reviewer' },
+      decision_ref: 'gate-decision://1',
+      decision,
+      now: '2026-01-01T01:00:00.000Z',
+    });
+    expect(result.replayed).toBe(false);
+    expect(result.gate).toMatchObject({ status: 'APPROVED', claimed_by: 'user:reviewer' });
+    expect(result.gate.decision_sha256).toBe(canonicalSha256(decision));
+  });
+
+  it('replays the exact decision and rejects expiry or semantic drift', () => {
+    const input = {
+      gate,
+      expected_plan_hash: gate.resolved_plan_hash,
+      expected_operation_hash: gate.canonical_operation_hash,
+      action: 'REJECT' as const,
+      actor: 'user:reviewer',
+      claim_ref: 'gate-claim://2',
+      claim: { actor: 'user:reviewer' },
+      decision_ref: 'gate-decision://2',
+      decision: { action: 'REJECT', reason: 'unsafe' },
+      now: '2026-01-01T01:00:00.000Z',
+    };
+    const first = applyHumanGateMutation(input);
+    expect(applyHumanGateMutation({ ...input, gate: first.gate }).replayed).toBe(true);
+    expect(() =>
+      applyHumanGateMutation({ ...input, expected_plan_hash: `sha256:${'c'.repeat(64)}` }),
+    ).toThrowError(/RUN_HUMAN_GATE_INVALID/);
+    expect(() => applyHumanGateMutation({ ...input, now: gate.expires_at })).toThrowError(
+      /RUN_HUMAN_GATE_EXPIRED/,
     );
+    expect(() => applyHumanGateMutation({ ...input, extra: true } as never)).toThrowError(
+      /RUN_HUMAN_GATE_INVALID/,
+    );
+    expect(() =>
+      applyHumanGateMutation({
+        ...input,
+        gate: first.gate,
+        decision: { action: 'REJECT', reason: 'changed' },
+      }),
+    ).toThrowError(/RUN_HUMAN_GATE_CONFLICT/);
   });
 });
 

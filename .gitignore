@@ -5,6 +5,8 @@
 !.env.example
 
 node_modules/
+.pnpm-store/
+.pnpm-store-recovery/
 .turbo/
 coverage/
 dist/
