@@ -8,7 +8,9 @@ import {
   createPostgresProductStore,
   type ProductStore,
   validateAgentInput,
+  validateRunInput,
 } from './product-store.js';
+import { createModelRuntimeFromEnvironment, type ProductModelRuntime } from './model-runtime.js';
 
 export const WEB_BASE_PATH = '/better-agent/';
 
@@ -32,6 +34,7 @@ export interface BetterAgentWebOptions {
   readonly actorId?: string;
   readonly adminPassword?: string;
   readonly buildSha?: string;
+  readonly modelRuntime?: ProductModelRuntime;
   readonly now?: () => Date;
   readonly productStore?: ProductStore;
   readonly publicRoot?: string;
@@ -186,6 +189,7 @@ export async function createBetterAgentWebServer(
   const secureCookies =
     options.secureCookies ?? process.env.BETTER_AGENT_SECURE_COOKIES !== 'false';
   const databaseUrl = process.env.BETTER_AGENT_RUNTIME_DATABASE_URL;
+  const modelRuntime = options.modelRuntime ?? createModelRuntimeFromEnvironment();
   const hasPostgresEnvironment = databaseUrl !== undefined || process.env.PGHOST !== undefined;
   const productStore =
     options.productStore ??
@@ -265,6 +269,72 @@ export async function createBetterAgentWebServer(
       sendJson(request, response, 201, { agent });
       return true;
     }
+    if (path === `${WEB_BASE_PATH}api/product/runs` && request.method === 'GET') {
+      sendJson(request, response, 200, { runs: await productStore.listRuns(workspaceId) });
+      return true;
+    }
+    const conversationCreationMatch = new RegExp(
+      `^${WEB_BASE_PATH}api/product/agents/([0-9a-f-]{36})/conversations$`,
+      'u',
+    ).exec(path);
+    if (
+      conversationCreationMatch !== null &&
+      UUID.test(conversationCreationMatch[1] ?? '') &&
+      request.method === 'POST'
+    ) {
+      const payload = (await readJsonBody(request)) as Record<string, unknown>;
+      if (
+        typeof payload !== 'object' ||
+        payload === null ||
+        Array.isArray(payload) ||
+        Object.keys(payload).length !== 0
+      ) {
+        throw new Error('invalid_conversation_payload');
+      }
+      const conversation = await productStore.createConversation(
+        workspaceId,
+        actorId,
+        conversationCreationMatch[1] as string,
+      );
+      sendJson(request, response, 201, { conversation });
+      return true;
+    }
+    const conversationRunMatch = new RegExp(
+      `^${WEB_BASE_PATH}api/product/conversations/([0-9a-f-]{36})/runs$`,
+      'u',
+    ).exec(path);
+    if (
+      conversationRunMatch !== null &&
+      UUID.test(conversationRunMatch[1] ?? '') &&
+      request.method === 'POST'
+    ) {
+      if (modelRuntime === undefined) {
+        sendJson(request, response, 503, { error: 'model_runtime_not_configured' });
+        return true;
+      }
+      const prepared = await productStore.beginRun(
+        workspaceId,
+        actorId,
+        conversationRunMatch[1] as string,
+        validateRunInput(await readJsonBody(request)),
+      );
+      try {
+        const output = await modelRuntime.generate({
+          history: prepared.history,
+          instructions: prepared.instructions,
+          model: prepared.model,
+          prompt: prepared.inputText,
+        });
+        const run = await productStore.completeRun(workspaceId, actorId, prepared.runId, output);
+        sendJson(request, response, 201, { run });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'model_provider_failed';
+        const errorCode = /^model_[a-z0-9_]+$/u.test(message) ? message : 'model_provider_failed';
+        await productStore.failRun(workspaceId, actorId, prepared.runId, errorCode);
+        throw new Error(errorCode, { cause: error });
+      }
+      return true;
+    }
     const match = new RegExp(
       `^${WEB_BASE_PATH}api/product/agents/([0-9a-f-]{36})(/publish)?$`,
       'u',
@@ -317,11 +387,17 @@ export async function createBetterAgentWebServer(
           const message = error instanceof Error ? error.message : 'unknown_product_error';
           const status = message.includes('revision conflict')
             ? 409
-            : message.startsWith('invalid_') ||
-                message.includes('payload') ||
-                message.includes('request_body')
-              ? 400
-              : 500;
+            : message === 'agent has no published release'
+              ? 409
+              : message === 'conversation not found'
+                ? 404
+                : message.startsWith('model_')
+                  ? 502
+                  : message.startsWith('invalid_') ||
+                      message.includes('payload') ||
+                      message.includes('request_body')
+                    ? 400
+                    : 500;
           sendJson(request, response, status, {
             error: status === 500 ? 'product_operation_failed' : message,
           });
@@ -347,6 +423,7 @@ export async function createBetterAgentWebServer(
           service: 'better-agent-web',
           base_path: WEB_BASE_PATH,
           build_sha: buildSha,
+          model_runtime: modelRuntime === undefined ? 'unconfigured' : 'configured',
           started_at: startedAt,
         });
         return;

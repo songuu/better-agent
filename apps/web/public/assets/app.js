@@ -1,5 +1,5 @@
 const apiRoot = '/better-agent/api/product';
-const state = { agents: [], current: null };
+const state = { agents: [], conversationId: null, current: null, runs: [] };
 const byId = (id) => document.getElementById(id);
 const form = byId('agent-form');
 const loginDialog = byId('login-dialog');
@@ -57,8 +57,35 @@ function renderAgents() {
   });
 }
 
+function renderRuns() {
+  const list = byId('runs-list');
+  if (state.runs.length === 0) {
+    list.innerHTML = '<p class="empty-note">暂无运行记录。</p>';
+    return;
+  }
+  list.innerHTML = state.runs
+    .map(
+      (run) =>
+        `<article class="run-row"><span>${String(run.sequence).padStart(2, '0')}</span><div><b>${escapeHtml(run.inputText)}</b><small>${escapeHtml(run.outputText || run.errorCode || '运行中')}</small></div><em class="is-${run.status}">${run.status.toUpperCase()}</em><time>${new Date(run.createdAt).toLocaleString('zh-CN')}</time></article>`,
+    )
+    .join('');
+}
+
+function resetConversationView() {
+  byId('run-messages').innerHTML =
+    '<div class="run-empty"><b>发布版本已锁定</b><span>发送消息，验证真实模型响应与持久化 Run。</span></div>';
+}
+
+async function loadRuns() {
+  const payload = await request('/runs');
+  state.runs = payload.runs;
+  renderRuns();
+}
+
 function showEditor(agent = null) {
   state.current = agent;
+  state.conversationId = null;
+  resetConversationView();
   byId('welcome-panel').hidden = true;
   form.hidden = false;
   form.elements.name.value = agent?.name || '';
@@ -74,6 +101,7 @@ function showEditor(agent = null) {
     : '尚未保存';
   byId('instruction-count').textContent = String(form.elements.instructions.value.length);
   byId('publish-agent').disabled = !agent;
+  byId('test-agent').disabled = agent?.status !== 'published';
   renderAgents();
 }
 
@@ -98,7 +126,7 @@ async function bootstrap() {
     byId('build-label').textContent =
       `BUILD · ${health.build_sha === 'development' ? 'LOCAL' : health.build_sha.slice(0, 8).toUpperCase()}`;
     await request('/session');
-    await loadAgents();
+    await Promise.all([loadAgents(), loadRuns()]);
   } catch (error) {
     if (error.status === 401) loginDialog.showModal();
     else {
@@ -119,7 +147,7 @@ byId('login-form').addEventListener('submit', async (event) => {
     });
     loginDialog.close();
     event.currentTarget.reset();
-    await loadAgents();
+    await Promise.all([loadAgents(), loadRuns()]);
     toast('工作区已连接');
   } catch (error) {
     byId('login-error').textContent = error.message;
@@ -171,5 +199,72 @@ byId('publish-agent').addEventListener('click', async () => {
     toast(error.message, true);
   }
 });
+
+function appendMessage(role, text, pending = false) {
+  const messages = byId('run-messages');
+  messages.querySelector('.run-empty')?.remove();
+  const article = document.createElement('article');
+  article.className = `run-message is-${role}${pending ? ' is-pending' : ''}`;
+  const label = document.createElement('span');
+  label.textContent = role === 'user' ? 'YOU' : 'AGENT';
+  const body = document.createElement('p');
+  body.textContent = text;
+  article.append(label, body);
+  messages.append(article);
+  messages.scrollTop = messages.scrollHeight;
+  return article;
+}
+
+byId('test-agent').addEventListener('click', () => {
+  if (!state.current || state.current.status !== 'published') return;
+  byId('run-agent-name').textContent = state.current.name;
+  byId('run-dialog').showModal();
+  byId('run-form').elements.message.focus();
+});
+byId('run-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.current) return;
+  const textarea = event.currentTarget.elements.message;
+  const message = textarea.value.trim();
+  if (!message) return;
+  textarea.value = '';
+  textarea.disabled = true;
+  appendMessage('user', message);
+  const pending = appendMessage('assistant', '正在调用已发布模型……', true);
+  try {
+    if (!state.conversationId) {
+      const payload = await request(`/agents/${state.current.id}/conversations`, {
+        method: 'POST',
+        body: '{}',
+      });
+      state.conversationId = payload.conversation.id;
+    }
+    const payload = await request(`/conversations/${state.conversationId}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    });
+    pending.remove();
+    appendMessage('assistant', payload.run.outputText);
+    await loadRuns();
+  } catch (error) {
+    pending.remove();
+    appendMessage('assistant', `运行失败：${error.message}`);
+    await loadRuns().catch(() => undefined);
+  } finally {
+    textarea.disabled = false;
+    textarea.focus();
+  }
+});
+
+byId('show-runs').addEventListener('click', async () => {
+  await loadRuns().catch((error) => toast(error.message, true));
+  byId('runs-dialog').showModal();
+});
+document
+  .querySelector('[data-close-run]')
+  .addEventListener('click', () => byId('run-dialog').close());
+document
+  .querySelector('[data-close-runs]')
+  .addEventListener('click', () => byId('runs-dialog').close());
 
 bootstrap();

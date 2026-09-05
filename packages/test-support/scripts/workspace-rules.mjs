@@ -324,7 +324,7 @@ export function validateDeploymentWorkflow(workflow) {
   const workflowDigest = createHash('sha256')
     .update(workflow.replaceAll('\r\n', '\n'))
     .digest('hex');
-  if (workflowDigest !== '9159cfad78359a58de1288ec06ea7e9cfb449cd885e367284651b373e94e554d') {
+  if (workflowDigest !== 'c164e713c544bac540590535963128d89d18e8d40da7e36c0a45282cb164d182') {
     errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
   }
   const definition = parseCiWorkflow(workflow, errors);
@@ -372,18 +372,28 @@ export function validateDeploymentWorkflow(workflow) {
   }
   const deploySteps = Array.isArray(deploy.steps) ? deploy.steps : [];
   const configureSsh = deploySteps.find((step) => isRecord(step) && step.name === 'Configure SSH');
+  const configureModel = deploySteps.find(
+    (step) =>
+      isRecord(step) && step.name === 'Configure independent model runtime when provisioned',
+  );
   const secretSteps = deploySteps.filter(
     (step) => isRecord(step) && JSON.stringify(step).includes('secrets.'),
   );
   if (
     !isRecord(configureSsh) ||
-    secretSteps.length !== 1 ||
-    secretSteps[0] !== configureSsh ||
+    !isRecord(configureModel) ||
+    secretSteps.length !== 2 ||
+    !secretSteps.includes(configureSsh) ||
+    !secretSteps.includes(configureModel) ||
     !isRecord(configureSsh.env) ||
-    Object.keys(configureSsh.env).sort().join(',') !== 'SSH_KNOWN_HOSTS,SSH_PRIVATE_KEY'
+    Object.keys(configureSsh.env).sort().join(',') !== 'SSH_KNOWN_HOSTS,SSH_PRIVATE_KEY' ||
+    !isRecord(configureModel.env) ||
+    Object.keys(configureModel.env).sort().join(',') !== 'MODEL_API_KEY,MODEL_BASE_URL' ||
+    configureModel.env.MODEL_API_KEY !== '${{ secrets.BETTER_AGENT_MODEL_API_KEY }}' ||
+    configureModel.env.MODEL_BASE_URL !== '${{ vars.BETTER_AGENT_MODEL_BASE_URL }}'
   ) {
     errors.push(
-      '.github/workflows/deploy-foundation.yml: SSH secrets must be scoped to Configure SSH',
+      '.github/workflows/deploy-foundation.yml: SSH and model secrets must be scoped to their fixed steps',
     );
   }
   const buildSteps = Array.isArray(build.steps) ? build.steps : [];
@@ -424,6 +434,7 @@ export function validateDeploymentWorkflow(workflow) {
     'deploy/systemd/better-agent-web.service',
     'deploy/nginx/better-agent.location.conf',
     'scripts/deployment/install-production-web.sh',
+    'scripts/deployment/configure-production-model.sh',
     'Verify public Better Agent web route',
     'https://songuu.top/better-agent/api/healthz',
     'BETTER_AGENT_POSTGRES_ROOT',

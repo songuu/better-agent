@@ -1243,3 +1243,203 @@ body::before {
     scroll-behavior: auto;
   }
 }
+
+/* Live runtime overlays extend the Studio's industrial control-plane language. */
+.run-dialog,
+.runs-dialog {
+  width: min(760px, calc(100% - 32px));
+  max-width: none;
+  height: min(760px, calc(100vh - 42px));
+  padding: 0;
+  border: 1px solid #375047;
+  background: #07110f;
+  color: #eef7f1;
+  box-shadow: 0 34px 120px rgba(0, 0, 0, 0.76);
+  font-family: "IBM Plex Mono", "Noto Sans SC", monospace;
+}
+.runs-dialog {
+  width: min(940px, calc(100% - 32px));
+}
+.run-dialog::backdrop,
+.runs-dialog::backdrop {
+  background: rgba(2, 8, 6, 0.88);
+  backdrop-filter: blur(9px);
+}
+.run-dialog > header,
+.runs-dialog > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  padding: 24px 28px 20px;
+  border-bottom: 1px solid #26332f;
+}
+.run-dialog header p,
+.runs-dialog header p {
+  margin: 0 0 7px;
+  color: #45f2ac;
+  font-size: 8px;
+  letter-spacing: 0.18em;
+}
+.run-dialog header h2,
+.runs-dialog header h2 {
+  margin: 0;
+  font:
+    800 27px "Arial Narrow",
+    "Noto Sans SC",
+    sans-serif;
+}
+.run-dialog header button,
+.runs-dialog header button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #304039;
+  background: transparent;
+  color: #8aa097;
+  font-size: 20px;
+  cursor: pointer;
+}
+.run-messages {
+  height: calc(100% - 190px);
+  overflow: auto;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.run-empty {
+  margin: auto;
+  display: grid;
+  gap: 8px;
+  text-align: center;
+  color: #6f847a;
+  font-size: 10px;
+}
+.run-empty b {
+  color: #dbe9e1;
+  font-size: 13px;
+}
+.run-message {
+  max-width: 82%;
+  padding: 14px 16px;
+  border: 1px solid #2b3c35;
+  background: #0b1814;
+}
+.run-message.is-user {
+  margin-left: auto;
+  border-color: #386553;
+  background: #10241c;
+}
+.run-message > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #45f2ac;
+  font-size: 7px;
+  letter-spacing: 0.16em;
+}
+.run-message p {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.run-message.is-pending {
+  opacity: 0.58;
+  animation: runtime-pulse 1.2s ease-in-out infinite alternate;
+}
+@keyframes runtime-pulse {
+  to {
+    opacity: 0.9;
+  }
+}
+#run-form {
+  min-height: 112px;
+  padding: 18px 22px;
+  border-top: 1px solid #26332f;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+#run-form label {
+  display: grid;
+  gap: 7px;
+}
+#run-form label span {
+  color: #60766b;
+  font-size: 7px;
+  letter-spacing: 0.16em;
+}
+#run-form textarea {
+  min-height: 62px;
+  max-height: 140px;
+  resize: vertical;
+  border: 1px solid #304039;
+  background: #091511;
+  color: #edf6f0;
+  padding: 11px 13px;
+  font: 500 11px / 1.6 inherit;
+}
+.runs-list {
+  height: calc(100% - 86px);
+  padding: 18px 28px 28px;
+  overflow: auto;
+}
+.run-row {
+  min-height: 82px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 90px 150px;
+  gap: 14px;
+  align-items: center;
+  border-bottom: 1px solid #23312c;
+}
+.run-row > span,
+.run-row time {
+  color: #61766c;
+  font-size: 8px;
+}
+.run-row div {
+  min-width: 0;
+}
+.run-row b,
+.run-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-row b {
+  margin-bottom: 7px;
+  font-size: 11px;
+}
+.run-row small {
+  color: #788d83;
+  font-size: 9px;
+}
+.run-row em {
+  font: normal 700 8px inherit;
+  color: #f2c94c;
+}
+.run-row em.is-completed {
+  color: #45f2ac;
+}
+.run-row em.is-failed {
+  color: #ff7b70;
+}
+
+@media (max-width: 680px) {
+  .run-row {
+    grid-template-columns: 30px minmax(0, 1fr) 66px;
+  }
+  .run-row time {
+    display: none;
+  }
+  #run-form {
+    grid-template-columns: 1fr;
+  }
+  .run-dialog {
+    height: calc(100vh - 20px);
+  }
+  .run-messages {
+    height: calc(100% - 236px);
+  }
+}

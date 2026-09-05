@@ -49,4 +49,6 @@ tags: [plan, product, agent, frontend, backend, deployment]
 
 ## 当前事实
 
-当前仓库已有领域契约、认证/发布/运行/计费核心、PostgreSQL migrations、内部 API composition seam 和 G1-A1 的部分 closure 编译器；尚无 Web/Studio 应用、公开 HTTP server、模型执行器、worker、知识摄取、对象存储与完整 E2E。生产上传仍受既有宿主磁盘和发布权限边界约束，不能用本地通过代替线上完成。
+截至 2026-09-05，独立 Web/Studio、同源认证 API、Agent Draft/不可变 Product Release、PostgreSQL 持久化和首页路由已部署到 `songuu.top`。迁移 021 继续补齐 Release 绑定的 Conversation、顺序 Run、模型 Responses 适配器、失败终态、token 用量和 Run Console；本地真实 PostgreSQL 与浏览器纵向链已通过。生产模型执行仍须由独立 `BETTER_AGENT_MODEL_API_KEY` Secret 激活，禁止借用相邻项目凭据或用模拟响应冒充生产模型完成。
+
+尚未完成的产品面包括 Flow Studio、知识摄取与检索、Plugin/MCP/Skill Pack/SubAgent 编排、异步任务、Deployment/API/Webhook、成员权限以及完整运营治理。现有 G1 内核和门禁是这些能力的安全基础，不能替代最终产品验收。

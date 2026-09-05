@@ -206,8 +206,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/db',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 153,
-    successMarker: '@better-agent/db:test:       Tests  153 passed (153)',
+    testCount: 156,
+    successMarker: '@better-agent/db:test:       Tests  156 passed (156)',
   }),
   Object.freeze({
     packageName: '@better-agent/domain-contracts',
@@ -249,8 +249,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/web',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 28,
-    successMarker: '@better-agent/web:test:       Tests  28 passed (28)',
+    testCount: 38,
+    successMarker: '@better-agent/web:test:       Tests  38 passed (38)',
   }),
 ]);
 
@@ -433,6 +433,7 @@ function validateMigrationFiles(value) {
       '018',
       '019',
       '020',
+      '021',
     ],
     'migration IDs',
   );

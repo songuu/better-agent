@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { validateAgentInput } from '../src/product-store.js';
+import { validateAgentInput, validateRunInput } from '../src/product-store.js';
 
 describe('product Agent input', () => {
   it('accepts and freezes the closed product draft payload', () => {
@@ -26,5 +26,23 @@ describe('product Agent input', () => {
     [{ description: '', instructions: 'Do work', model: 'latest', name: 'A' }],
   ])('rejects an incomplete, open or mutable draft payload', (payload) => {
     expect(() => validateAgentInput(payload)).toThrow();
+  });
+});
+
+describe('product Run input', () => {
+  it('accepts a closed bounded message', () => {
+    expect(validateRunInput({ message: '  请核对当前状态。  ' })).toEqual({
+      message: '请核对当前状态。',
+    });
+  });
+
+  it.each([
+    [null],
+    [{}],
+    [{ message: '' }],
+    [{ message: 'x'.repeat(8_001) }],
+    [{ extra: true, message: 'hello' }],
+  ])('rejects malformed, empty, oversized or open input', (input) => {
+    expect(() => validateRunInput(input)).toThrow();
   });
 });

@@ -243,11 +243,35 @@ jobs:
           HEALTH="${health}" node -e 'const h=JSON.parse(process.env.HEALTH);if(h.status!=="ok"||h.build_sha!==process.argv[1])process.exit(1)' "${ACCEPTED_SHA}"
           curl --fail --silent --show-error --max-time 10 https://songuu.top/better-agent/ | grep -Fq '<title>Better Agent · Studio</title>'
 
+      - name: Configure independent model runtime when provisioned
+        env:
+          MODEL_API_KEY: ${{ secrets.BETTER_AGENT_MODEL_API_KEY }}
+          MODEL_BASE_URL: ${{ vars.BETTER_AGENT_MODEL_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MODEL_API_KEY:-}" ]; then
+            echo 'Independent model runtime secret is not provisioned; preserving current host configuration.'
+            exit 0
+          fi
+          model_base_url="${MODEL_BASE_URL:-https://api.openai.com/v1}"
+          model_file="${RUNNER_TEMP}/better-agent-model.env"
+          umask 077
+          printf 'BETTER_AGENT_MODEL_API_KEY=%s\nBETTER_AGENT_MODEL_BASE_URL=%s\n' \
+            "${MODEL_API_KEY}" "${model_base_url}" > "${model_file}"
+          scp -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes \
+            "${model_file}" "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/better-agent-model-${ACCEPTED_SHA}.env"
+          ssh -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "SHARED_ROOT='${SHARED_ROOT}' bash '${CURRENT_LINK}/scripts/deployment/configure-production-model.sh' '/tmp/better-agent-model-${ACCEPTED_SHA}.env'"
+          rm -f -- "${model_file}"
+
       - name: Remove deployment key
         if: always()
         run: |
           if [ -f ~/.ssh/better_agent_deploy_key ] && [ -n "${DEPLOY_HOST}" ] && [ -n "${DEPLOY_USER}" ]; then
             ssh -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
               "rm -f -- '/tmp/better-agent-${ACCEPTED_SHA}.tgz'" || true
+            ssh -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "rm -f -- '/tmp/better-agent-model-${ACCEPTED_SHA}.env'" || true
           fi
           rm -f ~/.ssh/better_agent_deploy_key

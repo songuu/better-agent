@@ -77,7 +77,9 @@
     "019_g1_production_evaluation.down.sql",
     "019_g1_production_evaluation.up.sql",
     "020_product_agent_studio.down.sql",
-    "020_product_agent_studio.up.sql"
+    "020_product_agent_studio.up.sql",
+    "021_product_agent_runtime.down.sql",
+    "021_product_agent_runtime.up.sql"
   ],
   "postgresSuites": [
     {
@@ -265,8 +267,8 @@
     {
       "packageName": "@better-agent/db",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 153,
-      "successMarker": "@better-agent/db:test:       Tests  153 passed (153)"
+      "testCount": 156,
+      "successMarker": "@better-agent/db:test:       Tests  156 passed (156)"
     },
     {
       "packageName": "@better-agent/domain-contracts",
@@ -307,8 +309,8 @@
     {
       "packageName": "@better-agent/web",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 28,
-      "successMarker": "@better-agent/web:test:       Tests  28 passed (28)"
+      "testCount": 38,
+      "successMarker": "@better-agent/web:test:       Tests  38 passed (38)"
     }
   ],
   "scripts": {
@@ -341,14 +343,14 @@
         "@better-agent/auth:test:       Tests  54 passed (54)",
         "@better-agent/billing-core:test:       Tests  43 passed (43)",
         "@better-agent/database-capability:test:       Tests  8 passed (8)",
-        "@better-agent/db:test:       Tests  153 passed (153)",
+        "@better-agent/db:test:       Tests  156 passed (156)",
         "@better-agent/domain-contracts:test:       Tests  193 passed (193)",
         "@better-agent/instruction-skill:test:       Tests  8 passed (8)",
         "@better-agent/knowledge-core:test:       Tests  7 passed (7)",
         "@better-agent/release-core:test:       Tests  1118 passed (1118)",
         "@better-agent/run-core:test:       Tests  146 passed (146)",
         "@better-agent/test-support:test:       Tests  23 passed (23)",
-        "@better-agent/web:test:       Tests  28 passed (28)"
+        "@better-agent/web:test:       Tests  38 passed (38)"
       ],
       "forbidSkippedOutput": true,
       "timeoutMs": 300000

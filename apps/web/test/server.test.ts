@@ -15,7 +15,14 @@ import {
   isInvokedEntrypoint,
   WEB_BASE_PATH,
 } from '../src/server.js';
-import type { AgentDraft, AgentDraftInput, ProductStore } from '../src/product-store.js';
+import type { ProductModelRuntime } from '../src/model-runtime.js';
+import type {
+  AgentDraft,
+  AgentDraftInput,
+  ProductConversation,
+  ProductRun,
+  ProductStore,
+} from '../src/product-store.js';
 
 const openServers: Awaited<ReturnType<typeof createBetterAgentWebServer>>[] = [];
 const execFileAsync = promisify(execFile);
@@ -198,11 +205,93 @@ async function localRequest(
 
 function productFixture(): {
   readonly agents: AgentDraft[];
+  readonly conversations: ProductConversation[];
+  readonly runs: ProductRun[];
   readonly store: ProductStore;
 } {
   const agents: AgentDraft[] = [];
+  const conversations: ProductConversation[] = [];
+  const runs: ProductRun[] = [];
   const timestamp = '2026-09-03T00:00:00.000Z';
   const store: ProductStore = {
+    async createConversation(_workspaceId, _actorId, agentId) {
+      const agent = agents.find((item) => item.id === agentId && item.status === 'published');
+      if (agent === undefined) throw new Error('agent has no published release');
+      const conversation: ProductConversation = {
+        agentId,
+        createdAt: timestamp,
+        id: '44444444-4444-4444-8444-444444444444',
+        releaseVersion: 1,
+        updatedAt: timestamp,
+      };
+      conversations.push(conversation);
+      return conversation;
+    },
+    async beginRun(_workspaceId, _actorId, conversationId, input) {
+      const conversation = conversations.find((item) => item.id === conversationId);
+      const agent = agents.find((item) => item.id === conversation?.agentId);
+      if (conversation === undefined || agent === undefined)
+        throw new Error('conversation not found');
+      const sequence = runs.filter((item) => item.conversationId === conversationId).length + 1;
+      const runId = `55555555-5555-4555-8555-${String(sequence).padStart(12, '0')}`;
+      runs.push({
+        completedAt: null,
+        conversationId,
+        createdAt: timestamp,
+        errorCode: null,
+        id: runId,
+        inputText: input.message,
+        inputTokens: 0,
+        model: agent.model,
+        outputText: null,
+        outputTokens: 0,
+        providerRequestId: null,
+        sequence,
+        status: 'pending',
+      });
+      return {
+        agentId: agent.id,
+        conversationId,
+        history: [],
+        inputText: input.message,
+        instructions: agent.instructions,
+        model: agent.model,
+        runId,
+        sequence,
+      };
+    },
+    async completeRun(_workspaceId, _actorId, runId, output) {
+      const index = runs.findIndex((item) => item.id === runId);
+      const current = runs[index];
+      if (current === undefined) throw new Error('Run not found');
+      const run: ProductRun = {
+        ...current,
+        completedAt: timestamp,
+        inputTokens: output.inputTokens,
+        outputText: output.outputText,
+        outputTokens: output.outputTokens,
+        providerRequestId: output.providerRequestId,
+        status: 'completed',
+      };
+      runs[index] = run;
+      return run;
+    },
+    async failRun(_workspaceId, _actorId, runId, errorCode) {
+      const index = runs.findIndex((item) => item.id === runId);
+      const current = runs[index];
+      if (current === undefined) throw new Error('Run not found');
+      const run: ProductRun = {
+        ...current,
+        completedAt: timestamp,
+        errorCode,
+        status: 'failed',
+      };
+      runs[index] = run;
+      return run;
+    },
+    async listRuns() {
+      return runs;
+    },
     async listAgents() {
       return agents;
     },
@@ -248,7 +337,7 @@ function productFixture(): {
       return agent;
     },
   };
-  return { agents, store };
+  return { agents, conversations, runs, store };
 }
 
 afterEach(async () => {
@@ -386,6 +475,7 @@ describe('Better Agent web runtime', () => {
       service: 'better-agent-web',
       base_path: '/better-agent/',
       build_sha: 'a'.repeat(40),
+      model_runtime: 'unconfigured',
       started_at: '2026-09-03T00:00:00.000Z',
     });
   });
@@ -484,6 +574,105 @@ describe('Better Agent web runtime', () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: 'csrf_guard_required' });
+  });
+
+  it('runs a published Agent through the configured model and persists observable history', async () => {
+    const { agents, store } = productFixture();
+    agents.push({
+      createdAt: '2026-09-03T00:00:00.000Z',
+      description: '运行助手',
+      id: '11111111-1111-4111-8111-111111111111',
+      instructions: '只回答已核验事实。',
+      model: 'gpt-5.6-sol',
+      name: '运行助手',
+      revision: 2,
+      status: 'published',
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    });
+    let providerFails = false;
+    const modelRuntime: ProductModelRuntime = {
+      async generate(input) {
+        if (providerFails) throw new Error('model_provider_http_503');
+        expect(input).toMatchObject({
+          instructions: '只回答已核验事实。',
+          prompt: '当前服务正常吗？',
+        });
+        return {
+          inputTokens: 12,
+          outputText: '当前服务正常。',
+          outputTokens: 6,
+          providerRequestId: 'resp_test',
+        };
+      },
+    };
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      modelRuntime,
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const headers = { ...mutationHeaders, Cookie: cookie };
+    const conversationResponse = await localRequest(
+      origin,
+      '/better-agent/api/product/agents/11111111-1111-4111-8111-111111111111/conversations',
+      { body: '{}', headers, method: 'POST' },
+    );
+    expect(conversationResponse.status).toBe(201);
+    const conversation = (await conversationResponse.json()) as {
+      conversation: ProductConversation;
+    };
+
+    const runResponse = await localRequest(
+      origin,
+      `/better-agent/api/product/conversations/${conversation.conversation.id}/runs`,
+      {
+        body: JSON.stringify({ message: '当前服务正常吗？' }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(runResponse.status).toBe(201);
+    expect(((await runResponse.json()) as { run: ProductRun }).run).toMatchObject({
+      inputText: '当前服务正常吗？',
+      outputText: '当前服务正常。',
+      status: 'completed',
+    });
+
+    providerFails = true;
+    const failedResponse = await localRequest(
+      origin,
+      `/better-agent/api/product/conversations/${conversation.conversation.id}/runs`,
+      {
+        body: JSON.stringify({ message: '触发失败路径。' }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(failedResponse.status).toBe(502);
+    expect(await failedResponse.json()).toEqual({ error: 'model_provider_http_503' });
+
+    const historyResponse = await localRequest(origin, '/better-agent/api/product/runs', {
+      headers: { Cookie: cookie },
+    });
+    expect(historyResponse.status).toBe(200);
+    const history = ((await historyResponse.json()) as { runs: ProductRun[] }).runs;
+    expect(history).toHaveLength(2);
+    expect(history[1]).toMatchObject({
+      errorCode: 'model_provider_http_503',
+      status: 'failed',
+    });
   });
 
   it('does not reflect malformed build identity into the health contract', async () => {

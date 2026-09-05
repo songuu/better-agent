@@ -87,6 +87,10 @@ describe('validateDeploymentWorkflow', () => {
         'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
         'actions/download-artifact@v4',
       ),
+      workflow.replace(
+        'MODEL_API_KEY: $' + '{{ secrets.BETTER_AGENT_MODEL_API_KEY }}',
+        'MODEL_API_KEY: leaked',
+      ),
     ]) {
       expect(validateDeploymentWorkflow(weakened)).not.toEqual([]);
     }

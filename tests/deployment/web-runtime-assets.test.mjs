@@ -24,12 +24,17 @@ const publicHtml = readFileSync(
 );
 const webCurrentSymlinkGuard = ['[[ -L "', '$', '{WEB_CURRENT}', '" ]]'].join('');
 const publicPageMarker = '<title>Better Agent · Studio</title>';
+const modelConfigurator = readFileSync(
+  new URL('../../scripts/deployment/configure-production-model.sh', import.meta.url),
+  'utf8',
+);
 
 test('runs the web runtime as a dedicated hardened loopback service', () => {
   assert.match(unit, /^User=better-agent-web$/m);
   assert.match(unit, /^Group=better-agent-web$/m);
   assert.match(unit, /^EnvironmentFile=\/opt\/better-agent\/shared\/web\.env$/m);
   assert.match(unit, /^EnvironmentFile=\/opt\/better-agent\/shared\/postgres\/env\/product\.env$/m);
+  assert.match(unit, /^EnvironmentFile=-\/opt\/better-agent\/shared\/model\.env$/m);
   assert.match(
     unit,
     /^ExecStart=\/usr\/bin\/node \/opt\/better-agent\/web-current\/apps\/web\/dist\/server\.js$/m,
@@ -102,4 +107,12 @@ test('packages the PostgreSQL client dependency required by the product runtime'
   );
   assert.match(deploymentWorkflow, /web-runtime\/node_modules\/pg\/package\.json/u);
   assert.match(deploymentWorkflow, /apps\/web\/node_modules/u);
+});
+
+test('configures model credentials through a private file without logging their value', () => {
+  assert.match(deploymentWorkflow, /secrets\.BETTER_AGENT_MODEL_API_KEY/u);
+  assert.match(deploymentWorkflow, /better-agent-model-\$\{ACCEPTED_SHA\}\.env/u);
+  assert.match(modelConfigurator, /^install -m 0640 -o root -g better-agent-web/m);
+  assert.match(modelConfigurator, /h\.model_runtime!=="configured"/u);
+  assert.doesNotMatch(modelConfigurator, /set -x|echo "\$\{?MODEL_API_KEY/u);
 });

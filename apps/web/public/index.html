@@ -20,7 +20,7 @@
           <button type="button" class="is-active"><span>01</span>Agent Studio</button>
           <button type="button" disabled><span>02</span>Flow 编排</button>
           <button type="button" disabled><span>03</span>知识与数据</button>
-          <button type="button" disabled><span>04</span>运行记录</button>
+          <button type="button" id="show-runs"><span>04</span>运行记录</button>
           <button type="button" disabled><span>05</span>发布与评测</button>
         </nav>
         <div class="rail-status"><i></i><div><small>POSTGRES RUNTIME</small><b id="runtime-label">正在探测</b></div></div>
@@ -54,7 +54,7 @@
               </div>
               <label><span>说明</span><input name="description" maxlength="500" placeholder="这个 Agent 负责什么？" /></label>
               <label class="prompt-field"><span>系统指令</span><textarea name="instructions" maxlength="20000" required placeholder="定义职责、边界、输入与输出要求……"></textarea><small><b id="instruction-count">0</b> / 20,000</small></label>
-              <footer><button type="button" id="publish-agent" class="button button-ghost" disabled>发布版本</button><button type="submit" class="button button-primary">保存 Draft</button></footer>
+              <footer><button type="button" id="test-agent" class="button button-ghost" disabled>试运行</button><button type="button" id="publish-agent" class="button button-ghost" disabled>发布版本</button><button type="submit" class="button button-primary">保存 Draft</button></footer>
             </form>
           </section>
 
@@ -74,6 +74,15 @@
         <label><span>管理员口令</span><input name="password" type="password" minlength="12" autocomplete="current-password" required /></label>
         <output id="login-error"></output><button class="button button-primary" type="submit">连接工作区</button>
       </form>
+    </dialog>
+    <dialog id="run-dialog" class="run-dialog">
+      <header><div><p>LIVE CONVERSATION</p><h2 id="run-agent-name">Agent 试运行</h2></div><button type="button" data-close-run aria-label="关闭">×</button></header>
+      <div id="run-messages" class="run-messages"><div class="run-empty"><b>发布版本已锁定</b><span>发送消息，验证真实模型响应与持久化 Run。</span></div></div>
+      <form id="run-form"><label><span>MESSAGE</span><textarea name="message" maxlength="8000" required placeholder="输入要交给 Agent 的任务……"></textarea></label><button class="button button-primary" type="submit">运行 ↗</button></form>
+    </dialog>
+    <dialog id="runs-dialog" class="runs-dialog">
+      <header><div><p>OBSERVABILITY</p><h2>运行记录</h2></div><button type="button" data-close-runs aria-label="关闭">×</button></header>
+      <div id="runs-list" class="runs-list"><p class="empty-note">暂无运行记录。</p></div>
     </dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </body>
