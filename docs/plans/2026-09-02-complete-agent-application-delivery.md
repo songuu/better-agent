@@ -51,4 +51,6 @@ tags: [plan, product, agent, frontend, backend, deployment]
 
 截至 2026-09-06，独立 Web/Studio、同源认证 API、Agent Draft/不可变 Product Release、PostgreSQL 持久化和首页路由已部署到 `songuu.top`。迁移 021 补齐 Release 绑定的 Conversation、顺序 Run、模型 Responses 适配器、失败终态、token 用量和 Run Console。迁移 022 继续交付 Flow Studio 首个纵向闭环：Input/Template/Output 有向无环图、变量映射、调试日志、Draft revision CAS、不可变 Release 以及 development/staging/production 环境发布；UI、API、PostgreSQL RLS/ACL 和一次性 PostgreSQL 16 集成验证绑定在同一架构门禁中。迁移 023～028 已继续交付 Knowledge Center、发布评测、Agent 知识/数据库绑定、Database Studio 以及角色设定的文本/结构化双模式和不可变发布快照；角色编辑器另提供同源 AI 生成/优化、按已绑定能力优化、最终指令透视图和无损全屏编辑。生产模型执行与 AI 角色助手仍须由独立 `BETTER_AGENT_MODEL_API_KEY` Secret 激活，禁止借用相邻项目凭据或用模拟响应冒充生产模型完成。
 
+迁移 029～031 已实现 Agent Strategy 的版本化 Draft/Release 快照、说明书驱动的模型路由、强制能力、参数抽取、Token/工具调用上限及闭合参数默认值。参数默认值会在发布时固定，抽取结果只覆盖非空字段，每次 Run 的有效参数在能力 I/O 前由 PostgreSQL 复核并留存。当前 Strategy 仍是单次模型迭代的有界子集，不把它宣称为 P3-2 全部完成。
+
 Flow Studio 仍需扩展代码/API/逻辑/插件等节点、历史版本回滚和 Agent 组合能力。尚未完成的产品面包括知识摄取与检索、Database Operation、Plugin/MCP/Skill Pack/SubAgent 编排、异步任务、Deployment/API/Webhook、成员权限以及完整运营治理。现有 G1 内核和门禁是这些能力的安全基础，不能替代最终产品验收。

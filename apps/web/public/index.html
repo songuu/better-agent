@@ -76,8 +76,10 @@
                   <label><span>输出 Token 上限</span><input name="max_output_tokens" type="number" min="64" max="32000" step="64" value="2000" /></label>
                   <label><span>能力调用上限</span><select name="max_tool_calls"><option value="0">0 · 禁用</option><option value="1">1 · 单能力</option><option value="2" selected>2 · 知识 + 数据</option></select></label>
                   <label><span>温度 <output id="strategy-temperature-value">0.2</output></span><input name="temperature" type="range" min="0" max="2" step="0.1" value="0.2" /></label>
+                  <label><span>知识检索默认参数</span><input name="knowledge_query_default" maxlength="500" placeholder="留空时使用当前用户输入" /></label>
+                  <label><span>数据过滤默认参数</span><input name="database_contains_default" maxlength="500" placeholder="留空时不过滤记录" /></label>
                 </div>
-                <label class="strategy-toggle"><input name="parameter_extraction" type="checkbox" /><span>启用参数抽取，使能力查询跟随当前用户输入</span></label>
+                <label class="strategy-toggle"><input name="parameter_extraction" type="checkbox" /><span>启用参数抽取；抽取为空时回退到已发布默认参数</span></label>
                 <fieldset id="agent-model-routes"><legend>允许路由的模型</legend><label><input type="checkbox" value="gpt-5.6-sol" checked /><span>gpt-5.6-sol<small>复杂推理与生产任务</small></span></label><label><input type="checkbox" value="gpt-5.5" /><span>gpt-5.5<small>平衡的通用执行</small></span></label><label><input type="checkbox" value="gpt-5.4-mini" /><span>gpt-5.4-mini<small>快速与低成本任务</small></span></label></fieldset>
               </section>
               <label><span>发布知识快照</span><select name="knowledge_base_id" id="agent-knowledge-base"><option value="">不绑定知识库</option></select></label>

@@ -15,16 +15,21 @@ export interface ProductAgentModelRoute {
   readonly description: string;
   readonly model: ProductModel;
 }
+export interface ProductAgentParameters {
+  readonly databaseContains: string;
+  readonly knowledgeQuery: string;
+}
 export interface ProductAgentStrategyProfile {
   readonly forcedCapability: ProductAgentForcedCapability;
   readonly maxInputTokens: number;
   readonly maxIterations: 1;
   readonly maxOutputTokens: number;
   readonly maxToolCalls: number;
+  readonly parameterDefaults: ProductAgentParameters;
   readonly parameterExtraction: boolean;
   readonly routes: readonly ProductAgentModelRoute[];
   readonly routingMode: ProductAgentRoutingMode;
-  readonly schemaVersion: 'product-agent-strategy/1';
+  readonly schemaVersion: 'product-agent-strategy/1' | 'product-agent-strategy/2';
   readonly temperature: number;
 }
 export const PRODUCT_AGENT_ROLE_THEMES = [
@@ -343,18 +348,18 @@ export interface ProductStore {
       readonly providerRequestId: string;
     },
   ): Promise<void>;
-  recordRunParameters?(
+  resolveRunParameters?(
     workspaceId: string,
     actorId: string,
     runId: string,
-    extraction: {
-      readonly databaseContains: string;
+    resolution: {
+      readonly effectiveParameters: ProductAgentParameters;
+      readonly extractedParameters: ProductAgentParameters | null;
       readonly inputTokens: number;
-      readonly knowledgeQuery: string;
       readonly outputTokens: number;
-      readonly providerRequestId: string;
+      readonly providerRequestId: string | null;
     },
-  ): Promise<void>;
+  ): Promise<ProductAgentParameters>;
   searchAgentKnowledge(
     workspaceId: string,
     conversationId: string,
@@ -540,10 +545,11 @@ export function createDefaultAgentStrategyProfile(
     maxIterations: 1,
     maxOutputTokens: 2_000,
     maxToolCalls: 2,
+    parameterDefaults: Object.freeze({ databaseContains: '', knowledgeQuery: '' }),
     parameterExtraction: false,
     routes: Object.freeze([Object.freeze({ description: '默认模型', model })]),
     routingMode: 'fixed',
-    schemaVersion: 'product-agent-strategy/1',
+    schemaVersion: 'product-agent-strategy/2',
     temperature: 0.2,
   });
 }
@@ -568,6 +574,8 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
     'max_output_tokens',
     'maxToolCalls',
     'max_tool_calls',
+    'parameterDefaults',
+    'parameter_defaults',
     'parameterExtraction',
     'parameter_extraction',
     'routes',
@@ -589,13 +597,52 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
   const routingMode = strategyValue(profile, 'routingMode', 'routing_mode');
   const forcedCapability = strategyValue(profile, 'forcedCapability', 'forced_capability');
   const parameterExtraction = strategyValue(profile, 'parameterExtraction', 'parameter_extraction');
+  const parameterDefaultsValue = strategyValue(profile, 'parameterDefaults', 'parameter_defaults');
   const maxIterations = strategyValue(profile, 'maxIterations', 'max_iterations');
   const maxToolCalls = strategyValue(profile, 'maxToolCalls', 'max_tool_calls');
   const maxInputTokens = strategyValue(profile, 'maxInputTokens', 'max_input_tokens');
   const maxOutputTokens = strategyValue(profile, 'maxOutputTokens', 'max_output_tokens');
   const routesValue = profile.routes;
-  if (schemaVersion !== 'product-agent-strategy/1')
+  if (schemaVersion !== 'product-agent-strategy/1' && schemaVersion !== 'product-agent-strategy/2')
     throw new Error('Agent strategy schema is unsupported');
+  if (schemaVersion === 'product-agent-strategy/1' && parameterDefaultsValue !== undefined) {
+    throw new Error('Agent strategy v1 cannot contain parameter defaults');
+  }
+  if (
+    schemaVersion === 'product-agent-strategy/2' &&
+    (typeof parameterDefaultsValue !== 'object' ||
+      parameterDefaultsValue === null ||
+      Array.isArray(parameterDefaultsValue))
+  ) {
+    throw new Error('Agent parameter defaults must be an object');
+  }
+  let parameterDefaults: ProductAgentParameters = Object.freeze({
+    databaseContains: '',
+    knowledgeQuery: '',
+  });
+  if (schemaVersion === 'product-agent-strategy/2') {
+    const defaults = parameterDefaultsValue as Record<string, unknown>;
+    const expectedKeys = hasCamelKeys
+      ? ['databaseContains', 'knowledgeQuery']
+      : ['database_contains', 'knowledge_query'];
+    if (Object.keys(defaults).sort().join(',') !== expectedKeys.sort().join(',')) {
+      throw new Error('Agent parameter defaults contain unknown or missing fields');
+    }
+    const databaseContains = strategyValue(defaults, 'databaseContains', 'database_contains');
+    const knowledgeQuery = strategyValue(defaults, 'knowledgeQuery', 'knowledge_query');
+    if (
+      typeof databaseContains !== 'string' ||
+      typeof knowledgeQuery !== 'string' ||
+      databaseContains.trim().length > 500 ||
+      knowledgeQuery.trim().length > 500
+    ) {
+      throw new Error('Agent parameter defaults must contain bounded strings');
+    }
+    parameterDefaults = Object.freeze({
+      databaseContains: databaseContains.trim(),
+      knowledgeQuery: knowledgeQuery.trim(),
+    });
+  }
   if (routingMode !== 'fixed' && routingMode !== 'autonomous')
     throw new Error('Agent routing mode is invalid');
   if (!['none', 'knowledge', 'database'].includes(String(forcedCapability)))
@@ -662,10 +709,11 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
     maxIterations: 1,
     maxOutputTokens: Number(maxOutputTokens),
     maxToolCalls: Number(maxToolCalls),
+    parameterDefaults,
     parameterExtraction,
     routes: Object.freeze(routes),
     routingMode,
-    schemaVersion: 'product-agent-strategy/1',
+    schemaVersion,
     temperature: profile.temperature,
   });
 }
@@ -677,6 +725,14 @@ function strategyProfileToStorage(profile: ProductAgentStrategyProfile): string 
     max_iterations: profile.maxIterations,
     max_output_tokens: profile.maxOutputTokens,
     max_tool_calls: profile.maxToolCalls,
+    ...(profile.schemaVersion === 'product-agent-strategy/2'
+      ? {
+          parameter_defaults: {
+            database_contains: profile.parameterDefaults.databaseContains,
+            knowledge_query: profile.parameterDefaults.knowledgeQuery,
+          },
+        }
+      : {}),
     parameter_extraction: profile.parameterExtraction,
     routes: profile.routes,
     routing_mode: profile.routingMode,
@@ -1408,33 +1464,57 @@ export class PostgresProductStore implements ProductStore {
     );
   }
 
-  async recordRunParameters(
+  async resolveRunParameters(
     workspaceId: string,
     actorId: string,
     runId: string,
-    extraction: {
-      readonly databaseContains: string;
+    resolution: {
+      readonly effectiveParameters: ProductAgentParameters;
+      readonly extractedParameters: ProductAgentParameters | null;
       readonly inputTokens: number;
-      readonly knowledgeQuery: string;
       readonly outputTokens: number;
-      readonly providerRequestId: string;
+      readonly providerRequestId: string | null;
     },
-  ): Promise<void> {
-    await this.#pool.query(
-      'SELECT app.record_agent_product_run_parameters($1::uuid, $2::uuid, $3::uuid, $4::jsonb, $5::text, $6::bigint, $7::bigint)',
+  ): Promise<ProductAgentParameters> {
+    const result = await this.#pool.query<{
+      readonly database_contains: string;
+      readonly knowledge_query: string;
+    }>(
+      'SELECT * FROM app.resolve_agent_product_run_parameters($1::uuid, $2::uuid, $3::uuid, $4::jsonb, $5::jsonb, $6::text, $7::bigint, $8::bigint)',
       [
         workspaceId,
         runId,
         actorId,
         JSON.stringify({
-          database_contains: extraction.databaseContains,
-          knowledge_query: extraction.knowledgeQuery,
+          database_contains: resolution.effectiveParameters.databaseContains,
+          knowledge_query: resolution.effectiveParameters.knowledgeQuery,
         }),
-        extraction.providerRequestId,
-        extraction.inputTokens,
-        extraction.outputTokens,
+        resolution.extractedParameters === null
+          ? null
+          : JSON.stringify({
+              database_contains: resolution.extractedParameters.databaseContains,
+              knowledge_query: resolution.extractedParameters.knowledgeQuery,
+            }),
+        resolution.providerRequestId,
+        resolution.inputTokens,
+        resolution.outputTokens,
       ],
     );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('product store did not resolve Run parameters');
+    if (
+      typeof row.database_contains !== 'string' ||
+      typeof row.knowledge_query !== 'string' ||
+      row.database_contains.length > 500 ||
+      row.knowledge_query.length < 1 ||
+      row.knowledge_query.length > 500
+    ) {
+      throw new Error('product store returned invalid effective Run parameters');
+    }
+    return Object.freeze({
+      databaseContains: row.database_contains,
+      knowledgeQuery: row.knowledge_query,
+    });
   }
 
   async completeRun(

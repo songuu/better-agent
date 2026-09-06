@@ -178,7 +178,7 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
   Object.freeze({
     id: 'product-agent-strategy-profile',
     file: 'infra/test/postgres/run-product-agent-strategy-profile-integration.mjs',
-    sha256: '7300852cfb824a12e11305db13cbe7dcd5c998aeb97654170c02050c3f415640',
+    sha256: '4f9f33f0a8989e794d095fcc97783abf975de927bb82808b91b6cfa879f172e8',
     successMarker: 'architecture-gate-suite/1 product-agent-strategy-profile pass',
   }),
   Object.freeze({
@@ -262,8 +262,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/db',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 182,
-    successMarker: '@better-agent/db:test:       Tests  182 passed (182)',
+    testCount: 184,
+    successMarker: '@better-agent/db:test:       Tests  184 passed (184)',
   }),
   Object.freeze({
     packageName: '@better-agent/domain-contracts',
@@ -305,8 +305,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/web',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 96,
-    successMarker: '@better-agent/web:test:       Tests  96 passed (96)',
+    testCount: 100,
+    successMarker: '@better-agent/web:test:       Tests  100 passed (100)',
   }),
 ]);
 
@@ -499,6 +499,7 @@ function validateMigrationFiles(value) {
       '028',
       '029',
       '030',
+      '031',
     ],
     'migration IDs',
   );

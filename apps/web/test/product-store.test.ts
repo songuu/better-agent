@@ -35,10 +35,11 @@ describe('product Agent input', () => {
       maxIterations: 1,
       maxOutputTokens: 2_000,
       maxToolCalls: 2,
+      parameterDefaults: { databaseContains: '', knowledgeQuery: '' },
       parameterExtraction: false,
       routes: [{ description: '默认模型', model: 'gpt-5.5' }],
       routingMode: 'fixed',
-      schemaVersion: 'product-agent-strategy/1',
+      schemaVersion: 'product-agent-strategy/2',
       temperature: 0.2,
     });
     const strategy = parseAgentStrategyProfile({
@@ -47,18 +48,47 @@ describe('product Agent input', () => {
       max_iterations: 1,
       max_output_tokens: 1200,
       max_tool_calls: 1,
+      parameter_defaults: {
+        database_contains: 'healthy',
+        knowledge_query: '生产健康检查',
+      },
       parameter_extraction: true,
       routes: [
         { description: '低成本分类', model: 'gpt-5.4-mini' },
         { description: '复杂推理', model: 'gpt-5.6-sol' },
       ],
       routing_mode: 'autonomous',
-      schema_version: 'product-agent-strategy/1',
+      schema_version: 'product-agent-strategy/2',
       temperature: 0.4,
     });
     expect(strategy.routingMode).toBe('autonomous');
+    expect(strategy.parameterDefaults).toEqual({
+      databaseContains: 'healthy',
+      knowledgeQuery: '生产健康检查',
+    });
     expect(strategy.routes).toHaveLength(2);
     expect(Object.isFrozen(strategy.routes)).toBe(true);
+    expect(Object.isFrozen(strategy.parameterDefaults)).toBe(true);
+  });
+
+  it('reads immutable v1 strategy releases with empty parameter defaults', () => {
+    expect(
+      parseAgentStrategyProfile({
+        forced_capability: 'none',
+        max_input_tokens: 32000,
+        max_iterations: 1,
+        max_output_tokens: 2000,
+        max_tool_calls: 2,
+        parameter_extraction: false,
+        routes: [{ description: 'default', model: 'gpt-5.6-sol' }],
+        routing_mode: 'fixed',
+        schema_version: 'product-agent-strategy/1',
+        temperature: 0.2,
+      }),
+    ).toMatchObject({
+      parameterDefaults: { databaseContains: '', knowledgeQuery: '' },
+      schemaVersion: 'product-agent-strategy/1',
+    });
   });
 
   it.each([
@@ -73,6 +103,18 @@ describe('product Agent input', () => {
       },
     ],
     [{ ...createDefaultAgentStrategyProfile('gpt-5.5'), maxOutputTokens: 50000 }],
+    [
+      {
+        ...createDefaultAgentStrategyProfile('gpt-5.5'),
+        parameterDefaults: { databaseContains: 'x'.repeat(501), knowledgeQuery: '' },
+      },
+    ],
+    [
+      {
+        ...createDefaultAgentStrategyProfile('gpt-5.5'),
+        parameterDefaults: { databaseContains: '', extra: true, knowledgeQuery: '' },
+      },
+    ],
   ])('rejects an open or unsafe strategy profile', (profile) => {
     expect(() => parseAgentStrategyProfile(profile)).toThrow();
   });
@@ -91,13 +133,14 @@ describe('product Agent input', () => {
         max_iterations: 1,
         max_output_tokens: 1200,
         max_tool_calls: 1,
+        parameter_defaults: { database_contains: '', knowledge_query: '' },
         parameter_extraction: true,
         routes: [
           { description: '默认', model: 'gpt-5.6-sol' },
           { description: '快速', model: 'gpt-5.4-mini' },
         ],
         routing_mode: 'autonomous',
-        schema_version: 'product-agent-strategy/1',
+        schema_version: 'product-agent-strategy/2',
         temperature: 0.3,
       },
       role_mode: 'structured',

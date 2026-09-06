@@ -481,6 +481,9 @@ function productFixture(): {
       if (current === undefined) throw new Error('Run not found');
       runs[index] = { ...current, model: route.model };
     },
+    async resolveRunParameters(_workspaceId, _actorId, _runId, resolution) {
+      return resolution.effectiveParameters;
+    },
     async failRun(_workspaceId, _actorId, runId, errorCode) {
       const index = runs.findIndex((item) => item.id === runId);
       const current = runs[index];
@@ -1133,6 +1136,7 @@ describe('Better Agent web runtime', () => {
       status: 'published',
       strategyProfile: {
         ...createDefaultAgentStrategyProfile('gpt-5.6-sol'),
+        parameterDefaults: { databaseContains: 'healthy', knowledgeQuery: '默认健康检查' },
         routes: [
           { description: '快速状态查询', model: 'gpt-5.4-mini' },
           { description: '复杂诊断', model: 'gpt-5.6-sol' },
@@ -1152,8 +1156,9 @@ describe('Better Agent web runtime', () => {
       extractedQueries.push(query);
       return await originalSearchAgentKnowledge(workspaceId, conversationId, query);
     };
-    store.recordRunParameters = async (_workspaceId, _actorId, _runId, extraction) => {
-      persistedParameters.push(extraction);
+    store.resolveRunParameters = async (_workspaceId, _actorId, _runId, resolution) => {
+      persistedParameters.push(resolution);
+      return resolution.effectiveParameters;
     };
     const modelRuntime: ProductModelRuntime = {
       async generate(input) {
@@ -1178,7 +1183,7 @@ describe('Better Agent web runtime', () => {
       async extractParameters(input) {
         expect(input.maxOutputTokens).toBe(1_998);
         return {
-          databaseContains: 'healthy',
+          databaseContains: '',
           inputTokens: 6,
           knowledgeQuery: '生产健康检查',
           outputText: '{"database_contains":"healthy","knowledge_query":"生产健康检查"}',
@@ -1233,6 +1238,14 @@ describe('Better Agent web runtime', () => {
     });
     expect(extractedQueries).toEqual(['生产健康检查']);
     expect(persistedParameters).toHaveLength(1);
+    expect(persistedParameters[0]).toMatchObject({
+      effectiveParameters: {
+        databaseContains: 'healthy',
+        knowledgeQuery: '生产健康检查',
+      },
+      extractedParameters: { databaseContains: '', knowledgeQuery: '生产健康检查' },
+      providerRequestId: 'resp_parameters',
+    });
     expect(generationInputs).toHaveLength(1);
     expect(generationInputs[0]).toMatchObject({
       maxOutputTokens: 1_995,
@@ -1271,6 +1284,102 @@ describe('Better Agent web runtime', () => {
       errorCode: 'model_provider_http_503',
       status: 'failed',
     });
+  });
+
+  it('resolves published defaults without invoking the parameter extraction model', async () => {
+    const { agents, store } = productFixture();
+    agents.push({
+      createdAt: '2026-09-03T00:00:00.000Z',
+      databaseTableId: null,
+      description: '默认参数助手',
+      id: '11111111-1111-4111-8111-111111111111',
+      instructions: '使用已发布策略。',
+      knowledgeBaseId: null,
+      model: 'gpt-5.6-sol',
+      name: '默认参数助手',
+      revision: 2,
+      roleMode: 'text',
+      roleProfile: null,
+      status: 'published',
+      strategyProfile: {
+        ...createDefaultAgentStrategyProfile('gpt-5.6-sol'),
+        maxToolCalls: 0,
+        parameterDefaults: {
+          databaseContains: 'active',
+          knowledgeQuery: '已发布默认问题',
+        },
+      },
+      strategyVersion: 1,
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    });
+    const resolutions: unknown[] = [];
+    store.resolveRunParameters = async (_workspaceId, _actorId, _runId, resolution) => {
+      resolutions.push(resolution);
+      return resolution.effectiveParameters;
+    };
+    const modelRuntime: ProductModelRuntime = {
+      async generate(input) {
+        expect(input.maxOutputTokens).toBe(2_000);
+        return {
+          inputTokens: 5,
+          outputText: '已使用默认参数。',
+          outputTokens: 5,
+          providerRequestId: 'resp_defaults',
+        };
+      },
+    };
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      modelRuntime,
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const headers = {
+      ...mutationHeaders,
+      Cookie: login.headers.get('set-cookie')?.split(';', 1)[0] ?? '',
+    };
+    const conversationResponse = await localRequest(
+      origin,
+      '/better-agent/api/product/agents/11111111-1111-4111-8111-111111111111/conversations',
+      { body: '{}', headers, method: 'POST' },
+    );
+    const conversation = (await conversationResponse.json()) as {
+      conversation: ProductConversation;
+    };
+    const response = await localRequest(
+      origin,
+      `/better-agent/api/product/conversations/${conversation.conversation.id}/runs`,
+      {
+        body: JSON.stringify({ message: '这次不使用用户输入作为默认查询' }),
+        headers,
+        method: 'POST',
+      },
+    );
+
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(201);
+    expect(resolutions).toEqual([
+      {
+        effectiveParameters: {
+          databaseContains: 'active',
+          knowledgeQuery: '已发布默认问题',
+        },
+        extractedParameters: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        providerRequestId: null,
+      },
+    ]);
   });
 
   it('runs authenticated role assistance through the model boundary and returns validated JSON', async () => {

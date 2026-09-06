@@ -118,7 +118,7 @@ describe('OpenAI-compatible product model runtime', () => {
     { database_contains: 'healthy' },
     { database_contains: 'healthy', extra: true, knowledge_query: 'health' },
     { database_contains: 'x'.repeat(501), knowledge_query: 'health' },
-    { database_contains: '', knowledge_query: '' },
+    { database_contains: '', knowledge_query: 'x'.repeat(501) },
   ])('rejects open, incomplete or unbounded extracted parameters', async (parameters) => {
     const runtime = new OpenAiResponsesRuntime({
       apiKey: 'test-secret',

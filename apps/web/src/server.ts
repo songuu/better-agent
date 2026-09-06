@@ -636,12 +636,17 @@ export async function createBetterAgentWebServer(
         if (consumedOutputTokens >= strategy.maxOutputTokens) {
           throw new Error('model_output_budget_exhausted');
         }
-        let knowledgeQuery = prepared.inputText.slice(0, 500);
-        let databaseContains = '';
+        let extractedParameters: {
+          readonly databaseContains: string;
+          readonly knowledgeQuery: string;
+        } | null = null;
+        let parameterInputTokens = 0;
+        let parameterOutputTokens = 0;
+        let parameterProviderRequestId: string | null = null;
         if (strategy.parameterExtraction) {
           if (
             modelRuntime.extractParameters === undefined ||
-            productStore.recordRunParameters === undefined
+            productStore.resolveRunParameters === undefined
           ) {
             throw new Error('model_parameter_extractor_unavailable');
           }
@@ -650,12 +655,40 @@ export async function createBetterAgentWebServer(
             model: selectedModel,
             prompt: prepared.inputText,
           });
-          await productStore.recordRunParameters(workspaceId, actorId, prepared.runId, extracted);
-          knowledgeQuery = extracted.knowledgeQuery;
-          databaseContains = extracted.databaseContains;
+          extractedParameters = {
+            databaseContains: extracted.databaseContains,
+            knowledgeQuery: extracted.knowledgeQuery,
+          };
+          parameterInputTokens = extracted.inputTokens;
+          parameterOutputTokens = extracted.outputTokens;
+          parameterProviderRequestId = extracted.providerRequestId;
           consumedInputTokens += extracted.inputTokens;
           consumedOutputTokens += extracted.outputTokens;
         }
+        if (productStore.resolveRunParameters === undefined) {
+          throw new Error('model_parameter_resolver_unavailable');
+        }
+        const effectiveParameters = await productStore.resolveRunParameters(
+          workspaceId,
+          actorId,
+          prepared.runId,
+          {
+            effectiveParameters: {
+              databaseContains:
+                extractedParameters?.databaseContains ||
+                strategy.parameterDefaults.databaseContains,
+              knowledgeQuery:
+                extractedParameters?.knowledgeQuery ||
+                strategy.parameterDefaults.knowledgeQuery ||
+                prepared.inputText.slice(0, 500),
+            },
+            extractedParameters,
+            inputTokens: parameterInputTokens,
+            outputTokens: parameterOutputTokens,
+            providerRequestId: parameterProviderRequestId,
+          },
+        );
+        const { databaseContains, knowledgeQuery } = effectiveParameters;
         if (consumedInputTokens >= strategy.maxInputTokens) {
           throw new Error('model_input_budget_exhausted');
         }

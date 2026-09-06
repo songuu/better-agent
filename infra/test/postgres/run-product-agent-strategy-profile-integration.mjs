@@ -17,13 +17,14 @@ const autonomous = JSON.stringify({
   max_iterations: 1,
   max_output_tokens: 200,
   max_tool_calls: 2,
+  parameter_defaults: { database_contains: 'healthy', knowledge_query: 'production health' },
   parameter_extraction: true,
   routes: [
     { model: 'gpt-5.4-mini', description: 'fast' },
     { model: 'gpt-5.6-sol', description: 'reasoning' },
   ],
   routing_mode: 'autonomous',
-  schema_version: 'product-agent-strategy/1',
+  schema_version: 'product-agent-strategy/2',
   temperature: 0.3,
 });
 const fixed = JSON.stringify({
@@ -32,10 +33,11 @@ const fixed = JSON.stringify({
   max_iterations: 1,
   max_output_tokens: 100,
   max_tool_calls: 0,
+  parameter_defaults: { database_contains: '', knowledge_query: 'fixed default' },
   parameter_extraction: false,
   routes: [{ model: 'gpt-5.6-sol', description: 'default' }],
   routing_mode: 'fixed',
-  schema_version: 'product-agent-strategy/1',
+  schema_version: 'product-agent-strategy/2',
   temperature: 0,
 });
 
@@ -103,29 +105,31 @@ async function main() {
   );
   await harness.psql(
     'ba_runtime_test',
-    `SELECT app.record_agent_product_run_parameters('${workspaceId}','${runV1}','${actorId}',
+    `SELECT * FROM app.resolve_agent_product_run_parameters('${workspaceId}','${runV1}','${actorId}',
       '{"database_contains":"healthy","knowledge_query":"production health"}'::jsonb,
-      'resp-parameters-1',30,5);`,
+      '{"database_contains":"","knowledge_query":""}'::jsonb,'resp-parameters-1',30,5);`,
   );
   assertEqual(
     await harness.queryScalar(
       'ba_runtime_test',
-      `SELECT extracted_parameters->>'knowledge_query'||':'||parameter_provider_request_id||':'||parameter_input_tokens||':'||parameter_output_tokens
+      `SELECT parameter_source||':'||effective_parameters->>'database_contains'||':'||effective_parameters->>'knowledge_query'||':'||
+        extracted_parameters->>'knowledge_query'||':'||parameter_provider_request_id||':'||parameter_input_tokens||':'||parameter_output_tokens
        FROM app.list_agent_product_runs('${workspaceId}') WHERE id='${runV1}';`,
     ),
-    'production health:resp-parameters-1:30:5',
-    'parameter extraction evidence',
+    'extracted:healthy:production health::resp-parameters-1:30:5',
+    'effective parameter fallback and extraction evidence',
   );
   assertRejected(
     await harness.psql(
       'ba_runtime_test',
-      `SELECT app.record_agent_product_run_parameters('${workspaceId}','${runV1}','${actorId}',
+      `SELECT * FROM app.resolve_agent_product_run_parameters('${workspaceId}','${runV1}','${actorId}',
+        '{"database_contains":"changed","knowledge_query":"changed"}'::jsonb,
         '{"database_contains":"changed","knowledge_query":"changed"}'::jsonb,
         'resp-parameters-replay',1,1);`,
       { allowFailure: true },
     ),
-    /parameter extraction conflict|40001/u,
-    'parameter extraction replay',
+    /parameter resolution conflict|40001/u,
+    'parameter resolution replay',
   );
   await harness.psql(
     'ba_runtime_test',
@@ -138,13 +142,51 @@ async function main() {
   assertRejected(
     await harness.psql(
       'ba_runtime_test',
-      `SELECT app.record_agent_product_run_parameters('${workspaceId}','${fixedRun}','${actorId}',
-        '{"database_contains":"","knowledge_query":"no extraction"}'::jsonb,
+      `SELECT * FROM app.resolve_agent_product_run_parameters('${workspaceId}','${fixedRun}','${actorId}',
+        '{"database_contains":"","knowledge_query":"forged"}'::jsonb,
+        '{"database_contains":"","knowledge_query":"forged"}'::jsonb,
         'resp-parameters-denied',1,1);`,
       { allowFailure: true },
     ),
-    /parameter extraction conflict|40001/u,
-    'disabled parameter extraction',
+    /parameter resolution conflict|40001/u,
+    'disabled extraction rejects provider evidence',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.complete_agent_product_run('${workspaceId}','${fixedRun}','${actorId}','bypass','resp-bypass',1,1);`,
+      { allowFailure: true },
+    ),
+    /parameter|40001/u,
+    'completion before parameter resolution',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT * FROM app.resolve_agent_product_run_parameters('${workspaceId}','${fixedRun}','${actorId}',
+      '{"database_contains":"","knowledge_query":"fixed default"}'::jsonb,NULL,NULL,0,0);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT parameter_source||':'||effective_parameters->>'knowledge_query'
+       FROM app.list_agent_product_runs('${workspaceId}') WHERE id='${fixedRun}';`,
+    ),
+    'defaults:fixed default',
+    'database-authored fixed defaults',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.complete_agent_product_run('${workspaceId}','${fixedRun}','${actorId}','fixed done','resp-fixed',10,10);`,
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.record_agent_product_run_parameters('${workspaceId}','${deniedRun}','${actorId}',
+        '{"database_contains":"","knowledge_query":"legacy"}'::jsonb,'resp-legacy',1,1);`,
+      { allowFailure: true },
+    ),
+    /permission denied|42501/u,
+    'legacy extraction mutation surface',
   );
   assertRejected(
     await harness.psql(
@@ -172,7 +214,7 @@ async function main() {
     'immutable strategy release',
   );
   process.stdout.write(
-    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed profiles, versioned drafts, immutable releases, conversation pinning, autonomous route allowlist, audited parameter extraction and aggregate token budgets.\n`,
+    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback and aggregate token budgets.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-agent-strategy-profile pass\n');
 }

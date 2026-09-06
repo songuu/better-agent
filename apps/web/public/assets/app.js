@@ -133,10 +133,14 @@ function readStrategyProfile() {
     max_iterations: 1,
     max_output_tokens: Number(form.elements.max_output_tokens.value),
     max_tool_calls: Number(form.elements.max_tool_calls.value),
+    parameter_defaults: {
+      database_contains: form.elements.database_contains_default.value.trim(),
+      knowledge_query: form.elements.knowledge_query_default.value.trim(),
+    },
     parameter_extraction: form.elements.parameter_extraction.checked,
     routes,
     routing_mode: form.elements.routing_mode.value,
-    schema_version: 'product-agent-strategy/1',
+    schema_version: 'product-agent-strategy/2',
     temperature: Number(form.elements.temperature.value),
   };
 }
@@ -147,6 +151,7 @@ function populateStrategyProfile(profile = null, model = 'gpt-5.6-sol', version 
     maxInputTokens: 32000,
     maxOutputTokens: 2000,
     maxToolCalls: 2,
+    parameterDefaults: { databaseContains: '', knowledgeQuery: '' },
     parameterExtraction: false,
     routes: [{ model }],
     routingMode: 'fixed',
@@ -157,6 +162,9 @@ function populateStrategyProfile(profile = null, model = 'gpt-5.6-sol', version 
   form.elements.max_input_tokens.value = String(strategy.maxInputTokens);
   form.elements.max_output_tokens.value = String(strategy.maxOutputTokens);
   form.elements.max_tool_calls.value = String(strategy.maxToolCalls);
+  form.elements.knowledge_query_default.value = strategy.parameterDefaults?.knowledgeQuery || '';
+  form.elements.database_contains_default.value =
+    strategy.parameterDefaults?.databaseContains || '';
   form.elements.parameter_extraction.checked = strategy.parameterExtraction;
   form.elements.temperature.value = String(strategy.temperature);
   byId('strategy-temperature-value').textContent = String(strategy.temperature);

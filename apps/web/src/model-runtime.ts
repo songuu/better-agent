@@ -196,7 +196,7 @@ export class OpenAiResponsesRuntime implements ProductModelRuntime {
       history: [],
       instructions: [
         '你是 Agent 能力参数抽取器。只输出一个 JSON 对象，且只能包含以下两个字段：',
-        'knowledge_query：用于知识检索的非空字符串，1–500 字符。',
+        'knowledge_query：用于知识检索的字符串，0–500 字符；无法确定时输出空字符串以使用已发布默认值。',
         'database_contains：用于收窄数据库快照记录的字符串，0–500 字符；无需过滤时输出空字符串。',
         '不得输出 Markdown、解释或其他字段。',
       ].join('\n'),
@@ -223,11 +223,7 @@ export class OpenAiResponsesRuntime implements ProductModelRuntime {
       }
       const databaseContains = record.database_contains.trim();
       const knowledgeQuery = record.knowledge_query.trim();
-      if (
-        databaseContains.length > 500 ||
-        knowledgeQuery.length < 1 ||
-        knowledgeQuery.length > 500
-      ) {
+      if (databaseContains.length > 500 || knowledgeQuery.length > 500) {
         throw new Error('invalid');
       }
       return Object.freeze({ ...result, databaseContains, knowledgeQuery });
