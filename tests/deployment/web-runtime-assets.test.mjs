@@ -138,6 +138,8 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
   }
   assert.doesNotMatch(publicJavaScript, /localStorage|sessionStorage/u);
   assert.match(publicCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/u);
+  assert.match(publicCss, /@media \(max-width: 1400px\) \{\s*\.knowledge-studio \{/u);
+  assert.match(publicCss, /@media \(max-width: 1400px\) \{\s*\.flow-studio \{/u);
 });
 
 test('packages the PostgreSQL client dependency required by the product runtime', () => {

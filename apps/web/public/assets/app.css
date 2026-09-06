@@ -496,7 +496,7 @@
 .toast.is-error {
   background: #ff7b70;
 }
-@media (max-width: 1050px) {
+@media (max-width: 1400px) {
   .studio-grid {
     grid-template-columns: 210px 1fr;
   }
@@ -1557,7 +1557,7 @@ body::before {
   color: #45f2ac;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1400px) {
   .flow-studio {
     grid-template-columns: 210px minmax(560px, 1fr);
   }
@@ -1809,7 +1809,7 @@ body::before {
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
-@media (max-width: 1180px) {
+@media (max-width: 1400px) {
   .knowledge-studio {
     grid-template-columns: 220px 1fr;
   }
