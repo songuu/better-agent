@@ -20,8 +20,9 @@
           <button type="button" id="show-agents" class="is-active"><span>01</span>Agent Studio</button>
           <button type="button" id="show-flows"><span>02</span>Flow 编排</button>
           <button type="button" id="show-knowledge"><span>03</span>知识与数据</button>
-          <button type="button" id="show-runs"><span>04</span>运行记录</button>
-          <button type="button" id="show-evaluation"><span>05</span>发布与评测</button>
+          <button type="button" id="show-database"><span>04</span>Database</button>
+          <button type="button" id="show-runs"><span>05</span>运行记录</button>
+          <button type="button" id="show-evaluation"><span>06</span>发布与评测</button>
         </nav>
         <div class="rail-status"><i></i><div><small>POSTGRES RUNTIME</small><b id="runtime-label">正在探测</b></div></div>
       </aside>
@@ -29,7 +30,7 @@
       <main class="studio-main">
         <header class="studio-topbar">
           <div><p id="workspace-path">独立工作区 / AGENTS</p><h1 id="studio-title">Agent Studio</h1></div>
-          <div class="top-actions"><span id="build-label">BUILD · PENDING</span><button type="button" id="new-agent" class="button button-primary">＋ 新建 Agent</button><button type="button" id="new-flow" class="button button-primary" hidden>＋ 新建 Flow</button><button type="button" id="new-knowledge" class="button button-primary" hidden>＋ 新建知识库</button></div>
+          <div class="top-actions"><span id="build-label">BUILD · PENDING</span><button type="button" id="new-agent" class="button button-primary">＋ 新建 Agent</button><button type="button" id="new-flow" class="button button-primary" hidden>＋ 新建 Flow</button><button type="button" id="new-knowledge" class="button button-primary" hidden>＋ 新建知识库</button><button type="button" id="new-database" class="button button-primary" hidden>＋ 新建数据表</button></div>
         </header>
 
         <section id="agent-view" class="studio-grid">
@@ -137,6 +138,41 @@
             <p>RETRIEVAL PROBE</p>
             <form id="knowledge-search-form"><label><span>检索当前知识库</span><textarea name="query" maxlength="500" required placeholder="输入问题或关键词……"></textarea></label><button type="submit" class="button button-ghost">检索片段</button></form>
             <div id="knowledge-hits" class="knowledge-hits"><span>选择知识库后开始检索。</span></div>
+          </aside>
+        </section>
+
+        <section id="database-view" class="knowledge-studio database-studio" hidden>
+          <aside class="knowledge-catalog" aria-label="数据库表列表">
+            <div class="catalog-head"><span>MANAGED TABLES</span><b id="database-count">00</b></div>
+            <div id="database-list" class="knowledge-list"><p class="empty-note">还没有数据表。创建一个开始。</p></div>
+          </aside>
+          <section class="knowledge-workbench">
+            <div id="database-welcome" class="welcome-panel">
+              <p class="eyebrow">SAFE DATA OPERATIONS / POSTGRESQL</p>
+              <h2>声明数据结构，<br />执行受控只读检索。</h2>
+              <p>定义固定列白名单，追加标量 JSON 记录，再通过参数化 contains 操作查询。运行时不接受任意 SQL，数据按工作区隔离。</p>
+              <button type="button" class="button button-primary" data-create-database>创建第一个数据表</button>
+            </div>
+            <form id="database-table-form" class="knowledge-form" hidden>
+              <header><div><p>DATABASE · NEW</p><h2>创建托管表</h2></div></header>
+              <label><span>名称</span><input name="name" maxlength="80" required placeholder="例如：customers" /></label>
+              <label><span>说明</span><input name="description" maxlength="500" placeholder="这个数据表提供什么事实？" /></label>
+              <label><span>列白名单</span><input name="columns" maxlength="800" required placeholder="customer_id, name, status" /></label>
+              <footer><small>仅支持字母开头的标识符，最多 20 列</small><button type="submit" class="button button-primary">创建数据表</button></footer>
+            </form>
+            <div id="database-detail" hidden>
+              <header class="knowledge-head"><div><p>ACTIVE MANAGED TABLE</p><h2 id="database-title">未选择数据表</h2><span id="database-description"></span></div><b id="database-row-count">0 ROWS</b></header>
+              <div id="database-columns" class="database-columns"></div>
+              <form id="database-rows-form" class="knowledge-form knowledge-ingest">
+                <label><span>追加 JSON 行</span><textarea name="rows" maxlength="1048576" required placeholder='[{"customer_id": 1, "name": "Ada", "status": "active"}]'></textarea></label>
+                <footer><small>1–500 行；字段必须与列白名单完全一致，值仅限字符串、数字、布尔或 null</small><button type="submit" class="button button-primary">追加记录</button></footer>
+              </form>
+            </div>
+          </section>
+          <aside class="knowledge-search">
+            <p>READ-ONLY OPERATION</p>
+            <form id="database-query-form"><label><span>查询列</span><select name="column" id="database-query-column"></select></label><label><span>包含文本</span><textarea name="contains" maxlength="500" placeholder="留空可预览前 20 行"></textarea></label><button type="submit" class="button button-ghost">执行参数化查询</button></form>
+            <div id="database-results" class="knowledge-hits"><span>选择数据表后执行查询。</span></div>
           </aside>
         </section>
 

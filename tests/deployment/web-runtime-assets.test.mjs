@@ -165,6 +165,23 @@ test('ships a release and evaluation center backed by recorded product evidence'
   assert.doesNotMatch(publicJavaScript, /mockEvaluation|fakeEvaluation|simulatedEvaluation/u);
 });
 
+test('ships the managed PostgreSQL Database Studio with parameterized read controls', () => {
+  for (const marker of [
+    'id="show-database"',
+    'id="database-view"',
+    'id="database-table-form"',
+    'id="database-rows-form"',
+    'id="database-query-form"',
+    'id="database-results"',
+  ]) {
+    assert.ok(publicHtml.includes(marker), `missing Database Studio control: ${marker}`);
+  }
+  for (const marker of ['/database-tables', '/rows', '/query', 'loadDatabaseTables']) {
+    assert.ok(publicJavaScript.includes(marker), `missing Database Studio behavior: ${marker}`);
+  }
+  assert.doesNotMatch(publicJavaScript, /SELECT\s+\*\s+FROM|executeSql|rawSql/iu);
+});
+
 test('packages the PostgreSQL client dependency required by the product runtime', () => {
   assert.match(
     deploymentWorkflow,

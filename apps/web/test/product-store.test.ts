@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   validateAgentInput,
+  validateDatabaseQueryInput,
+  validateDatabaseRowsInput,
+  validateDatabaseTableInput,
   validateFlowDebugInput,
   validateFlowDraftInput,
   validateFlowEnvironment,
@@ -75,6 +78,49 @@ describe('product Knowledge input', () => {
   it('rejects empty and oversized search queries', () => {
     expect(() => validateKnowledgeQuery('')).toThrow();
     expect(() => validateKnowledgeQuery('x'.repeat(501))).toThrow();
+  });
+});
+
+describe('product Database input', () => {
+  it('accepts closed table, scalar row and bounded query payloads', () => {
+    expect(
+      validateDatabaseTableInput({
+        columns: ['customer_id', 'status'],
+        description: '客户状态投影',
+        name: 'customers',
+      }),
+    ).toEqual({
+      columns: ['customer_id', 'status'],
+      description: '客户状态投影',
+      name: 'customers',
+    });
+    expect(validateDatabaseRowsInput({ rows: [{ customer_id: 7, status: 'active' }] })).toEqual({
+      rows: [{ customer_id: 7, status: 'active' }],
+    });
+    expect(validateDatabaseQueryInput({ column: 'status', contains: 'active', limit: 20 })).toEqual(
+      {
+        column: 'status',
+        contains: 'active',
+        limit: 20,
+      },
+    );
+  });
+
+  it.each([
+    [{ columns: [], description: '', name: 'empty' }],
+    [{ columns: ['bad-column'], description: '', name: 'bad' }],
+    [{ columns: ['id', 'id'], description: '', name: 'duplicate' }],
+    [{ rows: [{ nested: { unsafe: true } }] }],
+    [{ rows: [{ score: Number.NaN }] }],
+    [{ column: 'status', contains: '', limit: 101 }],
+  ])('rejects unsafe or unbounded Database payloads', (payload) => {
+    expect(() =>
+      'columns' in payload
+        ? validateDatabaseTableInput(payload)
+        : 'rows' in payload
+          ? validateDatabaseRowsInput(payload)
+          : validateDatabaseQueryInput(payload),
+    ).toThrow();
   });
 });
 

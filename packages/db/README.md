@@ -291,6 +291,12 @@ lease/fence-checked functions; exact source pins are checked by a narrow
 authorization-owner projection, without granting the run owner raw registry
 access. Non-empty rollback is rejected.
 
+Migration `026_product_database_studio` exposes the product-facing managed
+Database surface. A workspace declares 1–20 exact columns, appends bounded
+scalar JSON rows, and queries one allowlisted column through a fixed
+parameterized contains operation. Rows are immutable, FORCE-RLS and owner-only;
+the runtime role has function execution only and no direct table access.
+
 Migrations `012_g1_agent_strategy_execution` and
 `013_g1_worker_human_gate` retain the reviewed AgentPlan, fenced Strategy
 state/actions/results and replay-first Human Gate decisions behind phase-local

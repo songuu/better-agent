@@ -1716,7 +1716,8 @@ body::before {
 }
 .knowledge-form input,
 .knowledge-form textarea,
-.knowledge-search textarea {
+.knowledge-search textarea,
+.knowledge-search select {
   border: 1px solid #304039;
   background: #091511;
   color: #edf6f0;
@@ -1726,8 +1727,29 @@ body::before {
 }
 .knowledge-form input:focus,
 .knowledge-form textarea:focus,
-.knowledge-search textarea:focus {
+.knowledge-search textarea:focus,
+.knowledge-search select:focus {
   border-color: #45f2ac;
+}
+.knowledge-search select {
+  width: 100%;
+}
+.database-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -10px 0 26px;
+}
+.database-columns code {
+  border: 1px solid #2c493d;
+  background: #0c1a16;
+  color: #77efbd;
+  padding: 7px 9px;
+  font: 500 9px inherit;
+}
+.database-studio .knowledge-hits article p {
+  margin-bottom: 0;
+  white-space: pre-wrap;
 }
 .knowledge-ingest textarea {
   min-height: 190px;

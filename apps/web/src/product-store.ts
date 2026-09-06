@@ -146,6 +146,38 @@ export interface ProductKnowledgeDocumentInput {
   readonly title: string;
 }
 
+export interface ProductDatabaseTable {
+  readonly columns: readonly string[];
+  readonly createdAt: string;
+  readonly description: string;
+  readonly id: string;
+  readonly name: string;
+  readonly rowCount: number;
+  readonly updatedAt: string;
+}
+
+export interface ProductDatabaseTableInput {
+  readonly columns: readonly string[];
+  readonly description: string;
+  readonly name: string;
+}
+
+export interface ProductDatabaseRow {
+  readonly createdAt: string;
+  readonly ordinal: number;
+  readonly record: Readonly<Record<string, boolean | null | number | string>>;
+}
+
+export interface ProductDatabaseRowsInput {
+  readonly rows: readonly Readonly<Record<string, boolean | null | number | string>>[];
+}
+
+export interface ProductDatabaseQueryInput {
+  readonly column: string;
+  readonly contains: string;
+  readonly limit: number;
+}
+
 export interface ProductReleaseEvaluationTarget {
   readonly environments: readonly string[];
   readonly failedEvidenceCount: number;
@@ -199,6 +231,17 @@ export interface ProductStore {
     actorId: string,
     input: ProductKnowledgeBaseInput,
   ): Promise<ProductKnowledgeBase>;
+  createDatabaseTable(
+    workspaceId: string,
+    actorId: string,
+    input: ProductDatabaseTableInput,
+  ): Promise<ProductDatabaseTable>;
+  appendDatabaseRows(
+    workspaceId: string,
+    actorId: string,
+    tableId: string,
+    input: ProductDatabaseRowsInput,
+  ): Promise<number>;
   ingestKnowledgeDocument(
     workspaceId: string,
     actorId: string,
@@ -216,6 +259,7 @@ export interface ProductStore {
   listFlowDebugRuns(workspaceId: string, flowId: string): Promise<readonly ProductFlowDebugRun[]>;
   listFlows(workspaceId: string): Promise<readonly ProductFlowDraft[]>;
   listKnowledgeBases(workspaceId: string): Promise<readonly ProductKnowledgeBase[]>;
+  listDatabaseTables(workspaceId: string): Promise<readonly ProductDatabaseTable[]>;
   listKnowledgeDocuments(
     workspaceId: string,
     knowledgeBaseId: string,
@@ -247,6 +291,11 @@ export interface ProductStore {
     knowledgeBaseId: string,
     query: string,
   ): Promise<readonly ProductKnowledgeHit[]>;
+  queryDatabaseTable(
+    workspaceId: string,
+    tableId: string,
+    input: ProductDatabaseQueryInput,
+  ): Promise<readonly ProductDatabaseRow[]>;
   updateAgent(
     workspaceId: string,
     agentId: string,
@@ -308,6 +357,22 @@ interface KnowledgeHitRow {
   readonly document_title: string;
   readonly ordinal: string | number;
   readonly score: string | number;
+}
+
+interface DatabaseTableRow {
+  readonly columns: unknown;
+  readonly created_at: Date | string;
+  readonly description: string;
+  readonly id: string;
+  readonly name: string;
+  readonly row_count: string | number;
+  readonly updated_at: Date | string;
+}
+
+interface DatabaseRecordRow {
+  readonly created_at: Date | string;
+  readonly ordinal: string | number;
+  readonly record: unknown;
 }
 
 interface ConversationRow {
@@ -630,6 +695,40 @@ function toKnowledgeHit(row: KnowledgeHitRow): ProductKnowledgeHit {
   });
 }
 
+function toDatabaseTable(row: DatabaseTableRow): ProductDatabaseTable {
+  if (!Array.isArray(row.columns) || row.columns.some((column) => typeof column !== 'string')) {
+    throw new Error('product store returned invalid Database columns');
+  }
+  return Object.freeze({
+    columns: Object.freeze([...row.columns]) as readonly string[],
+    createdAt: asIso(row.created_at),
+    description: row.description,
+    id: row.id,
+    name: row.name,
+    rowCount: nonnegativeInteger(row.row_count, 'Database row count'),
+    updatedAt: asIso(row.updated_at),
+  });
+}
+
+function toDatabaseRow(row: DatabaseRecordRow): ProductDatabaseRow {
+  if (typeof row.record !== 'object' || row.record === null || Array.isArray(row.record)) {
+    throw new Error('product store returned an invalid Database record');
+  }
+  const record = Object.fromEntries(
+    Object.entries(row.record).map(([key, value]) => {
+      if (value !== null && !['boolean', 'number', 'string'].includes(typeof value)) {
+        throw new Error('product store returned an invalid Database field');
+      }
+      return [key, value as boolean | null | number | string];
+    }),
+  );
+  return Object.freeze({
+    createdAt: asIso(row.created_at),
+    ordinal: nonnegativeInteger(row.ordinal, 'Database row ordinal'),
+    record: Object.freeze(record),
+  });
+}
+
 export class PostgresProductStore implements ProductStore {
   readonly #pool: Pool;
 
@@ -768,6 +867,63 @@ export class PostgresProductStore implements ProductStore {
     const row = result.rows[0];
     if (row === undefined) throw new Error('product store did not return the Knowledge base');
     return toKnowledgeBase(row);
+  }
+
+  async #getDatabaseTable(workspaceId: string, tableId: string): Promise<ProductDatabaseTable> {
+    const result = await this.#pool.query<DatabaseTableRow>(
+      'SELECT * FROM app.list_product_database_tables($1::uuid) AS source WHERE source.id = $2::uuid',
+      [workspaceId, tableId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('product store did not return the Database table');
+    return toDatabaseTable(row);
+  }
+
+  async createDatabaseTable(
+    workspaceId: string,
+    actorId: string,
+    input: ProductDatabaseTableInput,
+  ): Promise<ProductDatabaseTable> {
+    const result = await this.#pool.query<{ readonly id: string }>(
+      'SELECT app.create_product_database_table($1::uuid, $2::uuid, $3::text, $4::text, $5::jsonb) AS id',
+      [workspaceId, actorId, input.name, input.description, JSON.stringify(input.columns)],
+    );
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error('product store did not create the Database table');
+    return await this.#getDatabaseTable(workspaceId, id);
+  }
+
+  async appendDatabaseRows(
+    workspaceId: string,
+    actorId: string,
+    tableId: string,
+    input: ProductDatabaseRowsInput,
+  ): Promise<number> {
+    const result = await this.#pool.query<{ readonly count: string | number }>(
+      'SELECT app.append_product_database_rows($1::uuid, $2::uuid, $3::uuid, $4::jsonb) AS count',
+      [workspaceId, tableId, actorId, JSON.stringify(input.rows)],
+    );
+    return positiveInteger(result.rows[0]?.count ?? 0, 'appended Database row count');
+  }
+
+  async listDatabaseTables(workspaceId: string): Promise<readonly ProductDatabaseTable[]> {
+    const result = await this.#pool.query<DatabaseTableRow>(
+      'SELECT * FROM app.list_product_database_tables($1::uuid)',
+      [workspaceId],
+    );
+    return Object.freeze(result.rows.map(toDatabaseTable));
+  }
+
+  async queryDatabaseTable(
+    workspaceId: string,
+    tableId: string,
+    input: ProductDatabaseQueryInput,
+  ): Promise<readonly ProductDatabaseRow[]> {
+    const result = await this.#pool.query<DatabaseRecordRow>(
+      'SELECT * FROM app.query_product_database_table($1::uuid, $2::uuid, $3::text, $4::text, $5::integer)',
+      [workspaceId, tableId, input.column, input.contains, input.limit],
+    );
+    return Object.freeze(result.rows.map(toDatabaseRow));
   }
 
   async createKnowledgeBase(
@@ -1165,4 +1321,92 @@ export function validateKnowledgeQuery(value: unknown): string {
     throw new Error('Knowledge query must contain 1–500 characters');
   }
   return query;
+}
+
+const DATABASE_COLUMN = /^[A-Za-z][A-Za-z0-9_]{0,39}$/u;
+
+export function validateDatabaseTableInput(value: unknown): ProductDatabaseTableInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Database table payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 3 ||
+    typeof input.name !== 'string' ||
+    typeof input.description !== 'string' ||
+    !Array.isArray(input.columns)
+  ) {
+    throw new Error('Database table payload has an invalid shape');
+  }
+  const name = input.name.trim();
+  const columns = input.columns.map((column) => (typeof column === 'string' ? column.trim() : ''));
+  if (name.length < 1 || name.length > 80 || input.description.length > 500) {
+    throw new Error('Database table metadata is invalid');
+  }
+  if (
+    columns.length < 1 ||
+    columns.length > 20 ||
+    columns.some((column) => !DATABASE_COLUMN.test(column)) ||
+    new Set(columns).size !== columns.length
+  ) {
+    throw new Error('Database columns must be 1–20 unique identifiers');
+  }
+  return Object.freeze({ columns: Object.freeze(columns), description: input.description, name });
+}
+
+export function validateDatabaseRowsInput(value: unknown): ProductDatabaseRowsInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Database rows payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (Object.keys(input).length !== 1 || !Array.isArray(input.rows)) {
+    throw new Error('Database rows payload must contain only rows');
+  }
+  if (input.rows.length < 1 || input.rows.length > 500) {
+    throw new Error('Database row batch must contain 1–500 rows');
+  }
+  if (Buffer.byteLength(JSON.stringify(input.rows), 'utf8') > 1_048_576) {
+    throw new Error('Database row batch must not exceed 1 MiB');
+  }
+  const rows = input.rows.map((value) => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new Error('Database row must be an object');
+    }
+    const row = value as Record<string, unknown>;
+    if (
+      Object.keys(row).length < 1 ||
+      Object.entries(row).some(
+        ([key, field]) =>
+          !DATABASE_COLUMN.test(key) ||
+          (field !== null && !['boolean', 'number', 'string'].includes(typeof field)) ||
+          (typeof field === 'number' && !Number.isFinite(field)),
+      )
+    ) {
+      throw new Error('Database row fields must be scalar values');
+    }
+    return Object.freeze({ ...row }) as Readonly<Record<string, boolean | null | number | string>>;
+  });
+  return Object.freeze({ rows: Object.freeze(rows) });
+}
+
+export function validateDatabaseQueryInput(value: unknown): ProductDatabaseQueryInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Database query payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 3 ||
+    typeof input.column !== 'string' ||
+    typeof input.contains !== 'string' ||
+    !Number.isSafeInteger(input.limit)
+  ) {
+    throw new Error('Database query payload has an invalid shape');
+  }
+  const column = input.column.trim();
+  const contains = input.contains.trim();
+  const limit = Number(input.limit);
+  if (!DATABASE_COLUMN.test(column) || contains.length > 500 || limit < 1 || limit > 100) {
+    throw new Error('Database query is invalid');
+  }
+  return Object.freeze({ column, contains, limit });
 }

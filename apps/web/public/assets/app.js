@@ -5,6 +5,8 @@ const state = {
   current: null,
   currentFlow: null,
   currentKnowledge: null,
+  currentDatabase: null,
+  databaseTables: [],
   flows: [],
   knowledgeBases: [],
   knowledgeDocuments: [],
@@ -17,6 +19,8 @@ const form = byId('agent-form');
 const flowForm = byId('flow-form');
 const knowledgeBaseForm = byId('knowledge-base-form');
 const knowledgeDocumentForm = byId('knowledge-document-form');
+const databaseTableForm = byId('database-table-form');
+const databaseRowsForm = byId('database-rows-form');
 const loginDialog = byId('login-dialog');
 
 function toast(message, error = false) {
@@ -238,37 +242,104 @@ async function loadKnowledgeBases() {
   renderAgentKnowledgeOptions();
 }
 
+function renderDatabaseTables() {
+  byId('database-count').textContent = String(state.databaseTables.length).padStart(2, '0');
+  const list = byId('database-list');
+  if (state.databaseTables.length === 0) {
+    list.innerHTML = '<p class="empty-note">还没有数据表。创建一个开始。</p>';
+    return;
+  }
+  list.innerHTML = state.databaseTables
+    .map(
+      (table) =>
+        `<button class="knowledge-row ${state.currentDatabase?.id === table.id ? 'is-current' : ''}" data-database-id="${table.id}"><i>DB</i><span><b>${escapeHtml(table.name)}</b><small>${table.rowCount} ROWS · ${table.columns.length} COLS</small></span><em>READ</em></button>`,
+    )
+    .join('');
+  list.querySelectorAll('[data-database-id]').forEach((button) => {
+    button.addEventListener('click', () => selectDatabaseTable(button.dataset.databaseId));
+  });
+}
+
+function showDatabaseCreator() {
+  state.currentDatabase = null;
+  byId('database-welcome').hidden = true;
+  byId('database-detail').hidden = true;
+  databaseTableForm.hidden = false;
+  databaseTableForm.reset();
+  byId('database-results').innerHTML = '<span>创建数据表后执行只读操作。</span>';
+  renderDatabaseTables();
+}
+
+function selectDatabaseTable(id) {
+  const table = state.databaseTables.find((item) => item.id === id);
+  if (!table) return;
+  state.currentDatabase = table;
+  databaseTableForm.hidden = true;
+  byId('database-welcome').hidden = true;
+  byId('database-detail').hidden = false;
+  byId('database-title').textContent = table.name;
+  byId('database-description').textContent = table.description || '无额外说明';
+  byId('database-row-count').textContent = `${table.rowCount} ROWS`;
+  byId('database-columns').innerHTML = table.columns
+    .map((column) => `<code>${escapeHtml(column)}</code>`)
+    .join('');
+  byId('database-query-column').innerHTML = table.columns
+    .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
+    .join('');
+  byId('database-results').innerHTML = '<span>选择列并执行参数化查询。</span>';
+  renderDatabaseTables();
+}
+
+async function loadDatabaseTables() {
+  const payload = await request('/database-tables');
+  state.databaseTables = payload.database_tables;
+  renderDatabaseTables();
+  if (state.currentDatabase) {
+    const id = state.currentDatabase.id;
+    state.currentDatabase = state.databaseTables.find((item) => item.id === id) || null;
+    if (state.currentDatabase) selectDatabaseTable(id);
+  }
+}
+
 function setStudioView(view) {
   state.view = view;
   const isFlow = view === 'flows';
   const isKnowledge = view === 'knowledge';
+  const isDatabase = view === 'database';
   const isEvaluation = view === 'evaluation';
   const isAgent = view === 'agents';
   byId('agent-view').hidden = !isAgent;
   byId('flow-view').hidden = !isFlow;
   byId('knowledge-view').hidden = !isKnowledge;
+  byId('database-view').hidden = !isDatabase;
   byId('evaluation-view').hidden = !isEvaluation;
   byId('show-agents').classList.toggle('is-active', isAgent);
   byId('show-flows').classList.toggle('is-active', isFlow);
   byId('show-knowledge').classList.toggle('is-active', isKnowledge);
+  byId('show-database').classList.toggle('is-active', isDatabase);
   byId('show-evaluation').classList.toggle('is-active', isEvaluation);
   byId('new-agent').hidden = !isAgent;
   byId('new-flow').hidden = !isFlow;
   byId('new-knowledge').hidden = !isKnowledge;
+  byId('new-database').hidden = !isDatabase;
   byId('workspace-path').textContent = isEvaluation
     ? '独立工作区 / RELEASES'
-    : isKnowledge
-      ? '独立工作区 / KNOWLEDGE'
-      : isFlow
-        ? '独立工作区 / FLOWS'
-        : '独立工作区 / AGENTS';
+    : isDatabase
+      ? '独立工作区 / DATABASE'
+      : isKnowledge
+        ? '独立工作区 / KNOWLEDGE'
+        : isFlow
+          ? '独立工作区 / FLOWS'
+          : '独立工作区 / AGENTS';
   byId('studio-title').textContent = isEvaluation
     ? 'Release & Evaluation'
-    : isKnowledge
-      ? 'Knowledge Center'
-      : isFlow
-        ? 'Flow Studio'
-        : 'Agent Studio';
+    : isDatabase
+      ? 'Database Studio'
+      : isKnowledge
+        ? 'Knowledge Center'
+        : isFlow
+          ? 'Flow Studio'
+          : 'Agent Studio';
   if (isEvaluation) renderEvaluationCenter();
 }
 
@@ -408,6 +479,7 @@ async function bootstrap() {
       loadAgents(),
       loadFlows(),
       loadKnowledgeBases(),
+      loadDatabaseTables(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -435,6 +507,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       loadAgents(),
       loadFlows(),
       loadKnowledgeBases(),
+      loadDatabaseTables(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -453,13 +526,18 @@ document.querySelectorAll('[data-create-flow]').forEach((button) => {
 document.querySelectorAll('[data-create-knowledge]').forEach((button) => {
   button.addEventListener('click', () => showKnowledgeCreator());
 });
+document.querySelectorAll('[data-create-database]').forEach((button) => {
+  button.addEventListener('click', () => showDatabaseCreator());
+});
 byId('show-agents').addEventListener('click', () => setStudioView('agents'));
 byId('show-flows').addEventListener('click', () => setStudioView('flows'));
 byId('show-knowledge').addEventListener('click', () => setStudioView('knowledge'));
+byId('show-database').addEventListener('click', () => setStudioView('database'));
 byId('show-evaluation').addEventListener('click', () => setStudioView('evaluation'));
 byId('new-agent').addEventListener('click', () => showEditor());
 byId('new-flow').addEventListener('click', () => showFlowEditor());
 byId('new-knowledge').addEventListener('click', () => showKnowledgeCreator());
+byId('new-database').addEventListener('click', () => showDatabaseCreator());
 form.elements.instructions.addEventListener('input', () => {
   byId('instruction-count').textContent = String(form.elements.instructions.value.length);
 });
@@ -639,6 +717,78 @@ byId('knowledge-search-form').addEventListener('submit', async (event) => {
             .join('');
   } catch (error) {
     hits.textContent = `检索失败：${error.message}`;
+    toast(error.message, true);
+  }
+});
+
+databaseTableForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const values = Object.fromEntries(new FormData(databaseTableForm));
+  const input = {
+    columns: String(values.columns)
+      .split(',')
+      .map((column) => column.trim())
+      .filter(Boolean),
+    description: values.description,
+    name: values.name,
+  };
+  try {
+    const payload = await request('/database-tables', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    state.databaseTables.unshift(payload.database_table);
+    selectDatabaseTable(payload.database_table.id);
+    toast('托管数据表已创建');
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+databaseRowsForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.currentDatabase) return;
+  try {
+    const rows = JSON.parse(event.currentTarget.elements.rows.value);
+    const payload = await request(`/database-tables/${state.currentDatabase.id}/rows`, {
+      method: 'POST',
+      body: JSON.stringify({ rows }),
+    });
+    databaseRowsForm.reset();
+    await loadDatabaseTables();
+    toast(`${payload.appended} 行记录已追加到 PostgreSQL`);
+  } catch (error) {
+    toast(error instanceof SyntaxError ? 'JSON 格式无效' : error.message, true);
+  }
+});
+
+byId('database-query-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.currentDatabase) {
+    toast('请先选择数据表', true);
+    return;
+  }
+  const results = byId('database-results');
+  results.innerHTML = '<span>正在执行受控只读操作……</span>';
+  try {
+    const payload = await request(`/database-tables/${state.currentDatabase.id}/query`, {
+      method: 'POST',
+      body: JSON.stringify({
+        column: event.currentTarget.elements.column.value,
+        contains: event.currentTarget.elements.contains.value,
+        limit: 20,
+      }),
+    });
+    results.innerHTML = payload.rows.length
+      ? payload.rows
+          .map(
+            (row) =>
+              `<article><header><b>ROW #${row.ordinal + 1}</b><em>PARAMETERIZED</em></header><p>${escapeHtml(JSON.stringify(row.record, null, 2))}</p></article>`,
+          )
+          .join('')
+      : '<span>没有匹配记录。</span>';
+  } catch (error) {
+    results.textContent = `查询失败：${error.message}`;
     toast(error.message, true);
   }
 });

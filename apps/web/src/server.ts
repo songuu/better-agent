@@ -9,6 +9,9 @@ import {
   type ProductKnowledgeHit,
   type ProductStore,
   validateAgentInput,
+  validateDatabaseQueryInput,
+  validateDatabaseRowsInput,
+  validateDatabaseTableInput,
   validateFlowDebugInput,
   validateFlowDraftInput,
   validateFlowEnvironment,
@@ -393,6 +396,49 @@ export async function createBetterAgentWebServer(
       });
       return true;
     }
+    if (path === `${WEB_BASE_PATH}api/product/database-tables` && request.method === 'GET') {
+      sendJson(request, response, 200, {
+        database_tables: await productStore.listDatabaseTables(workspaceId),
+      });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/database-tables` && request.method === 'POST') {
+      const databaseTable = await productStore.createDatabaseTable(
+        workspaceId,
+        actorId,
+        validateDatabaseTableInput(await readJsonBody(request)),
+      );
+      sendJson(request, response, 201, { database_table: databaseTable });
+      return true;
+    }
+    const databaseMatch = new RegExp(
+      `^${WEB_BASE_PATH}api/product/database-tables/([0-9a-f-]{36})(/rows|/query)$`,
+      'u',
+    ).exec(path);
+    if (databaseMatch !== null && UUID.test(databaseMatch[1] ?? '')) {
+      const tableId = databaseMatch[1] as string;
+      if (databaseMatch[2] === '/rows' && request.method === 'POST') {
+        const input = validateDatabaseRowsInput(await readJsonBody(request, 1024 * 1024));
+        const appended = await productStore.appendDatabaseRows(
+          workspaceId,
+          actorId,
+          tableId,
+          input,
+        );
+        sendJson(request, response, 201, { appended });
+        return true;
+      }
+      if (databaseMatch[2] === '/query' && request.method === 'POST') {
+        sendJson(request, response, 200, {
+          rows: await productStore.queryDatabaseTable(
+            workspaceId,
+            tableId,
+            validateDatabaseQueryInput(await readJsonBody(request)),
+          ),
+        });
+        return true;
+      }
+    }
     if (path === `${WEB_BASE_PATH}api/product/knowledge-bases` && request.method === 'POST') {
       const knowledgeBase = await productStore.createKnowledgeBase(
         workspaceId,
@@ -581,7 +627,7 @@ export async function createBetterAgentWebServer(
                   : message.startsWith('invalid_') ||
                       message.includes('payload') ||
                       message.includes('request_body') ||
-                      /^(Agent|Flow|Input|Knowledge|Output|Run|Template) /u.test(message)
+                      /^(Agent|Database|Flow|Input|Knowledge|Output|Run|Template) /u.test(message)
                     ? 400
                     : 500;
           sendJson(request, response, status, {

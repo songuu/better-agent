@@ -20,6 +20,8 @@ import type {
   AgentDraft,
   AgentDraftInput,
   ProductConversation,
+  ProductDatabaseRow,
+  ProductDatabaseTable,
   ProductFlowDebugRun,
   ProductFlowDraft,
   ProductKnowledgeBase,
@@ -212,6 +214,8 @@ async function localRequest(
 function productFixture(): {
   readonly agents: AgentDraft[];
   readonly conversations: ProductConversation[];
+  readonly databaseRows: ProductDatabaseRow[];
+  readonly databaseTables: ProductDatabaseTable[];
   readonly flowDebugRuns: ProductFlowDebugRun[];
   readonly flows: ProductFlowDraft[];
   readonly knowledgeBases: ProductKnowledgeBase[];
@@ -221,6 +225,8 @@ function productFixture(): {
 } {
   const agents: AgentDraft[] = [];
   const conversations: ProductConversation[] = [];
+  const databaseRows: ProductDatabaseRow[] = [];
+  const databaseTables: ProductDatabaseTable[] = [];
   const flows: ProductFlowDraft[] = [];
   const flowDebugRuns: ProductFlowDebugRun[] = [];
   const knowledgeBases: ProductKnowledgeBase[] = [];
@@ -228,6 +234,42 @@ function productFixture(): {
   const runs: ProductRun[] = [];
   const timestamp = '2026-09-03T00:00:00.000Z';
   const store: ProductStore = {
+    async createDatabaseTable(_workspaceId, _actorId, input) {
+      const table: ProductDatabaseTable = {
+        ...input,
+        createdAt: timestamp,
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        rowCount: 0,
+        updatedAt: timestamp,
+      };
+      databaseTables.push(table);
+      return table;
+    },
+    async appendDatabaseRows(_workspaceId, _actorId, tableId, input) {
+      const table = databaseTables.find((item) => item.id === tableId);
+      if (table === undefined) throw new Error('Database table not found');
+      const offset = databaseRows.length;
+      databaseRows.push(
+        ...input.rows.map((record, index) => ({
+          createdAt: timestamp,
+          ordinal: offset + index,
+          record,
+        })),
+      );
+      databaseTables[databaseTables.indexOf(table)] = {
+        ...table,
+        rowCount: table.rowCount + input.rows.length,
+      };
+      return input.rows.length;
+    },
+    async listDatabaseTables() {
+      return databaseTables;
+    },
+    async queryDatabaseTable(_workspaceId, _tableId, input) {
+      return databaseRows
+        .filter((row) => String(row.record[input.column] ?? '').includes(input.contains))
+        .slice(0, input.limit);
+    },
     async createKnowledgeBase(_workspaceId, _actorId, input) {
       const knowledgeBase: ProductKnowledgeBase = {
         ...input,
@@ -501,6 +543,8 @@ function productFixture(): {
     conversations,
     flowDebugRuns,
     flows,
+    databaseRows,
+    databaseTables,
     knowledgeBases,
     knowledgeDocuments,
     runs,
@@ -917,6 +961,79 @@ describe('Better Agent web runtime', () => {
     expect(
       ((await documents.json()) as { documents: ProductKnowledgeDocument[] }).documents,
     ).toHaveLength(1);
+  });
+
+  it('creates a managed Database table, appends rows and executes a bounded query', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const headers = { ...mutationHeaders, Cookie: cookie };
+    const created = await localRequest(origin, '/better-agent/api/product/database-tables', {
+      body: JSON.stringify({
+        columns: ['customer_id', 'status'],
+        description: '客户状态投影',
+        name: 'customers',
+      }),
+      headers,
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    const table = ((await created.json()) as { database_table: ProductDatabaseTable })
+      .database_table;
+
+    const appended = await localRequest(
+      origin,
+      `/better-agent/api/product/database-tables/${table.id}/rows`,
+      {
+        body: JSON.stringify({
+          rows: [
+            { customer_id: 7, status: 'active' },
+            { customer_id: 8, status: 'paused' },
+          ],
+        }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(appended.status).toBe(201);
+    expect(await appended.json()).toEqual({ appended: 2 });
+
+    const queried = await localRequest(
+      origin,
+      `/better-agent/api/product/database-tables/${table.id}/query`,
+      {
+        body: JSON.stringify({ column: 'status', contains: 'active', limit: 20 }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(queried.status).toBe(200);
+    expect(((await queried.json()) as { rows: ProductDatabaseRow[] }).rows).toMatchObject([
+      { ordinal: 0, record: { customer_id: 7, status: 'active' } },
+    ]);
+
+    const listed = await localRequest(origin, '/better-agent/api/product/database-tables', {
+      headers: { Cookie: cookie },
+    });
+    expect(listed.status).toBe(200);
+    expect(
+      ((await listed.json()) as { database_tables: ProductDatabaseTable[] }).database_tables[0],
+    ).toMatchObject({ columns: ['customer_id', 'status'], rowCount: 2 });
   });
 
   it('requires the product CSRF header before authenticating mutation routes', async () => {
