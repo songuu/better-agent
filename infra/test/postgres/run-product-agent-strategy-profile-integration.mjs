@@ -92,7 +92,7 @@ async function main() {
   assertEqual(
     await harness.queryScalar(
       'ba_runtime_test',
-      `SELECT routing_mode||':'||strategy_version FROM app.begin_agent_product_run('${workspaceId}','${conversationV2}','${actorId}','simple issue');`,
+      `SELECT (strategy_profile->>'routing_mode')||':'||strategy_version FROM app.begin_agent_product_run('${workspaceId}','${conversationV2}','${actorId}','simple issue');`,
     ),
     'fixed:2',
     'new conversation pins strategy v2',

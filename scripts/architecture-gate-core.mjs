@@ -178,7 +178,7 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
   Object.freeze({
     id: 'product-agent-strategy-profile',
     file: 'infra/test/postgres/run-product-agent-strategy-profile-integration.mjs',
-    sha256: '425ad9259a899eb9c5493c77012ec2ec104441b49b31d168bc3985876873bb58',
+    sha256: '5db843fa7888705b71b92a1075ec4993ecc24eb2dcf9148088afbed7b292703f',
     successMarker: 'architecture-gate-suite/1 product-agent-strategy-profile pass',
   }),
   Object.freeze({
