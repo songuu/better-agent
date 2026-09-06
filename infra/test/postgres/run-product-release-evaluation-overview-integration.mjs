@@ -102,7 +102,7 @@ async function main() {
   );
 
   process.stdout.write(
-    'PostgreSQL 16 product release evaluation overview passed: 25 migrations, immutable historical Agent releases, exact-version Run evidence, Flow deployment bindings, tenant isolation and direct-table denial.\n',
+    `PostgreSQL 16 product release evaluation overview passed: ${migrations.length} migrations, immutable historical Agent releases, exact-version Run evidence, Flow deployment bindings, tenant isolation and direct-table denial.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-release-evaluation pass\n');
 }

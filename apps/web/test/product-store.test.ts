@@ -16,6 +16,7 @@ describe('product Agent input', () => {
     const input = validateAgentInput({
       description: '面向运维团队的助手',
       instructions: '只根据已核验的运行事实回答。',
+      knowledge_base_id: '12345678-1234-4123-8123-123456789abc',
       model: 'gpt-5.6-sol',
       name: '运行守望者',
     });
@@ -23,6 +24,7 @@ describe('product Agent input', () => {
     expect(input).toEqual({
       description: '面向运维团队的助手',
       instructions: '只根据已核验的运行事实回答。',
+      knowledgeBaseId: '12345678-1234-4123-8123-123456789abc',
       model: 'gpt-5.6-sol',
       name: '运行守望者',
     });
@@ -33,6 +35,15 @@ describe('product Agent input', () => {
     [{ description: '', instructions: '', model: 'gpt-5.6-sol', name: 'A' }],
     [{ description: '', extra: true, instructions: 'Do work', model: 'gpt-5.6-sol', name: 'A' }],
     [{ description: '', instructions: 'Do work', model: 'latest', name: 'A' }],
+    [
+      {
+        description: '',
+        instructions: 'Do work',
+        knowledge_base_id: 'not-a-uuid',
+        model: 'gpt-5.6-sol',
+        name: 'A',
+      },
+    ],
   ])('rejects an incomplete, open or mutable draft payload', (payload) => {
     expect(() => validateAgentInput(payload)).toThrow();
   });

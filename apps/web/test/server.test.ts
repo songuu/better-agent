@@ -274,6 +274,12 @@ function productFixture(): {
       };
       return [hit];
     },
+    async searchAgentKnowledge(_workspaceId, conversationId, query) {
+      const conversation = conversations.find((item) => item.id === conversationId);
+      const agent = agents.find((item) => item.id === conversation?.agentId);
+      if (agent?.knowledgeBaseId === null || agent?.knowledgeBaseId === undefined) return [];
+      return await store.searchKnowledge(_workspaceId, agent.knowledgeBaseId, query);
+    },
     async createFlow(_workspaceId, _actorId, input) {
       const flow: ProductFlowDraft = {
         ...input,
@@ -933,12 +939,28 @@ describe('Better Agent web runtime', () => {
   });
 
   it('runs a published Agent through the configured model and persists observable history', async () => {
-    const { agents, store } = productFixture();
+    const { agents, knowledgeBases, knowledgeDocuments, store } = productFixture();
+    knowledgeBases.push({
+      createdAt: '2026-09-03T00:00:00.000Z',
+      description: '生产运行手册',
+      documentCount: 1,
+      id: '88888888-8888-4888-8888-888888888888',
+      name: '运维知识库',
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    });
+    knowledgeDocuments.push({
+      chunkCount: 1,
+      createdAt: '2026-09-03T00:00:00.000Z',
+      id: '99999999-9999-4999-8999-999999999999',
+      knowledgeBaseId: '88888888-8888-4888-8888-888888888888',
+      title: '运行手册',
+    });
     agents.push({
       createdAt: '2026-09-03T00:00:00.000Z',
       description: '运行助手',
       id: '11111111-1111-4111-8111-111111111111',
       instructions: '只回答已核验事实。',
+      knowledgeBaseId: '88888888-8888-4888-8888-888888888888',
       model: 'gpt-5.6-sol',
       name: '运行助手',
       revision: 2,
@@ -949,10 +971,10 @@ describe('Better Agent web runtime', () => {
     const modelRuntime: ProductModelRuntime = {
       async generate(input) {
         if (providerFails) throw new Error('model_provider_http_503');
-        expect(input).toMatchObject({
-          instructions: '只回答已核验事实。',
-          prompt: '当前服务正常吗？',
-        });
+        expect(input.prompt).toBe('当前服务正常吗？');
+        expect(input.instructions).toContain('只回答已核验事实。');
+        expect(input.instructions).toContain('KNOWLEDGE_CONTEXT');
+        expect(input.instructions).toContain('服务健康检查使用 /healthz。');
         return {
           inputTokens: 12,
           outputText: '当前服务正常。',

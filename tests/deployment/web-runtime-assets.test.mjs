@@ -130,12 +130,15 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
     'id="knowledge-document-form"',
     'id="knowledge-search-form"',
     'id="knowledge-hits"',
+    'id="agent-knowledge-base"',
   ]) {
     assert.ok(publicHtml.includes(marker), `missing Knowledge Center control: ${marker}`);
   }
   for (const route of ['/knowledge-bases', '/documents', '/search']) {
     assert.ok(publicJavaScript.includes(route), `missing Knowledge Center API route: ${route}`);
   }
+  assert.ok(publicJavaScript.includes('knowledge_base_id'));
+  assert.ok(publicJavaScript.includes('renderAgentKnowledgeOptions'));
   assert.doesNotMatch(publicJavaScript, /localStorage|sessionStorage/u);
   assert.match(publicCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/u);
   assert.match(publicCss, /@media \(max-width: 1400px\) \{\s*\.knowledge-studio \{/u);

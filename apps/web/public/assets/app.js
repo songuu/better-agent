@@ -177,6 +177,19 @@ function renderKnowledgeBases() {
   });
 }
 
+function renderAgentKnowledgeOptions() {
+  const select = byId('agent-knowledge-base');
+  const selected = state.current?.knowledgeBaseId || '';
+  select.innerHTML = [
+    '<option value="">不绑定知识库</option>',
+    ...state.knowledgeBases.map(
+      (base) =>
+        `<option value="${base.id}">${escapeHtml(base.name)} · ${base.documentCount} DOCS</option>`,
+    ),
+  ].join('');
+  select.value = selected;
+}
+
 function renderKnowledgeDocuments() {
   const list = byId('knowledge-documents');
   if (state.knowledgeDocuments.length === 0) {
@@ -222,6 +235,7 @@ async function loadKnowledgeBases() {
   const payload = await request('/knowledge-bases');
   state.knowledgeBases = payload.knowledge_bases;
   renderKnowledgeBases();
+  renderAgentKnowledgeOptions();
 }
 
 function setStudioView(view) {
@@ -355,6 +369,7 @@ function showEditor(agent = null) {
   form.elements.description.value = agent?.description || '';
   form.elements.instructions.value = agent?.instructions || '';
   form.elements.model.value = agent?.model || 'gpt-5.6-sol';
+  renderAgentKnowledgeOptions();
   byId('editor-title').textContent = agent?.name || '未命名 Agent';
   byId('agent-kicker').textContent = agent
     ? `${agent.status.toUpperCase()} · REV ${agent.revision}`
@@ -457,7 +472,11 @@ flowForm.elements.name.addEventListener('input', () => {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const input = Object.fromEntries(new FormData(form));
+  const values = Object.fromEntries(new FormData(form));
+  const input = {
+    ...values,
+    knowledge_base_id: values.knowledge_base_id || null,
+  };
   try {
     const payload = state.current
       ? await request(`/agents/${state.current.id}`, {
@@ -569,6 +588,7 @@ knowledgeBaseForm.addEventListener('submit', async (event) => {
       body: JSON.stringify(input),
     });
     state.knowledgeBases.unshift(payload.knowledge_base);
+    renderAgentKnowledgeOptions();
     await selectKnowledgeBase(payload.knowledge_base.id);
     toast('知识库已持久化');
   } catch (error) {

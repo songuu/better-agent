@@ -9,12 +9,14 @@ import { splitKnowledgeText } from './knowledge-runtime.js';
 
 export const PRODUCT_MODELS = ['gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-sol'] as const;
 export type ProductModel = (typeof PRODUCT_MODELS)[number];
+const PRODUCT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export interface AgentDraft {
   readonly createdAt: string;
   readonly description: string;
   readonly id: string;
   readonly instructions: string;
+  readonly knowledgeBaseId: string | null;
   readonly model: ProductModel;
   readonly name: string;
   readonly revision: number;
@@ -25,6 +27,7 @@ export interface AgentDraft {
 export interface AgentDraftInput {
   readonly description: string;
   readonly instructions: string;
+  readonly knowledgeBaseId: string | null;
   readonly model: ProductModel;
   readonly name: string;
 }
@@ -227,6 +230,11 @@ export interface ProductStore {
     agentId: string,
     expectedRevision: number,
   ): Promise<AgentDraft>;
+  searchAgentKnowledge(
+    workspaceId: string,
+    conversationId: string,
+    query: string,
+  ): Promise<readonly ProductKnowledgeHit[]>;
   publishFlow(
     workspaceId: string,
     actorId: string,
@@ -355,6 +363,7 @@ interface AgentRow {
   readonly description: string;
   readonly id: string;
   readonly instructions: string;
+  readonly knowledge_base_id: string | null;
   readonly model: string;
   readonly name: string;
   readonly revision: string | number;
@@ -385,6 +394,7 @@ function toDraft(row: AgentRow): AgentDraft {
     description: row.description,
     id: row.id,
     instructions: row.instructions,
+    knowledgeBaseId: row.knowledge_base_id,
     model: row.model as ProductModel,
     name: row.name,
     revision,
@@ -627,6 +637,16 @@ export class PostgresProductStore implements ProductStore {
     this.#pool = pool;
   }
 
+  async #getAgent(workspaceId: string, agentId: string): Promise<AgentDraft> {
+    const result = await this.#pool.query<AgentRow>(
+      'SELECT * FROM app.list_agent_drafts_with_knowledge($1::uuid) AS agent WHERE agent.id = $2::uuid',
+      [workspaceId, agentId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('product store did not return the Agent');
+    return toDraft(row);
+  }
+
   async #getFlow(workspaceId: string, flowId: string): Promise<ProductFlowDraft> {
     const result = await this.#pool.query<FlowRow>(
       'SELECT * FROM app.list_product_flow_drafts($1::uuid) AS flow WHERE flow.id = $2::uuid',
@@ -811,6 +831,18 @@ export class PostgresProductStore implements ProductStore {
     return Object.freeze(result.rows.map(toKnowledgeHit));
   }
 
+  async searchAgentKnowledge(
+    workspaceId: string,
+    conversationId: string,
+    query: string,
+  ): Promise<readonly ProductKnowledgeHit[]> {
+    const result = await this.#pool.query<KnowledgeHitRow>(
+      'SELECT * FROM app.search_agent_product_conversation_knowledge($1::uuid, $2::uuid, $3::text, 8)',
+      [workspaceId, conversationId, validateKnowledgeQuery(query)],
+    );
+    return Object.freeze(result.rows.map(toKnowledgeHit));
+  }
+
   async createConversation(
     workspaceId: string,
     actorId: string,
@@ -903,7 +935,7 @@ export class PostgresProductStore implements ProductStore {
 
   async listAgents(workspaceId: string): Promise<readonly AgentDraft[]> {
     const result = await this.#pool.query<AgentRow>(
-      'SELECT * FROM app.list_agent_drafts($1::uuid)',
+      'SELECT * FROM app.list_agent_drafts_with_knowledge($1::uuid)',
       [workspaceId],
     );
     return Object.freeze(result.rows.map(toDraft));
@@ -914,13 +946,21 @@ export class PostgresProductStore implements ProductStore {
     actorId: string,
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
-    const result = await this.#pool.query<AgentRow>(
-      'SELECT * FROM app.create_agent_draft($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text)',
-      [workspaceId, actorId, input.name, input.description, input.instructions, input.model],
+    const result = await this.#pool.query<{ readonly id: string }>(
+      'SELECT (app.create_agent_draft_with_knowledge($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid)).id AS id',
+      [
+        workspaceId,
+        actorId,
+        input.name,
+        input.description,
+        input.instructions,
+        input.model,
+        input.knowledgeBaseId,
+      ],
     );
-    const row = result.rows[0];
-    if (row === undefined) throw new Error('product store did not return the created Agent');
-    return toDraft(row);
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error('product store did not return the created Agent');
+    return await this.#getAgent(workspaceId, id);
   }
 
   async updateAgent(
@@ -929,8 +969,8 @@ export class PostgresProductStore implements ProductStore {
     expectedRevision: number,
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
-    const result = await this.#pool.query<AgentRow>(
-      'SELECT * FROM app.update_agent_draft($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text)',
+    await this.#pool.query(
+      'SELECT app.update_agent_draft_with_knowledge($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid)',
       [
         workspaceId,
         agentId,
@@ -939,11 +979,10 @@ export class PostgresProductStore implements ProductStore {
         input.description,
         input.instructions,
         input.model,
+        input.knowledgeBaseId,
       ],
     );
-    const row = result.rows[0];
-    if (row === undefined) throw new Error('product store did not return the updated Agent');
-    return toDraft(row);
+    return await this.#getAgent(workspaceId, agentId);
   }
 
   async publishAgent(
@@ -952,13 +991,11 @@ export class PostgresProductStore implements ProductStore {
     agentId: string,
     expectedRevision: number,
   ): Promise<AgentDraft> {
-    const result = await this.#pool.query<AgentRow>(
-      'SELECT * FROM app.publish_agent_draft($1::uuid, $2::uuid, $3::bigint, $4::uuid)',
+    await this.#pool.query(
+      'SELECT app.publish_agent_draft($1::uuid, $2::uuid, $3::bigint, $4::uuid)',
       [workspaceId, agentId, expectedRevision, actorId],
     );
-    const row = result.rows[0];
-    if (row === undefined) throw new Error('product store did not return the published Agent');
-    return toDraft(row);
+    return await this.#getAgent(workspaceId, agentId);
   }
 }
 
@@ -986,7 +1023,7 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   }
   if (
     Object.keys(input).some(
-      (key) => !['name', 'description', 'instructions', 'model'].includes(key),
+      (key) => !['name', 'description', 'instructions', 'model', 'knowledge_base_id'].includes(key),
     )
   ) {
     throw new Error('Agent payload contains unknown fields');
@@ -1002,9 +1039,17 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   }
   if (!PRODUCT_MODELS.includes(input.model as ProductModel))
     throw new Error('Agent model is unsupported');
+  const knowledgeBaseId = input.knowledge_base_id ?? null;
+  if (
+    knowledgeBaseId !== null &&
+    (typeof knowledgeBaseId !== 'string' || !PRODUCT_UUID.test(knowledgeBaseId))
+  ) {
+    throw new Error('Agent Knowledge base id must be a UUID or null');
+  }
   return Object.freeze({
     description,
     instructions,
+    knowledgeBaseId,
     model: input.model as ProductModel,
     name,
   });
