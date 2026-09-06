@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   compileStructuredAgentInstructions,
+  createDefaultAgentStrategyProfile,
+  parseAgentStrategyProfile,
   validateAgentInput,
   validateDatabaseQueryInput,
   validateDatabaseRowsInput,
@@ -26,14 +28,78 @@ const structuredRole = {
 };
 
 describe('product Agent input', () => {
+  it('validates a closed, versioned strategy and derives safe defaults', () => {
+    expect(createDefaultAgentStrategyProfile('gpt-5.5')).toEqual({
+      forcedCapability: 'none',
+      maxInputTokens: 32_000,
+      maxIterations: 1,
+      maxOutputTokens: 2_000,
+      maxToolCalls: 2,
+      parameterExtraction: false,
+      routes: [{ description: '默认模型', model: 'gpt-5.5' }],
+      routingMode: 'fixed',
+      schemaVersion: 'product-agent-strategy/1',
+      temperature: 0.2,
+    });
+    const strategy = parseAgentStrategyProfile({
+      forced_capability: 'knowledge',
+      max_input_tokens: 16000,
+      max_iterations: 1,
+      max_output_tokens: 1200,
+      max_tool_calls: 1,
+      parameter_extraction: true,
+      routes: [
+        { description: '低成本分类', model: 'gpt-5.4-mini' },
+        { description: '复杂推理', model: 'gpt-5.6-sol' },
+      ],
+      routing_mode: 'autonomous',
+      schema_version: 'product-agent-strategy/1',
+      temperature: 0.4,
+    });
+    expect(strategy.routingMode).toBe('autonomous');
+    expect(strategy.routes).toHaveLength(2);
+    expect(Object.isFrozen(strategy.routes)).toBe(true);
+  });
+
+  it.each([
+    [{ schema_version: 'latest' }],
+    [{ ...createDefaultAgentStrategyProfile('gpt-5.5'), extra: true }],
+    [{ ...createDefaultAgentStrategyProfile('gpt-5.5'), routing_mode: 'fixed' }],
+    [
+      {
+        ...createDefaultAgentStrategyProfile('gpt-5.5'),
+        routingMode: 'autonomous',
+        routes: [{ description: 'only one', model: 'gpt-5.5' }],
+      },
+    ],
+    [{ ...createDefaultAgentStrategyProfile('gpt-5.5'), maxOutputTokens: 50000 }],
+  ])('rejects an open or unsafe strategy profile', (profile) => {
+    expect(() => parseAgentStrategyProfile(profile)).toThrow();
+  });
+
   it('compiles and freezes the closed seven-theme structured role profile', () => {
     const input = validateAgentInput({
       database_table_id: null,
       description: '面向运维团队的助手',
       instructions: 'caller text must not override the structured role',
-      knowledge_base_id: null,
+      knowledge_base_id: '12345678-1234-4123-8123-123456789abc',
       model: 'gpt-5.6-sol',
       name: '运行守望者',
+      strategy_profile: {
+        forced_capability: 'knowledge',
+        max_input_tokens: 16000,
+        max_iterations: 1,
+        max_output_tokens: 1200,
+        max_tool_calls: 1,
+        parameter_extraction: true,
+        routes: [
+          { description: '默认', model: 'gpt-5.6-sol' },
+          { description: '快速', model: 'gpt-5.4-mini' },
+        ],
+        routing_mode: 'autonomous',
+        schema_version: 'product-agent-strategy/1',
+        temperature: 0.3,
+      },
       role_mode: 'structured',
       role_profile: structuredRole,
     });
@@ -41,6 +107,7 @@ describe('product Agent input', () => {
     expect(input.roleMode).toBe('structured');
     expect(input.roleProfile).toEqual(structuredRole);
     expect(input.instructions).toBe(compileStructuredAgentInstructions(structuredRole));
+    expect(input.strategyProfile.forcedCapability).toBe('knowledge');
     expect(input.instructions).toContain('可靠的生产运行顾问');
     expect(input.instructions).not.toContain('caller text');
     expect(Object.isFrozen(input.roleProfile)).toBe(true);
@@ -66,6 +133,7 @@ describe('product Agent input', () => {
       name: '运行守望者',
       roleMode: 'text',
       roleProfile: null,
+      strategyProfile: createDefaultAgentStrategyProfile('gpt-5.6-sol'),
     });
     expect(Object.isFrozen(input)).toBe(true);
   });

@@ -116,6 +116,74 @@ function currentCapabilityKinds() {
   ];
 }
 
+const modelRouteDescriptions = {
+  'gpt-5.4-mini': '快速与低成本任务',
+  'gpt-5.5': '平衡的通用执行',
+  'gpt-5.6-sol': '复杂推理与生产任务',
+};
+
+function readStrategyProfile() {
+  const routes = [...byId('agent-model-routes').querySelectorAll('input:checked')].map((input) => ({
+    description: modelRouteDescriptions[input.value],
+    model: input.value,
+  }));
+  return {
+    forced_capability: form.elements.forced_capability.value,
+    max_input_tokens: Number(form.elements.max_input_tokens.value),
+    max_iterations: 1,
+    max_output_tokens: Number(form.elements.max_output_tokens.value),
+    max_tool_calls: Number(form.elements.max_tool_calls.value),
+    parameter_extraction: form.elements.parameter_extraction.checked,
+    routes,
+    routing_mode: form.elements.routing_mode.value,
+    schema_version: 'product-agent-strategy/1',
+    temperature: Number(form.elements.temperature.value),
+  };
+}
+
+function populateStrategyProfile(profile = null, model = 'gpt-5.6-sol', version = 1) {
+  const strategy = profile || {
+    forcedCapability: 'none',
+    maxInputTokens: 32000,
+    maxOutputTokens: 2000,
+    maxToolCalls: 2,
+    parameterExtraction: false,
+    routes: [{ model }],
+    routingMode: 'fixed',
+    temperature: 0.2,
+  };
+  form.elements.routing_mode.value = strategy.routingMode;
+  form.elements.forced_capability.value = strategy.forcedCapability;
+  form.elements.max_input_tokens.value = String(strategy.maxInputTokens);
+  form.elements.max_output_tokens.value = String(strategy.maxOutputTokens);
+  form.elements.max_tool_calls.value = String(strategy.maxToolCalls);
+  form.elements.parameter_extraction.checked = strategy.parameterExtraction;
+  form.elements.temperature.value = String(strategy.temperature);
+  byId('strategy-temperature-value').textContent = String(strategy.temperature);
+  byId('strategy-version').textContent = `STRATEGY V${version}`;
+  const selected = new Set(strategy.routes.map((route) => route.model));
+  byId('agent-model-routes')
+    .querySelectorAll('input')
+    .forEach((input) => {
+      input.checked = selected.has(input.value);
+    });
+}
+
+function enforceStrategyRouteSelection() {
+  const defaultModel = form.elements.model.value;
+  const defaultRoute = [...byId('agent-model-routes').querySelectorAll('input')].find(
+    (input) => input.value === defaultModel,
+  );
+  defaultRoute.checked = true;
+  if (form.elements.routing_mode.value === 'fixed') {
+    byId('agent-model-routes')
+      .querySelectorAll('input')
+      .forEach((input) => {
+        input.checked = input.value === defaultModel;
+      });
+  }
+}
+
 function applyRoleSuggestion(suggestion) {
   form.elements.role_mode.value = suggestion.role_mode;
   form.elements.instructions.value = suggestion.instructions;
@@ -630,6 +698,11 @@ function showEditor(agent = null) {
   form.elements.description.value = agent?.description || '';
   form.elements.instructions.value = agent?.instructions || textRoleTemplate;
   form.elements.model.value = agent?.model || 'gpt-5.6-sol';
+  populateStrategyProfile(
+    agent?.strategyProfile,
+    form.elements.model.value,
+    agent?.strategyVersion,
+  );
   form.elements.role_mode.value = agent?.roleMode || 'text';
   populateRoleProfile(agent?.roleProfile || null);
   setRoleMode(form.elements.role_mode.value);
@@ -738,6 +811,11 @@ form.elements.instructions.addEventListener('input', () => {
 form.elements.role_mode.addEventListener('change', () => {
   setRoleMode(form.elements.role_mode.value);
 });
+form.elements.model.addEventListener('change', enforceStrategyRouteSelection);
+form.elements.routing_mode.addEventListener('change', enforceStrategyRouteSelection);
+form.elements.temperature.addEventListener('input', () => {
+  byId('strategy-temperature-value').textContent = form.elements.temperature.value;
+});
 byId('role-assist-generate').addEventListener('click', () => runRoleAssist('generate'));
 byId('role-assist-optimize').addEventListener('click', () => runRoleAssist('optimize'));
 byId('role-assist-capabilities').addEventListener('click', () =>
@@ -780,6 +858,7 @@ form.addEventListener('submit', async (event) => {
     name: values.name,
     role_mode: values.role_mode,
     role_profile: values.role_mode === 'structured' ? readRoleProfile() : null,
+    strategy_profile: readStrategyProfile(),
   };
   try {
     const payload = state.current

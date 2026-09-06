@@ -148,6 +148,9 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
     'id="role-assist-capabilities"',
     'id="role-perspective-dialog"',
     'id="role-fullscreen"',
+    'id="agent-routing-mode"',
+    'id="agent-forced-capability"',
+    'id="agent-model-routes"',
   ]) {
     assert.ok(publicHtml.includes(marker), `missing Knowledge Center control: ${marker}`);
   }
@@ -160,6 +163,8 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
   assert.ok(publicJavaScript.includes('【身份定位】'));
   assert.ok(publicJavaScript.includes('/role-assist'));
   assert.ok(publicJavaScript.includes('compileRolePreview'));
+  assert.ok(publicJavaScript.includes('readStrategyProfile'));
+  assert.ok(publicJavaScript.includes('product-agent-strategy/1'));
   assert.ok(publicJavaScript.includes('renderAgentKnowledgeOptions'));
   assert.doesNotMatch(publicJavaScript, /localStorage|sessionStorage/u);
   assert.match(publicCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/u);

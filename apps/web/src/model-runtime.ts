@@ -1,4 +1,4 @@
-import type { ProductModel } from './product-store.js';
+import type { ProductAgentModelRoute, ProductModel } from './product-store.js';
 
 export interface ModelHistoryTurn {
   readonly assistant: string;
@@ -8,8 +8,10 @@ export interface ModelHistoryTurn {
 export interface ModelGenerationInput {
   readonly history: readonly ModelHistoryTurn[];
   readonly instructions: string;
+  readonly maxOutputTokens?: number;
   readonly model: ProductModel;
   readonly prompt: string;
+  readonly temperature?: number;
 }
 
 export interface ModelGenerationResult {
@@ -21,6 +23,11 @@ export interface ModelGenerationResult {
 
 export interface ProductModelRuntime {
   generate(input: ModelGenerationInput): Promise<ModelGenerationResult>;
+  selectModel?(input: {
+    readonly defaultModel: ProductModel;
+    readonly prompt: string;
+    readonly routes: readonly ProductAgentModelRoute[];
+  }): Promise<ModelGenerationResult & { readonly model: ProductModel }>;
 }
 
 interface OpenAiResponsesRuntimeOptions {
@@ -133,9 +140,10 @@ export class OpenAiResponsesRuntime implements ProductModelRuntime {
         body: JSON.stringify({
           input: messages,
           instructions: input.instructions,
-          max_output_tokens: 2_000,
+          max_output_tokens: input.maxOutputTokens ?? 2_000,
           model: input.model,
           store: false,
+          ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
         }),
         headers: {
           Authorization: `Bearer ${this.#apiKey}`,
@@ -167,6 +175,40 @@ export class OpenAiResponsesRuntime implements ProductModelRuntime {
       outputTokens: boundedInteger(usage.output_tokens),
       providerRequestId,
     });
+  }
+
+  async selectModel(input: {
+    readonly defaultModel: ProductModel;
+    readonly prompt: string;
+    readonly routes: readonly ProductAgentModelRoute[];
+  }): Promise<ModelGenerationResult & { readonly model: ProductModel }> {
+    const allowedModels = new Set(input.routes.map((route) => route.model));
+    const result = await this.generate({
+      history: [],
+      instructions: [
+        '你是模型路由器。只输出 JSON：{"model":"<allowed model>"}。',
+        ...input.routes.map((route) => `${route.model}: ${route.description}`),
+      ].join('\n'),
+      maxOutputTokens: 64,
+      model: input.defaultModel,
+      prompt: input.prompt,
+      temperature: 0,
+    });
+    try {
+      const parsed: unknown = JSON.parse(result.outputText);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+        throw new Error('invalid');
+      const record = parsed as Record<string, unknown>;
+      if (
+        Object.keys(record).length !== 1 ||
+        typeof record.model !== 'string' ||
+        !allowedModels.has(record.model as ProductModel)
+      )
+        throw new Error('invalid');
+      return Object.freeze({ ...result, model: record.model as ProductModel });
+    } catch (error) {
+      throw new Error('model_router_invalid_output', { cause: error });
+    }
   }
 }
 

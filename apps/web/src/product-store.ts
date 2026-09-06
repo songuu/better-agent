@@ -9,6 +9,24 @@ import { splitKnowledgeText } from './knowledge-runtime.js';
 
 export const PRODUCT_MODELS = ['gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-sol'] as const;
 export type ProductModel = (typeof PRODUCT_MODELS)[number];
+export type ProductAgentRoutingMode = 'autonomous' | 'fixed';
+export type ProductAgentForcedCapability = 'database' | 'knowledge' | 'none';
+export interface ProductAgentModelRoute {
+  readonly description: string;
+  readonly model: ProductModel;
+}
+export interface ProductAgentStrategyProfile {
+  readonly forcedCapability: ProductAgentForcedCapability;
+  readonly maxInputTokens: number;
+  readonly maxIterations: 1;
+  readonly maxOutputTokens: number;
+  readonly maxToolCalls: number;
+  readonly parameterExtraction: boolean;
+  readonly routes: readonly ProductAgentModelRoute[];
+  readonly routingMode: ProductAgentRoutingMode;
+  readonly schemaVersion: 'product-agent-strategy/1';
+  readonly temperature: number;
+}
 export const PRODUCT_AGENT_ROLE_THEMES = [
   'identity',
   'objective',
@@ -42,6 +60,8 @@ export interface AgentDraft {
   readonly roleMode: ProductAgentRoleMode;
   readonly roleProfile: ProductAgentRoleProfile | null;
   readonly status: 'draft' | 'published';
+  readonly strategyProfile: ProductAgentStrategyProfile;
+  readonly strategyVersion: number;
   readonly updatedAt: string;
 }
 
@@ -54,6 +74,7 @@ export interface AgentDraftInput {
   readonly name: string;
   readonly roleMode: ProductAgentRoleMode;
   readonly roleProfile: ProductAgentRoleProfile | null;
+  readonly strategyProfile: ProductAgentStrategyProfile;
 }
 
 export interface ProductRunInput {
@@ -93,6 +114,8 @@ export interface PreparedProductRun {
   readonly model: ProductModel;
   readonly runId: string;
   readonly sequence: number;
+  readonly strategyProfile: ProductAgentStrategyProfile;
+  readonly strategyVersion: number;
 }
 
 export const PRODUCT_FLOW_ENVIRONMENTS = ['development', 'staging', 'production'] as const;
@@ -309,6 +332,17 @@ export interface ProductStore {
     agentId: string,
     expectedRevision: number,
   ): Promise<AgentDraft>;
+  routeRun?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    route: {
+      readonly inputTokens: number;
+      readonly model: ProductModel;
+      readonly outputTokens: number;
+      readonly providerRequestId: string;
+    },
+  ): Promise<void>;
   searchAgentKnowledge(
     workspaceId: string,
     conversationId: string,
@@ -463,6 +497,8 @@ interface PreparedRunRow {
   readonly model: string;
   readonly run_id: string;
   readonly sequence: string | number;
+  readonly strategy_profile: unknown;
+  readonly strategy_version: string | number;
 }
 
 interface AgentRow {
@@ -478,7 +514,163 @@ interface AgentRow {
   readonly role_mode: string;
   readonly role_profile: unknown;
   readonly status: string;
+  readonly strategy_profile: unknown;
+  readonly strategy_version: string | number;
   readonly updated_at: Date | string;
+}
+
+export function createDefaultAgentStrategyProfile(
+  model: ProductModel,
+): ProductAgentStrategyProfile {
+  return Object.freeze({
+    forcedCapability: 'none',
+    maxInputTokens: 32_000,
+    maxIterations: 1,
+    maxOutputTokens: 2_000,
+    maxToolCalls: 2,
+    parameterExtraction: false,
+    routes: Object.freeze([Object.freeze({ description: '默认模型', model })]),
+    routingMode: 'fixed',
+    schemaVersion: 'product-agent-strategy/1',
+    temperature: 0.2,
+  });
+}
+
+function strategyValue(profile: Record<string, unknown>, camel: string, snake: string): unknown {
+  return profile[camel] ?? profile[snake];
+}
+
+export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyProfile {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Agent strategy profile must be an object');
+  }
+  const profile = value as Record<string, unknown>;
+  const allowed = new Set([
+    'forcedCapability',
+    'forced_capability',
+    'maxInputTokens',
+    'max_input_tokens',
+    'maxIterations',
+    'max_iterations',
+    'maxOutputTokens',
+    'max_output_tokens',
+    'maxToolCalls',
+    'max_tool_calls',
+    'parameterExtraction',
+    'parameter_extraction',
+    'routes',
+    'routingMode',
+    'routing_mode',
+    'schemaVersion',
+    'schema_version',
+    'temperature',
+  ]);
+  if (Object.keys(profile).some((key) => !allowed.has(key))) {
+    throw new Error('Agent strategy profile contains unknown fields');
+  }
+  const hasCamelKeys = Object.keys(profile).some((key) => /[A-Z]/u.test(key));
+  const hasSnakeKeys = Object.keys(profile).some((key) => key.includes('_'));
+  if (hasCamelKeys && hasSnakeKeys) {
+    throw new Error('Agent strategy profile cannot mix API and domain field names');
+  }
+  const schemaVersion = strategyValue(profile, 'schemaVersion', 'schema_version');
+  const routingMode = strategyValue(profile, 'routingMode', 'routing_mode');
+  const forcedCapability = strategyValue(profile, 'forcedCapability', 'forced_capability');
+  const parameterExtraction = strategyValue(profile, 'parameterExtraction', 'parameter_extraction');
+  const maxIterations = strategyValue(profile, 'maxIterations', 'max_iterations');
+  const maxToolCalls = strategyValue(profile, 'maxToolCalls', 'max_tool_calls');
+  const maxInputTokens = strategyValue(profile, 'maxInputTokens', 'max_input_tokens');
+  const maxOutputTokens = strategyValue(profile, 'maxOutputTokens', 'max_output_tokens');
+  const routesValue = profile.routes;
+  if (schemaVersion !== 'product-agent-strategy/1')
+    throw new Error('Agent strategy schema is unsupported');
+  if (routingMode !== 'fixed' && routingMode !== 'autonomous')
+    throw new Error('Agent routing mode is invalid');
+  if (!['none', 'knowledge', 'database'].includes(String(forcedCapability)))
+    throw new Error('Agent forced capability is invalid');
+  if (typeof parameterExtraction !== 'boolean')
+    throw new Error('Agent parameter extraction flag is invalid');
+  if (maxIterations !== 1)
+    throw new Error('Agent strategy v1 supports exactly one model iteration');
+  if (!Number.isSafeInteger(maxToolCalls) || Number(maxToolCalls) < 0 || Number(maxToolCalls) > 2)
+    throw new Error('Agent tool call budget must be 0–2');
+  if (forcedCapability !== 'none' && Number(maxToolCalls) < 1)
+    throw new Error('A forced capability requires at least one tool call');
+  if (
+    !Number.isSafeInteger(maxInputTokens) ||
+    Number(maxInputTokens) < 256 ||
+    Number(maxInputTokens) > 128_000
+  )
+    throw new Error('Agent input token budget must be 256–128,000');
+  if (
+    !Number.isSafeInteger(maxOutputTokens) ||
+    Number(maxOutputTokens) < 64 ||
+    Number(maxOutputTokens) > 32_000
+  )
+    throw new Error('Agent output token budget must be 64–32,000');
+  if (
+    typeof profile.temperature !== 'number' ||
+    !Number.isFinite(profile.temperature) ||
+    profile.temperature < 0 ||
+    profile.temperature > 2
+  )
+    throw new Error('Agent temperature must be 0–2');
+  if (
+    !Array.isArray(routesValue) ||
+    routesValue.length < 1 ||
+    routesValue.length > PRODUCT_MODELS.length
+  )
+    throw new Error('Agent strategy must contain 1–3 routes');
+  const seen = new Set<string>();
+  const routes = routesValue.map((candidate) => {
+    if (
+      typeof candidate !== 'object' ||
+      candidate === null ||
+      Array.isArray(candidate) ||
+      Object.keys(candidate).sort().join(',') !== 'description,model'
+    )
+      throw new Error('Agent model route is invalid');
+    const route = candidate as Record<string, unknown>;
+    const description = typeof route.description === 'string' ? route.description.trim() : '';
+    if (
+      !PRODUCT_MODELS.includes(route.model as ProductModel) ||
+      description.length < 1 ||
+      description.length > 200 ||
+      seen.has(String(route.model))
+    )
+      throw new Error('Agent model route is invalid');
+    seen.add(String(route.model));
+    return Object.freeze({ description, model: route.model as ProductModel });
+  });
+  if (routingMode === 'autonomous' && routes.length < 2)
+    throw new Error('Autonomous routing requires at least two model routes');
+  return Object.freeze({
+    forcedCapability: forcedCapability as ProductAgentForcedCapability,
+    maxInputTokens: Number(maxInputTokens),
+    maxIterations: 1,
+    maxOutputTokens: Number(maxOutputTokens),
+    maxToolCalls: Number(maxToolCalls),
+    parameterExtraction,
+    routes: Object.freeze(routes),
+    routingMode,
+    schemaVersion: 'product-agent-strategy/1',
+    temperature: profile.temperature,
+  });
+}
+
+function strategyProfileToStorage(profile: ProductAgentStrategyProfile): string {
+  return JSON.stringify({
+    forced_capability: profile.forcedCapability,
+    max_input_tokens: profile.maxInputTokens,
+    max_iterations: profile.maxIterations,
+    max_output_tokens: profile.maxOutputTokens,
+    max_tool_calls: profile.maxToolCalls,
+    parameter_extraction: profile.parameterExtraction,
+    routes: profile.routes,
+    routing_mode: profile.routingMode,
+    schema_version: profile.schemaVersion,
+    temperature: profile.temperature,
+  });
 }
 
 const PRODUCT_AGENT_ROLE_LABELS: Readonly<Record<ProductAgentRoleTheme, string>> = Object.freeze({
@@ -567,6 +759,8 @@ function toDraft(row: AgentRow): AgentDraft {
   if (row.role_mode === 'text' && row.role_profile !== null) {
     throw new Error('product store returned a role profile for text mode');
   }
+  const strategyProfile = parseAgentStrategyProfile(row.strategy_profile);
+  const strategyVersion = positiveInteger(row.strategy_version, 'Agent strategy version');
   return Object.freeze({
     createdAt: asIso(row.created_at),
     databaseTableId: row.database_table_id,
@@ -580,6 +774,8 @@ function toDraft(row: AgentRow): AgentDraft {
     roleMode: row.role_mode,
     roleProfile,
     status: row.status,
+    strategyProfile,
+    strategyVersion,
     updatedAt: asIso(row.updated_at),
   });
 }
@@ -694,6 +890,8 @@ function toPreparedRun(row: PreparedRunRow): PreparedProductRun {
     model: row.model as ProductModel,
     runId: row.run_id,
     sequence: positiveInteger(row.sequence, 'Run sequence'),
+    strategyProfile: parseAgentStrategyProfile(row.strategy_profile),
+    strategyVersion: positiveInteger(row.strategy_version, 'Run strategy version'),
   });
 }
 
@@ -1173,6 +1371,31 @@ export class PostgresProductStore implements ProductStore {
     return toPreparedRun(row);
   }
 
+  async routeRun(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    route: {
+      readonly inputTokens: number;
+      readonly model: ProductModel;
+      readonly outputTokens: number;
+      readonly providerRequestId: string;
+    },
+  ): Promise<void> {
+    await this.#pool.query(
+      'SELECT app.route_agent_product_run($1::uuid, $2::uuid, $3::uuid, $4::text, $5::text, $6::bigint, $7::bigint)',
+      [
+        workspaceId,
+        runId,
+        actorId,
+        route.model,
+        route.providerRequestId,
+        route.inputTokens,
+        route.outputTokens,
+      ],
+    );
+  }
+
   async completeRun(
     workspaceId: string,
     actorId: string,
@@ -1248,7 +1471,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     const result = await this.#pool.query<{ readonly id: string }>(
-      'SELECT (app.create_agent_draft_with_role_capabilities($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb)).id AS id',
+      'SELECT (app.create_agent_draft_with_strategy_capabilities($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb)).id AS id',
       [
         workspaceId,
         actorId,
@@ -1260,6 +1483,7 @@ export class PostgresProductStore implements ProductStore {
         input.databaseTableId,
         input.roleMode,
         input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
+        strategyProfileToStorage(input.strategyProfile),
       ],
     );
     const id = result.rows[0]?.id;
@@ -1274,7 +1498,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     await this.#pool.query(
-      'SELECT app.update_agent_draft_with_role_capabilities($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb)',
+      'SELECT app.update_agent_draft_with_strategy_capabilities($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb)',
       [
         workspaceId,
         agentId,
@@ -1287,6 +1511,7 @@ export class PostgresProductStore implements ProductStore {
         input.databaseTableId,
         input.roleMode,
         input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
+        strategyProfileToStorage(input.strategyProfile),
       ],
     );
     return await this.#getAgent(workspaceId, agentId);
@@ -1340,6 +1565,7 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
           'database_table_id',
           'role_mode',
           'role_profile',
+          'strategy_profile',
         ].includes(key),
     )
   ) {
@@ -1369,6 +1595,13 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   }
   if (!PRODUCT_MODELS.includes(input.model as ProductModel))
     throw new Error('Agent model is unsupported');
+  const strategyProfile =
+    input.strategy_profile === undefined
+      ? createDefaultAgentStrategyProfile(input.model as ProductModel)
+      : parseAgentStrategyProfile(input.strategy_profile);
+  if (!strategyProfile.routes.some((route) => route.model === input.model)) {
+    throw new Error('Agent default model must be present in strategy routes');
+  }
   const knowledgeBaseId = input.knowledge_base_id ?? null;
   if (
     knowledgeBaseId !== null &&
@@ -1383,6 +1616,10 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   ) {
     throw new Error('Agent Database table id must be a UUID or null');
   }
+  if (strategyProfile.forcedCapability === 'knowledge' && knowledgeBaseId === null)
+    throw new Error('A forced Knowledge call requires a bound Knowledge base');
+  if (strategyProfile.forcedCapability === 'database' && databaseTableId === null)
+    throw new Error('A forced Database call requires a bound Database table');
   return Object.freeze({
     databaseTableId,
     description,
@@ -1392,6 +1629,7 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
     name,
     roleMode,
     roleProfile,
+    strategyProfile,
   });
 }
 

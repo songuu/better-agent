@@ -25,6 +25,7 @@ const REQUIRED_EVIDENCE_DOMAINS = Object.freeze([
   'product-database-studio',
   'product-agent-database',
   'product-agent-role-profile',
+  'product-agent-strategy-profile',
   'runtime-security',
 ]);
 
@@ -38,7 +39,7 @@ const EXPECTED_SCRIPTS = Object.freeze({
     'pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build',
   rootPostgres16: 'pnpm --filter @better-agent/db test:integration',
   dbIntegration:
-    'pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-product-flow-studio-integration.mjs && node ../../infra/test/postgres/run-product-knowledge-center-integration.mjs && node ../../infra/test/postgres/run-product-agent-knowledge-binding-integration.mjs && node ../../infra/test/postgres/run-product-release-evaluation-overview-integration.mjs && node ../../infra/test/postgres/run-product-database-studio-integration.mjs && node ../../infra/test/postgres/run-product-agent-database-binding-integration.mjs && node ../../infra/test/postgres/run-product-agent-role-profile-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs',
+    'pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-product-flow-studio-integration.mjs && node ../../infra/test/postgres/run-product-knowledge-center-integration.mjs && node ../../infra/test/postgres/run-product-agent-knowledge-binding-integration.mjs && node ../../infra/test/postgres/run-product-release-evaluation-overview-integration.mjs && node ../../infra/test/postgres/run-product-database-studio-integration.mjs && node ../../infra/test/postgres/run-product-agent-database-binding-integration.mjs && node ../../infra/test/postgres/run-product-agent-role-profile-integration.mjs && node ../../infra/test/postgres/run-product-agent-strategy-profile-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs',
 });
 
 const EXPECTED_POSTGRES_SUITES = Object.freeze([
@@ -175,6 +176,12 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
     successMarker: 'architecture-gate-suite/1 product-agent-role-profile pass',
   }),
   Object.freeze({
+    id: 'product-agent-strategy-profile',
+    file: 'infra/test/postgres/run-product-agent-strategy-profile-integration.mjs',
+    sha256: '425ad9259a899eb9c5493c77012ec2ec104441b49b31d168bc3985876873bb58',
+    successMarker: 'architecture-gate-suite/1 product-agent-strategy-profile pass',
+  }),
+  Object.freeze({
     id: 'runtime-security',
     file: 'infra/test/postgres/run-runtime-security-integration.mjs',
     sha256: 'a7853d2633d27aeed25ef9e4c58d43300bbdefd88e0d2eb81c1e3aac3655e5f1',
@@ -255,8 +262,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/db',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 178,
-    successMarker: '@better-agent/db:test:       Tests  178 passed (178)',
+    testCount: 180,
+    successMarker: '@better-agent/db:test:       Tests  180 passed (180)',
   }),
   Object.freeze({
     packageName: '@better-agent/domain-contracts',
@@ -298,8 +305,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/web',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 84,
-    successMarker: '@better-agent/web:test:       Tests  84 passed (84)',
+    testCount: 91,
+    successMarker: '@better-agent/web:test:       Tests  91 passed (91)',
   }),
 ]);
 
@@ -490,6 +497,7 @@ function validateMigrationFiles(value) {
       '026',
       '027',
       '028',
+      '029',
     ],
     'migration IDs',
   );

@@ -24,8 +24,10 @@ describe('OpenAI-compatible product model runtime', () => {
     const result = await runtime.generate({
       history: [{ assistant: '你好。', user: '你好' }],
       instructions: '只回答已核验事实。',
+      maxOutputTokens: 1200,
       model: 'gpt-5.6-sol',
       prompt: '现在状态如何？',
+      temperature: 0.4,
     });
 
     expect(result).toEqual({
@@ -46,8 +48,36 @@ describe('OpenAI-compatible product model runtime', () => {
     );
     expect(JSON.parse(String(request.body))).toMatchObject({
       instructions: '只回答已核验事实。',
+      max_output_tokens: 1200,
       model: 'gpt-5.6-sol',
+      temperature: 0.4,
     });
+  });
+
+  it('selects only an allowed autonomous route from strict provider JSON', async () => {
+    const runtime = new OpenAiResponsesRuntime({
+      apiKey: 'test-secret',
+      baseUrl: 'https://models.example.test/v1',
+      fetchImplementation: async () =>
+        new Response(
+          JSON.stringify({
+            id: 'resp_route',
+            output_text: JSON.stringify({ model: 'gpt-5.6-sol' }),
+            usage: { input_tokens: 12, output_tokens: 5 },
+          }),
+          { status: 200 },
+        ),
+    });
+    await expect(
+      runtime.selectModel({
+        defaultModel: 'gpt-5.4-mini',
+        prompt: '分析复杂故障',
+        routes: [
+          { description: '快速', model: 'gpt-5.4-mini' },
+          { description: '复杂推理', model: 'gpt-5.6-sol' },
+        ],
+      }),
+    ).resolves.toMatchObject({ model: 'gpt-5.6-sol', inputTokens: 12, outputTokens: 5 });
   });
 
   it('fails with bounded context without reflecting provider bodies or credentials', async () => {

@@ -67,6 +67,19 @@
                 </div>
                 <label class="prompt-field role-text-field" id="agent-text-role"><span>系统指令 · 6 段文本骨架</span><textarea name="instructions" maxlength="20000" required placeholder="身份｜目标｜对象｜能力｜约束｜流程"></textarea><small><b id="instruction-count">0</b> / 20,000</small></label>
               </section>
+              <section class="strategy-composer" aria-labelledby="strategy-heading">
+                <header><div><p>EXECUTION STRATEGY</p><h3 id="strategy-heading">策略与路由</h3></div><output id="strategy-version">STRATEGY V1</output></header>
+                <div class="strategy-grid">
+                  <label><span>路由模式</span><select name="routing_mode" id="agent-routing-mode"><option value="fixed">固定模型</option><option value="autonomous">模型自主选择</option></select></label>
+                  <label><span>强制能力调用</span><select name="forced_capability" id="agent-forced-capability"><option value="none">自动</option><option value="knowledge">必须检索知识库</option><option value="database">必须读取数据表</option></select></label>
+                  <label><span>输入 Token 上限</span><input name="max_input_tokens" type="number" min="256" max="128000" step="256" value="32000" /></label>
+                  <label><span>输出 Token 上限</span><input name="max_output_tokens" type="number" min="64" max="32000" step="64" value="2000" /></label>
+                  <label><span>能力调用上限</span><select name="max_tool_calls"><option value="0">0 · 禁用</option><option value="1">1 · 单能力</option><option value="2" selected>2 · 知识 + 数据</option></select></label>
+                  <label><span>温度 <output id="strategy-temperature-value">0.2</output></span><input name="temperature" type="range" min="0" max="2" step="0.1" value="0.2" /></label>
+                </div>
+                <label class="strategy-toggle"><input name="parameter_extraction" type="checkbox" /><span>启用参数抽取，使能力查询跟随当前用户输入</span></label>
+                <fieldset id="agent-model-routes"><legend>允许路由的模型</legend><label><input type="checkbox" value="gpt-5.6-sol" checked /><span>gpt-5.6-sol<small>复杂推理与生产任务</small></span></label><label><input type="checkbox" value="gpt-5.5" /><span>gpt-5.5<small>平衡的通用执行</small></span></label><label><input type="checkbox" value="gpt-5.4-mini" /><span>gpt-5.4-mini<small>快速与低成本任务</small></span></label></fieldset>
+              </section>
               <label><span>发布知识快照</span><select name="knowledge_base_id" id="agent-knowledge-base"><option value="">不绑定知识库</option></select></label>
               <label><span>发布数据库快照</span><select name="database_table_id" id="agent-database-table"><option value="">不绑定数据表</option></select></label>
               <footer><button type="button" id="test-agent" class="button button-ghost" disabled>试运行</button><button type="button" id="publish-agent" class="button button-ghost" disabled>发布版本</button><button type="submit" class="button button-primary">保存 Draft</button></footer>

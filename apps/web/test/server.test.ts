@@ -31,6 +31,7 @@ import type {
   ProductRun,
   ProductStore,
 } from '../src/product-store.js';
+import { createDefaultAgentStrategyProfile } from '../src/product-store.js';
 
 const openServers: Awaited<ReturnType<typeof createBetterAgentWebServer>>[] = [];
 const execFileAsync = promisify(execFile);
@@ -454,6 +455,8 @@ function productFixture(): {
         model: agent.model,
         runId,
         sequence,
+        strategyProfile: agent.strategyProfile,
+        strategyVersion: agent.strategyVersion,
       };
     },
     async completeRun(_workspaceId, _actorId, runId, output) {
@@ -471,6 +474,12 @@ function productFixture(): {
       };
       runs[index] = run;
       return run;
+    },
+    async routeRun(_workspaceId, _actorId, runId, route) {
+      const index = runs.findIndex((item) => item.id === runId);
+      const current = runs[index];
+      if (current === undefined) throw new Error('Run not found');
+      runs[index] = { ...current, model: route.model };
     },
     async failRun(_workspaceId, _actorId, runId, errorCode) {
       const index = runs.findIndex((item) => item.id === runId);
@@ -515,6 +524,7 @@ function productFixture(): {
         id: '11111111-1111-4111-8111-111111111111',
         revision: 1,
         status: 'draft',
+        strategyVersion: 1,
         updatedAt: timestamp,
       };
       agents.push(agent);
@@ -531,6 +541,10 @@ function productFixture(): {
         revision: current.revision + 1,
         status: 'draft',
         updatedAt: timestamp,
+        strategyVersion:
+          JSON.stringify(current.strategyProfile) === JSON.stringify(input.strategyProfile)
+            ? current.strategyVersion
+            : current.strategyVersion + 1,
       };
       agents[index] = agent;
       return agent;
@@ -1112,6 +1126,15 @@ describe('Better Agent web runtime', () => {
       roleMode: 'text',
       roleProfile: null,
       status: 'published',
+      strategyProfile: {
+        ...createDefaultAgentStrategyProfile('gpt-5.6-sol'),
+        routes: [
+          { description: '快速状态查询', model: 'gpt-5.4-mini' },
+          { description: '复杂诊断', model: 'gpt-5.6-sol' },
+        ],
+        routingMode: 'autonomous',
+      },
+      strategyVersion: 1,
       updatedAt: '2026-09-03T00:00:00.000Z',
     });
     let providerFails = false;
@@ -1125,11 +1148,23 @@ describe('Better Agent web runtime', () => {
         expect(input.instructions).toContain('DATABASE_CONTEXT');
         expect(input.instructions).toContain('service_status');
         expect(input.instructions).toContain('healthy');
+        expect(input.model).toBe('gpt-5.4-mini');
+        expect(input.maxOutputTokens).toBe(2_000);
+        expect(input.temperature).toBe(0.2);
         return {
           inputTokens: 12,
           outputText: '当前服务正常。',
           outputTokens: 6,
           providerRequestId: 'resp_test',
+        };
+      },
+      async selectModel() {
+        return {
+          inputTokens: 4,
+          model: 'gpt-5.4-mini',
+          outputText: '{"model":"gpt-5.4-mini"}',
+          outputTokens: 2,
+          providerRequestId: 'resp_route',
         };
       },
     };

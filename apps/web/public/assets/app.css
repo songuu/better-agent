@@ -481,6 +481,90 @@
 .agent-form .role-text-field textarea {
   min-height: 320px;
 }
+.strategy-composer {
+  margin: 0 0 22px;
+  border: 1px solid #30453c;
+  background: linear-gradient(115deg, rgba(69, 242, 172, 0.055), transparent 52%), #08130f;
+}
+.agent-form .strategy-composer > header {
+  align-items: center;
+  margin: 0;
+  padding: 16px 18px;
+  border-bottom: 1px solid #263a32;
+}
+.strategy-composer header p,
+.strategy-composer header output {
+  margin: 0 0 4px;
+  color: #45f2ac;
+  font: 8px var(--mono);
+  letter-spacing: 0.16em;
+}
+.strategy-composer h3 {
+  margin: 0;
+  font:
+    700 20px "Arial Narrow",
+    "Noto Sans SC",
+    sans-serif;
+}
+.strategy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+  padding: 18px 18px 0;
+}
+.strategy-toggle {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  padding: 0 18px;
+}
+.strategy-toggle input {
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  accent-color: #45f2ac;
+}
+#agent-model-routes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #263a32;
+}
+#agent-model-routes legend {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 18px;
+  background: #091611;
+  color: #7f9389;
+  font: 8px var(--mono);
+  letter-spacing: 0.15em;
+}
+.agent-form #agent-model-routes label {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 10px;
+  margin: 0;
+  padding: 13px;
+  background: #091611;
+}
+#agent-model-routes input {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  accent-color: #45f2ac;
+}
+#agent-model-routes span {
+  color: #dcebe3;
+  font: 10px var(--mono);
+}
+#agent-model-routes small {
+  display: block;
+  margin-top: 5px;
+  color: #667c72;
+  font: 8px / 1.5 var(--mono);
+}
 body.role-fullscreen-open {
   overflow: hidden;
 }

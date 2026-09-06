@@ -597,22 +597,54 @@ export async function createBetterAgentWebServer(
         validateRunInput(await readJsonBody(request)),
       );
       try {
+        const strategy = prepared.strategyProfile;
+        const callKnowledge =
+          strategy.maxToolCalls > 0 &&
+          (strategy.forcedCapability === 'knowledge' || strategy.forcedCapability === 'none');
+        const callDatabase =
+          strategy.maxToolCalls > (callKnowledge ? 1 : 0) &&
+          (strategy.forcedCapability === 'database' || strategy.forcedCapability === 'none');
         const [knowledgeHits, databaseRows] = await Promise.all([
-          productStore.searchAgentKnowledge(
-            workspaceId,
-            prepared.conversationId,
-            prepared.inputText.slice(0, 500),
-          ),
-          productStore.readAgentDatabase(workspaceId, prepared.conversationId),
+          callKnowledge
+            ? productStore.searchAgentKnowledge(
+                workspaceId,
+                prepared.conversationId,
+                prepared.inputText.slice(0, 500),
+              )
+            : Promise.resolve([]),
+          callDatabase
+            ? productStore.readAgentDatabase(workspaceId, prepared.conversationId)
+            : Promise.resolve([]),
         ]);
+        if (strategy.forcedCapability === 'knowledge' && knowledgeHits.length === 0) {
+          throw new Error('model_required_knowledge_no_result');
+        }
+        if (strategy.forcedCapability === 'database' && databaseRows.length === 0) {
+          throw new Error('model_required_database_no_result');
+        }
+        let selectedModel = prepared.model;
+        if (strategy.routingMode === 'autonomous') {
+          if (modelRuntime.selectModel === undefined || productStore.routeRun === undefined) {
+            throw new Error('model_autonomous_router_unavailable');
+          }
+          const route = await modelRuntime.selectModel({
+            defaultModel: prepared.model,
+            prompt: prepared.inputText,
+            routes: strategy.routes,
+          });
+          await productStore.routeRun(workspaceId, actorId, prepared.runId, route);
+          selectedModel = route.model;
+        }
         const output = await modelRuntime.generate({
           history: prepared.history,
           instructions: withDatabaseContext(
             withKnowledgeContext(prepared.instructions, knowledgeHits),
             databaseRows,
           ),
-          model: prepared.model,
+          maxOutputTokens: strategy.maxOutputTokens,
+          model: selectedModel,
           prompt: prepared.inputText,
+          temperature: strategy.temperature,
         });
         const run = await productStore.completeRun(workspaceId, actorId, prepared.runId, output);
         sendJson(request, response, 201, { run });
