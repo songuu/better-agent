@@ -105,6 +105,15 @@ test('retries TLS acceptance while nginx retires workers with the old route tabl
 test('verifies the deployed page with a marker owned by the public HTML', () => {
   assert.ok(publicHtml.includes(publicPageMarker));
   assert.ok(deploymentWorkflow.includes(`grep -Fq '${publicPageMarker}'`));
+  assert.match(
+    deploymentWorkflow,
+    /page="\$\(curl --fail --silent --show-error --max-time 10 https:\/\/songuu\.top\/better-agent\/\)"/u,
+  );
+  assert.match(
+    deploymentWorkflow,
+    /grep -Fq '<title>Better Agent · Studio<\/title>' <<<"\$\{page\}"/u,
+  );
+  assert.doesNotMatch(deploymentWorkflow, /curl[^\r\n|]*\|\s*grep -Fq/u);
   assert.doesNotMatch(deploymentWorkflow, /BETTER AGENT \/ STUDIO/u);
 });
 

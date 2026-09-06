@@ -241,7 +241,8 @@ jobs:
           set -euo pipefail
           health="$(curl --fail --silent --show-error --max-time 10 https://songuu.top/better-agent/api/healthz)"
           HEALTH="${health}" node -e 'const h=JSON.parse(process.env.HEALTH);if(h.status!=="ok"||h.build_sha!==process.argv[1])process.exit(1)' "${ACCEPTED_SHA}"
-          curl --fail --silent --show-error --max-time 10 https://songuu.top/better-agent/ | grep -Fq '<title>Better Agent · Studio</title>'
+          page="$(curl --fail --silent --show-error --max-time 10 https://songuu.top/better-agent/)"
+          grep -Fq '<title>Better Agent · Studio</title>' <<<"${page}"
 
       - name: Configure independent model runtime when provisioned
         env:
