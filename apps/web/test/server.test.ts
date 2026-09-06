@@ -1203,6 +1203,101 @@ describe('Better Agent web runtime', () => {
     });
   });
 
+  it('runs authenticated role assistance through the model boundary and returns validated JSON', async () => {
+    const prompts: string[] = [];
+    const modelRuntime: ProductModelRuntime = {
+      async generate(input) {
+        prompts.push(input.prompt);
+        expect(input.history).toEqual([]);
+        expect(input.instructions).toContain('只返回一个 JSON 对象');
+        return {
+          inputTokens: 20,
+          outputText: JSON.stringify({ instructions: '先核验事实，再以简洁中文回答。' }),
+          outputTokens: 12,
+          providerRequestId: 'resp_role_assist',
+        };
+      },
+    };
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      modelRuntime,
+      productStore: productFixture().store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const response = await localRequest(origin, '/better-agent/api/product/role-assist', {
+      body: JSON.stringify({
+        action: 'optimize',
+        capability_kinds: [],
+        description: '运维助手',
+        instructions: '回答问题。',
+        model: 'gpt-5.6-sol',
+        name: '守望者',
+        role_mode: 'text',
+      }),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'POST',
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      suggestion: {
+        instructions: '先核验事实，再以简洁中文回答。',
+        role_mode: 'text',
+        role_profile: null,
+      },
+    });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('"instructions":"回答问题。"');
+
+    const invalidResponse = await localRequest(origin, '/better-agent/api/product/role-assist', {
+      body: JSON.stringify({ action: 'generate', unexpected: true }),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'POST',
+    });
+    expect(invalidResponse.status).toBe(400);
+    expect(await invalidResponse.json()).toEqual({
+      error: 'Role assist payload contains unknown fields',
+    });
+  });
+
+  it('fails role assistance closed when no model runtime is configured', async () => {
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: productFixture().store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const response = await localRequest(origin, '/better-agent/api/product/role-assist', {
+      body: JSON.stringify({}),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'POST',
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'model_runtime_not_configured' });
+  });
+
   it('does not reflect malformed build identity into the health contract', async () => {
     const origin = await start({ buildSha: '<script>secret</script>' });
     const response = await localRequest(origin, '/better-agent/api/healthz');

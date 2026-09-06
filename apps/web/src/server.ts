@@ -22,6 +22,12 @@ import {
   validateRunInput,
 } from './product-store.js';
 import { createModelRuntimeFromEnvironment, type ProductModelRuntime } from './model-runtime.js';
+import {
+  buildRoleAssistPrompt,
+  parseRoleAssistSuggestion,
+  ROLE_ASSIST_SYSTEM_INSTRUCTIONS,
+  validateRoleAssistInput,
+} from './role-assist.js';
 
 export const WEB_BASE_PATH = '/better-agent/';
 
@@ -316,6 +322,28 @@ export async function createBetterAgentWebServer(
         validateAgentInput(await readJsonBody(request)),
       );
       sendJson(request, response, 201, { agent });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/role-assist` && request.method === 'POST') {
+      if (modelRuntime === undefined) {
+        sendJson(request, response, 503, { error: 'model_runtime_not_configured' });
+        return true;
+      }
+      const input = validateRoleAssistInput(await readJsonBody(request));
+      const generated = await modelRuntime.generate({
+        history: [],
+        instructions: ROLE_ASSIST_SYSTEM_INSTRUCTIONS,
+        model: input.model,
+        prompt: buildRoleAssistPrompt(input),
+      });
+      const suggestion = parseRoleAssistSuggestion(input, generated.outputText);
+      sendJson(request, response, 200, {
+        suggestion: {
+          instructions: suggestion.instructions,
+          role_mode: suggestion.roleMode,
+          role_profile: suggestion.roleProfile,
+        },
+      });
       return true;
     }
     if (path === `${WEB_BASE_PATH}api/product/flows` && request.method === 'GET') {
@@ -657,7 +685,9 @@ export async function createBetterAgentWebServer(
                   : message.startsWith('invalid_') ||
                       message.includes('payload') ||
                       message.includes('request_body') ||
-                      /^(Agent|Database|Flow|Input|Knowledge|Output|Run|Template) /u.test(message)
+                      /^(Agent|Database|Flow|Input|Knowledge|Output|Role|Run|Template) /u.test(
+                        message,
+                      )
                     ? 400
                     : 500;
           sendJson(request, response, status, {

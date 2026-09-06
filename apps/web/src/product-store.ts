@@ -491,7 +491,7 @@ const PRODUCT_AGENT_ROLE_LABELS: Readonly<Record<ProductAgentRoleTheme, string>>
   tone: '表达风格',
 });
 
-function parseStructuredAgentRoleProfile(value: unknown): ProductAgentRoleProfile {
+export function parseStructuredAgentRoleProfile(value: unknown): ProductAgentRoleProfile {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('Agent structured role profile must be an object');
   }

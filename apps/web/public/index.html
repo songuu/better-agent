@@ -55,7 +55,7 @@
               </div>
               <label><span>说明</span><input name="description" maxlength="500" placeholder="这个 Agent 负责什么？" /></label>
               <section class="role-composer">
-                <header><div><p>ROLE ARCHITECTURE</p><h3>角色设定</h3></div><label><span>编辑模式</span><select name="role_mode" id="agent-role-mode"><option value="text">文本模式</option><option value="structured">结构化 · 7 主题</option></select></label></header>
+                <header><div><p>ROLE ARCHITECTURE</p><h3>角色设定</h3></div><div class="role-header-controls"><nav aria-label="角色助手"><button type="button" id="role-assist-generate">AI 生成</button><button type="button" id="role-assist-optimize">优化</button><button type="button" id="role-assist-capabilities">按能力优化</button><button type="button" id="role-perspective">透视图</button><button type="button" id="role-fullscreen" aria-pressed="false">全屏</button></nav><label><span>编辑模式</span><select name="role_mode" id="agent-role-mode"><option value="text">文本模式</option><option value="structured">结构化 · 7 主题</option></select></label></div></header>
                 <div id="agent-role-profile" class="role-profile" hidden>
                   <article data-role-theme="identity"><div><b>01 身份定位</b><output>90</output></div><textarea name="role_identity_content" maxlength="1000" placeholder="Agent 是谁，承担什么角色"></textarea><label><span>优先级</span><input name="role_identity_weight" type="range" min="0" max="100" value="90" /></label></article>
                   <article data-role-theme="objective"><div><b>02 核心目标</b><output>100</output></div><textarea name="role_objective_content" maxlength="1000" placeholder="最终需要达成什么结果"></textarea><label><span>优先级</span><input name="role_objective_weight" type="range" min="0" max="100" value="100" /></label></article>
@@ -65,10 +65,10 @@
                   <article data-role-theme="constraints"><div><b>06 边界约束</b><output>100</output></div><textarea name="role_constraints_content" maxlength="1000" placeholder="禁止事项、事实与安全边界"></textarea><label><span>优先级</span><input name="role_constraints_weight" type="range" min="0" max="100" value="100" /></label></article>
                   <article data-role-theme="process"><div><b>07 工作流程</b><output>90</output></div><textarea name="role_process_content" maxlength="1000" placeholder="分析、调用能力与回答步骤"></textarea><label><span>优先级</span><input name="role_process_weight" type="range" min="0" max="100" value="90" /></label></article>
                 </div>
+                <label class="prompt-field role-text-field" id="agent-text-role"><span>系统指令 · 6 段文本骨架</span><textarea name="instructions" maxlength="20000" required placeholder="身份｜目标｜对象｜能力｜约束｜流程"></textarea><small><b id="instruction-count">0</b> / 20,000</small></label>
               </section>
               <label><span>发布知识快照</span><select name="knowledge_base_id" id="agent-knowledge-base"><option value="">不绑定知识库</option></select></label>
               <label><span>发布数据库快照</span><select name="database_table_id" id="agent-database-table"><option value="">不绑定数据表</option></select></label>
-              <label class="prompt-field" id="agent-text-role"><span>系统指令 · 6 段文本骨架</span><textarea name="instructions" maxlength="20000" required placeholder="身份｜目标｜对象｜能力｜约束｜流程"></textarea><small><b id="instruction-count">0</b> / 20,000</small></label>
               <footer><button type="button" id="test-agent" class="button button-ghost" disabled>试运行</button><button type="button" id="publish-agent" class="button button-ghost" disabled>发布版本</button><button type="submit" class="button button-primary">保存 Draft</button></footer>
             </form>
           </section>
@@ -214,6 +214,12 @@
         <label><span>管理员口令</span><input name="password" type="password" minlength="12" autocomplete="current-password" required /></label>
         <output id="login-error"></output><button class="button button-primary" type="submit">连接工作区</button>
       </form>
+    </dialog>
+    <dialog id="role-perspective-dialog" class="role-perspective-dialog">
+      <header><div><p>COMPILED ROLE</p><h2>角色透视图</h2></div><button type="button" data-close-role-perspective aria-label="关闭">×</button></header>
+      <div class="role-perspective-meta"><span id="role-perspective-mode">TEXT</span><span id="role-perspective-length">0 CHARS</span></div>
+      <pre id="role-perspective-output"></pre>
+      <footer><span>这是保存和发布前的最终角色指令预览。</span><button type="button" class="button button-primary" data-close-role-perspective>完成</button></footer>
     </dialog>
     <dialog id="run-dialog" class="run-dialog">
       <header><div><p>LIVE CONVERSATION</p><h2 id="run-agent-name">Agent 试运行</h2></div><button type="button" data-close-run aria-label="关闭">×</button></header>

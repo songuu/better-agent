@@ -31,6 +31,15 @@ const roleThemes = [
   'constraints',
   'process',
 ];
+const roleLabels = {
+  audience: '服务对象',
+  constraints: '边界约束',
+  expertise: '专业能力',
+  identity: '身份定位',
+  objective: '核心目标',
+  process: '工作流程',
+  tone: '表达风格',
+};
 const textRoleTemplate = `【身份定位】
 你是：
 
@@ -84,6 +93,109 @@ function readRoleProfile() {
       },
     ]),
   );
+}
+
+function compileRolePreview() {
+  if (form.elements.role_mode.value === 'text') return form.elements.instructions.value.trim();
+  const profile = readRoleProfile();
+  return [
+    'STRUCTURED_ROLE_PROFILE',
+    '以下七项定义角色行为；权重仅用于角色要求冲突时的优先级，不得覆盖系统安全边界。',
+    ...roleThemes.map(
+      (theme) =>
+        `[${roleLabels[theme]} | 权重 ${profile[theme].weight}/100]\n${profile[theme].content.trim()}`,
+    ),
+    'END_STRUCTURED_ROLE_PROFILE',
+  ].join('\n\n');
+}
+
+function currentCapabilityKinds() {
+  return [
+    ...(form.elements.knowledge_base_id.value ? ['knowledge'] : []),
+    ...(form.elements.database_table_id.value ? ['database'] : []),
+  ];
+}
+
+function applyRoleSuggestion(suggestion) {
+  form.elements.role_mode.value = suggestion.role_mode;
+  form.elements.instructions.value = suggestion.instructions;
+  populateRoleProfile(suggestion.role_profile);
+  setRoleMode(suggestion.role_mode);
+  byId('instruction-count').textContent = String(suggestion.instructions.length);
+}
+
+async function runRoleAssist(action) {
+  const name = form.elements.name.value.trim();
+  if (!name) {
+    toast('请先填写 Agent 名称', true);
+    form.elements.name.focus();
+    return;
+  }
+  const capabilityKinds = currentCapabilityKinds();
+  if (action === 'optimize_for_capabilities' && capabilityKinds.length === 0) {
+    toast('请先绑定知识库或数据表', true);
+    return;
+  }
+  const buttons = [
+    byId('role-assist-generate'),
+    byId('role-assist-optimize'),
+    byId('role-assist-capabilities'),
+  ];
+  buttons.forEach((button) => {
+    button.disabled = true;
+  });
+  byId(
+    `role-assist-${action === 'optimize_for_capabilities' ? 'capabilities' : action}`,
+  ).dataset.loading = 'true';
+  const mode = form.elements.role_mode.value;
+  const input = {
+    action,
+    capability_kinds: capabilityKinds,
+    description: form.elements.description.value,
+    model: form.elements.model.value,
+    name,
+    role_mode: mode,
+    ...(action === 'generate'
+      ? {}
+      : mode === 'structured'
+        ? { role_profile: readRoleProfile() }
+        : { instructions: form.elements.instructions.value }),
+  };
+  try {
+    const payload = await request('/role-assist', {
+      body: JSON.stringify(input),
+      method: 'POST',
+    });
+    applyRoleSuggestion(payload.suggestion);
+    toast(action === 'generate' ? '角色草案已生成，请确认后保存' : '角色已优化，请确认后保存');
+  } catch (error) {
+    toast(
+      error.message === 'model_runtime_not_configured'
+        ? '模型运行时尚未配置，无法使用 AI 角色助手'
+        : error.message,
+      true,
+    );
+  } finally {
+    buttons.forEach((button) => {
+      button.disabled = false;
+      delete button.dataset.loading;
+    });
+  }
+}
+
+function showRolePerspective() {
+  const compiled = compileRolePreview();
+  byId('role-perspective-mode').textContent =
+    form.elements.role_mode.value === 'structured' ? 'STRUCTURED · 7 THEMES' : 'TEXT · 6 SECTIONS';
+  byId('role-perspective-length').textContent = `${compiled.length.toLocaleString('zh-CN')} CHARS`;
+  byId('role-perspective-output').textContent = compiled || '角色内容为空。';
+  byId('role-perspective-dialog').showModal();
+}
+
+function setRoleFullscreen(enabled) {
+  document.body.classList.toggle('role-fullscreen-open', enabled);
+  byId('role-fullscreen').setAttribute('aria-pressed', String(enabled));
+  byId('role-fullscreen').textContent = enabled ? '退出全屏' : '全屏';
 }
 
 function toast(message, error = false) {
@@ -508,6 +620,7 @@ async function loadRuns() {
 }
 
 function showEditor(agent = null) {
+  setRoleFullscreen(false);
   state.current = agent;
   state.conversationId = null;
   resetConversationView();
@@ -624,6 +737,23 @@ form.elements.instructions.addEventListener('input', () => {
 });
 form.elements.role_mode.addEventListener('change', () => {
   setRoleMode(form.elements.role_mode.value);
+});
+byId('role-assist-generate').addEventListener('click', () => runRoleAssist('generate'));
+byId('role-assist-optimize').addEventListener('click', () => runRoleAssist('optimize'));
+byId('role-assist-capabilities').addEventListener('click', () =>
+  runRoleAssist('optimize_for_capabilities'),
+);
+byId('role-perspective').addEventListener('click', showRolePerspective);
+byId('role-fullscreen').addEventListener('click', () =>
+  setRoleFullscreen(!document.body.classList.contains('role-fullscreen-open')),
+);
+document.querySelectorAll('[data-close-role-perspective]').forEach((button) => {
+  button.addEventListener('click', () => byId('role-perspective-dialog').close());
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && document.body.classList.contains('role-fullscreen-open')) {
+    setRoleFullscreen(false);
+  }
 });
 for (const theme of roleThemes) {
   form.elements[`role_${theme}_weight`].addEventListener('input', (event) => {
