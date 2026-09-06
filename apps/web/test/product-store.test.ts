@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  compileStructuredAgentInstructions,
   validateAgentInput,
   validateDatabaseQueryInput,
   validateDatabaseRowsInput,
@@ -14,7 +15,38 @@ import {
   validateRunInput,
 } from '../src/product-store.js';
 
+const structuredRole = {
+  audience: { content: '企业运维团队', weight: 70 },
+  constraints: { content: '不猜测，不泄露敏感信息', weight: 100 },
+  expertise: { content: 'PostgreSQL 与服务可用性', weight: 80 },
+  identity: { content: '可靠的生产运行顾问', weight: 90 },
+  objective: { content: '基于证据判断服务状态', weight: 100 },
+  process: { content: '先检索证据，再给出结论', weight: 90 },
+  tone: { content: '简洁、直接、中文优先', weight: 60 },
+};
+
 describe('product Agent input', () => {
+  it('compiles and freezes the closed seven-theme structured role profile', () => {
+    const input = validateAgentInput({
+      database_table_id: null,
+      description: '面向运维团队的助手',
+      instructions: 'caller text must not override the structured role',
+      knowledge_base_id: null,
+      model: 'gpt-5.6-sol',
+      name: '运行守望者',
+      role_mode: 'structured',
+      role_profile: structuredRole,
+    });
+
+    expect(input.roleMode).toBe('structured');
+    expect(input.roleProfile).toEqual(structuredRole);
+    expect(input.instructions).toBe(compileStructuredAgentInstructions(structuredRole));
+    expect(input.instructions).toContain('可靠的生产运行顾问');
+    expect(input.instructions).not.toContain('caller text');
+    expect(Object.isFrozen(input.roleProfile)).toBe(true);
+    expect(Object.isFrozen(input.roleProfile?.identity)).toBe(true);
+  });
+
   it('accepts and freezes the closed product draft payload', () => {
     const input = validateAgentInput({
       description: '面向运维团队的助手',
@@ -32,6 +64,8 @@ describe('product Agent input', () => {
       knowledgeBaseId: '12345678-1234-4123-8123-123456789abc',
       model: 'gpt-5.6-sol',
       name: '运行守望者',
+      roleMode: 'text',
+      roleProfile: null,
     });
     expect(Object.isFrozen(input)).toBe(true);
   });
@@ -47,6 +81,26 @@ describe('product Agent input', () => {
         knowledge_base_id: 'not-a-uuid',
         model: 'gpt-5.6-sol',
         name: 'A',
+      },
+    ],
+    [
+      {
+        description: '',
+        instructions: '',
+        model: 'gpt-5.6-sol',
+        name: 'A',
+        role_mode: 'structured',
+        role_profile: { ...structuredRole, identity: { content: '', weight: 90 } },
+      },
+    ],
+    [
+      {
+        description: '',
+        instructions: '',
+        model: 'gpt-5.6-sol',
+        name: 'A',
+        role_mode: 'structured',
+        role_profile: { ...structuredRole, extra: { content: '扩展字段', weight: 1 } },
       },
     ],
     [

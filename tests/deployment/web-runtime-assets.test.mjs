@@ -132,6 +132,8 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
     'id="knowledge-hits"',
     'id="agent-knowledge-base"',
     'id="agent-database-table"',
+    'id="agent-role-mode"',
+    'id="agent-role-profile"',
   ]) {
     assert.ok(publicHtml.includes(marker), `missing Knowledge Center control: ${marker}`);
   }
@@ -140,6 +142,8 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
   }
   assert.ok(publicJavaScript.includes('knowledge_base_id'));
   assert.ok(publicJavaScript.includes('database_table_id'));
+  assert.ok(publicJavaScript.includes('role_profile'));
+  assert.ok(publicJavaScript.includes('【身份定位】'));
   assert.ok(publicJavaScript.includes('renderAgentKnowledgeOptions'));
   assert.doesNotMatch(publicJavaScript, /localStorage|sessionStorage/u);
   assert.match(publicCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/u);

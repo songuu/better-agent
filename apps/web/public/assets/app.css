@@ -355,6 +355,90 @@
   color: #597067;
   font-size: 8px;
 }
+.role-composer {
+  margin: 4px 0 22px;
+  border: 1px solid #2e4139;
+  background: linear-gradient(135deg, rgba(69, 242, 172, 0.045), transparent 42%), #08130f;
+}
+.agent-form .role-composer > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 0;
+  padding: 16px 18px;
+  border-bottom: 1px solid #263a32;
+}
+.role-composer header p {
+  margin: 0 0 4px;
+  color: #45f2ac;
+  font: 8px var(--mono);
+  letter-spacing: 0.18em;
+}
+.role-composer h3 {
+  margin: 0;
+  font:
+    700 20px "Arial Narrow",
+    "Noto Sans SC",
+    sans-serif;
+}
+.agent-form .role-composer header label {
+  min-width: 190px;
+  margin: 0;
+}
+.agent-form .role-composer header select {
+  padding: 9px 12px;
+}
+.role-profile {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: #263a32;
+}
+.role-profile article {
+  min-width: 0;
+  padding: 15px;
+  background: #091611;
+}
+.role-profile article:last-child {
+  grid-column: 1 / -1;
+}
+.role-profile article > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.role-profile article b {
+  color: #dcebe3;
+  font: 10px var(--mono);
+  letter-spacing: 0.08em;
+}
+.role-profile output {
+  min-width: 30px;
+  color: #45f2ac;
+  font: 700 11px var(--mono);
+  text-align: right;
+}
+.agent-form .role-profile textarea {
+  width: 100%;
+  min-height: 78px;
+  padding: 10px 11px;
+  font-size: 11px;
+}
+.agent-form .role-profile label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 0;
+}
+.agent-form .role-profile input[type="range"] {
+  width: 100%;
+  height: 3px;
+  padding: 0;
+  border: 0;
+  accent-color: #45f2ac;
+}
 .agent-form footer {
   display: flex;
   justify-content: flex-end;
@@ -536,6 +620,16 @@
   }
   .form-grid {
     grid-template-columns: 1fr;
+  }
+  .agent-form .role-composer > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .role-profile {
+    grid-template-columns: 1fr;
+  }
+  .role-profile article:last-child {
+    grid-column: auto;
   }
   .top-actions span {
     display: none;

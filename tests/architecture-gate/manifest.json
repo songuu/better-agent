@@ -22,6 +22,7 @@
     "product-release-evaluation",
     "product-database-studio",
     "product-agent-database",
+    "product-agent-role-profile",
     "runtime-security"
   ],
   "openapi": {
@@ -97,7 +98,9 @@
     "026_product_database_studio.down.sql",
     "026_product_database_studio.up.sql",
     "027_product_agent_database_binding.down.sql",
-    "027_product_agent_database_binding.up.sql"
+    "027_product_agent_database_binding.up.sql",
+    "028_product_agent_role_profile.down.sql",
+    "028_product_agent_role_profile.up.sql"
   ],
   "postgresSuites": [
     {
@@ -248,6 +251,13 @@
       "successMarker": "architecture-gate-suite/1 product-agent-database pass"
     },
     {
+      "id": "product-agent-role-profile",
+      "file": "infra/test/postgres/run-product-agent-role-profile-integration.mjs",
+      "sha256": "86073b9a1022188f98fe924a972017351a4a5d6a633301400930f939d9d5e2d5",
+      "mode": "real",
+      "successMarker": "architecture-gate-suite/1 product-agent-role-profile pass"
+    },
+    {
       "id": "runtime-security",
       "file": "infra/test/postgres/run-runtime-security-integration.mjs",
       "sha256": "a7853d2633d27aeed25ef9e4c58d43300bbdefd88e0d2eb81c1e3aac3655e5f1",
@@ -327,8 +337,8 @@
     {
       "packageName": "@better-agent/db",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 176,
-      "successMarker": "@better-agent/db:test:       Tests  176 passed (176)"
+      "testCount": 178,
+      "successMarker": "@better-agent/db:test:       Tests  178 passed (178)"
     },
     {
       "packageName": "@better-agent/domain-contracts",
@@ -369,8 +379,8 @@
     {
       "packageName": "@better-agent/web",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 69,
-      "successMarker": "@better-agent/web:test:       Tests  69 passed (69)"
+      "testCount": 72,
+      "successMarker": "@better-agent/web:test:       Tests  72 passed (72)"
     }
   ],
   "scripts": {
@@ -378,7 +388,7 @@
     "rootArchitectureGateTest": "node --test tests/architecture-gate/architecture-gate.test.mjs",
     "rootCheck": "pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build",
     "rootPostgres16": "pnpm --filter @better-agent/db test:integration",
-    "dbIntegration": "pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-product-flow-studio-integration.mjs && node ../../infra/test/postgres/run-product-knowledge-center-integration.mjs && node ../../infra/test/postgres/run-product-agent-knowledge-binding-integration.mjs && node ../../infra/test/postgres/run-product-release-evaluation-overview-integration.mjs && node ../../infra/test/postgres/run-product-database-studio-integration.mjs && node ../../infra/test/postgres/run-product-agent-database-binding-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs"
+    "dbIntegration": "pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-product-flow-studio-integration.mjs && node ../../infra/test/postgres/run-product-knowledge-center-integration.mjs && node ../../infra/test/postgres/run-product-agent-knowledge-binding-integration.mjs && node ../../infra/test/postgres/run-product-release-evaluation-overview-integration.mjs && node ../../infra/test/postgres/run-product-database-studio-integration.mjs && node ../../infra/test/postgres/run-product-agent-database-binding-integration.mjs && node ../../infra/test/postgres/run-product-agent-role-profile-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs"
   },
   "gates": [
     {
@@ -403,14 +413,14 @@
         "@better-agent/auth:test:       Tests  54 passed (54)",
         "@better-agent/billing-core:test:       Tests  43 passed (43)",
         "@better-agent/database-capability:test:       Tests  8 passed (8)",
-        "@better-agent/db:test:       Tests  176 passed (176)",
+        "@better-agent/db:test:       Tests  178 passed (178)",
         "@better-agent/domain-contracts:test:       Tests  193 passed (193)",
         "@better-agent/instruction-skill:test:       Tests  8 passed (8)",
         "@better-agent/knowledge-core:test:       Tests  7 passed (7)",
         "@better-agent/release-core:test:       Tests  1118 passed (1118)",
         "@better-agent/run-core:test:       Tests  146 passed (146)",
         "@better-agent/test-support:test:       Tests  23 passed (23)",
-        "@better-agent/web:test:       Tests  69 passed (69)"
+        "@better-agent/web:test:       Tests  72 passed (72)"
       ],
       "forbidSkippedOutput": true,
       "timeoutMs": 300000
@@ -442,6 +452,7 @@
         "architecture-gate-suite/1 product-release-evaluation pass",
         "architecture-gate-suite/1 product-database-studio pass",
         "architecture-gate-suite/1 product-agent-database pass",
+        "architecture-gate-suite/1 product-agent-role-profile pass",
         "architecture-gate-suite/1 runtime-security pass"
       ],
       "forbidSkippedOutput": true,

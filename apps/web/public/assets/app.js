@@ -22,6 +22,69 @@ const knowledgeDocumentForm = byId('knowledge-document-form');
 const databaseTableForm = byId('database-table-form');
 const databaseRowsForm = byId('database-rows-form');
 const loginDialog = byId('login-dialog');
+const roleThemes = [
+  'identity',
+  'objective',
+  'audience',
+  'expertise',
+  'tone',
+  'constraints',
+  'process',
+];
+const textRoleTemplate = `【身份定位】
+你是：
+
+【核心目标】
+你需要完成：
+
+【服务对象】
+你的用户与默认沟通深度：
+
+【能力与知识】
+你擅长且可以使用：
+
+【边界约束】
+你必须遵守：
+
+【工作流程与输出】
+你应按以下步骤工作，并以以下格式输出：`;
+
+function setRoleMode(mode) {
+  const structured = mode === 'structured';
+  byId('agent-role-profile').hidden = !structured;
+  byId('agent-text-role').hidden = structured;
+  form.elements.instructions.required = !structured;
+  for (const theme of roleThemes) {
+    form.elements[`role_${theme}_content`].required = structured;
+  }
+}
+
+function populateRoleProfile(profile = null) {
+  for (const theme of roleThemes) {
+    const content = form.elements[`role_${theme}_content`];
+    const weight = form.elements[`role_${theme}_weight`];
+    if (profile?.[theme]) {
+      content.value = profile[theme].content;
+      weight.value = String(profile[theme].weight);
+    } else {
+      content.value = '';
+      weight.value = weight.defaultValue;
+    }
+    content.closest('article').querySelector('output').textContent = weight.value;
+  }
+}
+
+function readRoleProfile() {
+  return Object.fromEntries(
+    roleThemes.map((theme) => [
+      theme,
+      {
+        content: form.elements[`role_${theme}_content`].value,
+        weight: Number(form.elements[`role_${theme}_weight`].value),
+      },
+    ]),
+  );
+}
 
 function toast(message, error = false) {
   const node = byId('toast');
@@ -452,8 +515,11 @@ function showEditor(agent = null) {
   form.hidden = false;
   form.elements.name.value = agent?.name || '';
   form.elements.description.value = agent?.description || '';
-  form.elements.instructions.value = agent?.instructions || '';
+  form.elements.instructions.value = agent?.instructions || textRoleTemplate;
   form.elements.model.value = agent?.model || 'gpt-5.6-sol';
+  form.elements.role_mode.value = agent?.roleMode || 'text';
+  populateRoleProfile(agent?.roleProfile || null);
+  setRoleMode(form.elements.role_mode.value);
   renderAgentKnowledgeOptions();
   renderAgentDatabaseOptions();
   byId('editor-title').textContent = agent?.name || '未命名 Agent';
@@ -556,6 +622,15 @@ byId('new-database').addEventListener('click', () => showDatabaseCreator());
 form.elements.instructions.addEventListener('input', () => {
   byId('instruction-count').textContent = String(form.elements.instructions.value.length);
 });
+form.elements.role_mode.addEventListener('change', () => {
+  setRoleMode(form.elements.role_mode.value);
+});
+for (const theme of roleThemes) {
+  form.elements[`role_${theme}_weight`].addEventListener('input', (event) => {
+    event.currentTarget.closest('article').querySelector('output').textContent =
+      event.currentTarget.value;
+  });
+}
 form.elements.name.addEventListener('input', () => {
   byId('editor-title').textContent = form.elements.name.value.trim() || '未命名 Agent';
 });
@@ -567,9 +642,14 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(form));
   const input = {
-    ...values,
     database_table_id: values.database_table_id || null,
+    description: values.description,
+    instructions: values.instructions,
     knowledge_base_id: values.knowledge_base_id || null,
+    model: values.model,
+    name: values.name,
+    role_mode: values.role_mode,
+    role_profile: values.role_mode === 'structured' ? readRoleProfile() : null,
   };
   try {
     const payload = state.current

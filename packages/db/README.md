@@ -302,6 +302,11 @@ managed table and snapshots the exact row ordinals into every published release.
 Conversation reads are version-pinned, bounded and tenant-isolated; snapshot
 tables remain immutable, owner-only and inaccessible to the runtime role.
 
+Migration `028_product_agent_role_profile` adds text and closed seven-theme
+structured role modes. Each theme has bounded content and an integer priority;
+publication copies the exact server-compiled instructions and role profile into
+an immutable release so existing conversations cannot observe later draft edits.
+
 Migrations `012_g1_agent_strategy_execution` and
 `013_g1_worker_human_gate` retain the reviewed AgentPlan, fenced Strategy
 state/actions/results and replay-first Human Gate decisions behind phase-local

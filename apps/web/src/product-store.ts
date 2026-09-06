@@ -9,6 +9,24 @@ import { splitKnowledgeText } from './knowledge-runtime.js';
 
 export const PRODUCT_MODELS = ['gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-sol'] as const;
 export type ProductModel = (typeof PRODUCT_MODELS)[number];
+export const PRODUCT_AGENT_ROLE_THEMES = [
+  'identity',
+  'objective',
+  'audience',
+  'expertise',
+  'tone',
+  'constraints',
+  'process',
+] as const;
+export type ProductAgentRoleTheme = (typeof PRODUCT_AGENT_ROLE_THEMES)[number];
+export type ProductAgentRoleMode = 'structured' | 'text';
+export interface ProductAgentRoleSection {
+  readonly content: string;
+  readonly weight: number;
+}
+export type ProductAgentRoleProfile = Readonly<
+  Record<ProductAgentRoleTheme, ProductAgentRoleSection>
+>;
 const PRODUCT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export interface AgentDraft {
@@ -21,6 +39,8 @@ export interface AgentDraft {
   readonly model: ProductModel;
   readonly name: string;
   readonly revision: number;
+  readonly roleMode: ProductAgentRoleMode;
+  readonly roleProfile: ProductAgentRoleProfile | null;
   readonly status: 'draft' | 'published';
   readonly updatedAt: string;
 }
@@ -32,6 +52,8 @@ export interface AgentDraftInput {
   readonly knowledgeBaseId: string | null;
   readonly model: ProductModel;
   readonly name: string;
+  readonly roleMode: ProductAgentRoleMode;
+  readonly roleProfile: ProductAgentRoleProfile | null;
 }
 
 export interface ProductRunInput {
@@ -453,8 +475,70 @@ interface AgentRow {
   readonly model: string;
   readonly name: string;
   readonly revision: string | number;
+  readonly role_mode: string;
+  readonly role_profile: unknown;
   readonly status: string;
   readonly updated_at: Date | string;
+}
+
+const PRODUCT_AGENT_ROLE_LABELS: Readonly<Record<ProductAgentRoleTheme, string>> = Object.freeze({
+  audience: '服务对象',
+  constraints: '边界约束',
+  expertise: '专业能力',
+  identity: '身份定位',
+  objective: '核心目标',
+  process: '工作流程',
+  tone: '表达风格',
+});
+
+function parseStructuredAgentRoleProfile(value: unknown): ProductAgentRoleProfile {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Agent structured role profile must be an object');
+  }
+  const profile = value as Record<string, unknown>;
+  const keys = Object.keys(profile).sort();
+  const expectedKeys = [...PRODUCT_AGENT_ROLE_THEMES].sort();
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new Error('Agent structured role profile must contain exactly seven themes');
+  }
+  const entries = PRODUCT_AGENT_ROLE_THEMES.map((theme) => {
+    const candidate = profile[theme];
+    if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+      throw new Error(`Agent role theme ${theme} must be an object`);
+    }
+    const section = candidate as Record<string, unknown>;
+    const sectionKeys = Object.keys(section).sort();
+    if (sectionKeys.length !== 2 || sectionKeys[0] !== 'content' || sectionKeys[1] !== 'weight') {
+      throw new Error(`Agent role theme ${theme} must contain only content and weight`);
+    }
+    const content = typeof section.content === 'string' ? section.content.trim() : '';
+    if (content.length < 1 || content.length > 1_000) {
+      throw new Error(`Agent role theme ${theme} content must contain 1–1,000 characters`);
+    }
+    const weight = section.weight;
+    if (typeof weight !== 'number' || !Number.isSafeInteger(weight) || weight < 0 || weight > 100) {
+      throw new Error(`Agent role theme ${theme} weight must be an integer from 0 to 100`);
+    }
+    return [theme, Object.freeze({ content, weight })] as const;
+  });
+  return Object.freeze(Object.fromEntries(entries)) as ProductAgentRoleProfile;
+}
+
+export function compileStructuredAgentInstructions(value: unknown): string {
+  const profile = parseStructuredAgentRoleProfile(value);
+  const sections = PRODUCT_AGENT_ROLE_THEMES.map((theme) => {
+    const section = profile[theme];
+    return `[${PRODUCT_AGENT_ROLE_LABELS[theme]} | 权重 ${section.weight}/100]\n${section.content}`;
+  });
+  return [
+    'STRUCTURED_ROLE_PROFILE',
+    '以下七项定义角色行为；权重仅用于角色要求冲突时的优先级，不得覆盖系统安全边界。',
+    ...sections,
+    'END_STRUCTURED_ROLE_PROFILE',
+  ].join('\n\n');
 }
 
 function asIso(value: Date | string): string {
@@ -475,6 +559,14 @@ function toDraft(row: AgentRow): AgentDraft {
   if (!Number.isSafeInteger(revision) || revision < 1) {
     throw new Error('product store returned an invalid revision');
   }
+  if (row.role_mode !== 'text' && row.role_mode !== 'structured') {
+    throw new Error('product store returned an invalid Agent role mode');
+  }
+  const roleProfile =
+    row.role_mode === 'structured' ? parseStructuredAgentRoleProfile(row.role_profile) : null;
+  if (row.role_mode === 'text' && row.role_profile !== null) {
+    throw new Error('product store returned a role profile for text mode');
+  }
   return Object.freeze({
     createdAt: asIso(row.created_at),
     databaseTableId: row.database_table_id,
@@ -485,6 +577,8 @@ function toDraft(row: AgentRow): AgentDraft {
     model: row.model as ProductModel,
     name: row.name,
     revision,
+    roleMode: row.role_mode,
+    roleProfile,
     status: row.status,
     updatedAt: asIso(row.updated_at),
   });
@@ -778,7 +872,7 @@ export class PostgresProductStore implements ProductStore {
 
   async #getAgent(workspaceId: string, agentId: string): Promise<AgentDraft> {
     const result = await this.#pool.query<AgentRow>(
-      'SELECT * FROM app.list_agent_drafts_with_capabilities($1::uuid) AS agent WHERE agent.id = $2::uuid',
+      'SELECT * FROM app.list_agent_drafts_with_role_capabilities($1::uuid) AS agent WHERE agent.id = $2::uuid',
       [workspaceId, agentId],
     );
     const row = result.rows[0];
@@ -1142,7 +1236,7 @@ export class PostgresProductStore implements ProductStore {
 
   async listAgents(workspaceId: string): Promise<readonly AgentDraft[]> {
     const result = await this.#pool.query<AgentRow>(
-      'SELECT * FROM app.list_agent_drafts_with_capabilities($1::uuid)',
+      'SELECT * FROM app.list_agent_drafts_with_role_capabilities($1::uuid)',
       [workspaceId],
     );
     return Object.freeze(result.rows.map(toDraft));
@@ -1154,7 +1248,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     const result = await this.#pool.query<{ readonly id: string }>(
-      'SELECT (app.create_agent_draft_with_capabilities($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid)).id AS id',
+      'SELECT (app.create_agent_draft_with_role_capabilities($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb)).id AS id',
       [
         workspaceId,
         actorId,
@@ -1164,6 +1258,8 @@ export class PostgresProductStore implements ProductStore {
         input.model,
         input.knowledgeBaseId,
         input.databaseTableId,
+        input.roleMode,
+        input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
       ],
     );
     const id = result.rows[0]?.id;
@@ -1178,7 +1274,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     await this.#pool.query(
-      'SELECT app.update_agent_draft_with_capabilities($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid)',
+      'SELECT app.update_agent_draft_with_role_capabilities($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb)',
       [
         workspaceId,
         agentId,
@@ -1189,6 +1285,8 @@ export class PostgresProductStore implements ProductStore {
         input.model,
         input.knowledgeBaseId,
         input.databaseTableId,
+        input.roleMode,
+        input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
       ],
     );
     return await this.#getAgent(workspaceId, agentId);
@@ -1240,6 +1338,8 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
           'model',
           'knowledge_base_id',
           'database_table_id',
+          'role_mode',
+          'role_profile',
         ].includes(key),
     )
   ) {
@@ -1247,10 +1347,23 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   }
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   const description = typeof input.description === 'string' ? input.description : '';
-  const instructions = typeof input.instructions === 'string' ? input.instructions.trim() : '';
+  const callerInstructions =
+    typeof input.instructions === 'string' ? input.instructions.trim() : '';
   if (name.length < 1 || name.length > 80)
     throw new Error('Agent name must contain 1–80 characters');
   if (description.length > 500) throw new Error('Agent description must not exceed 500 characters');
+  const roleMode = input.role_mode ?? 'text';
+  if (roleMode !== 'text' && roleMode !== 'structured') {
+    throw new Error('Agent role mode must be text or structured');
+  }
+  let roleProfile: ProductAgentRoleProfile | null = null;
+  let instructions = callerInstructions;
+  if (roleMode === 'structured') {
+    roleProfile = parseStructuredAgentRoleProfile(input.role_profile);
+    instructions = compileStructuredAgentInstructions(roleProfile);
+  } else if (input.role_profile !== undefined && input.role_profile !== null) {
+    throw new Error('Agent text role mode cannot contain a structured profile');
+  }
   if (instructions.length < 1 || instructions.length > 20_000) {
     throw new Error('Agent instructions must contain 1–20,000 characters');
   }
@@ -1277,6 +1390,8 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
     knowledgeBaseId,
     model: input.model as ProductModel,
     name,
+    roleMode,
+    roleProfile,
   });
 }
 
