@@ -151,7 +151,12 @@ test('ships a release and evaluation center backed by recorded product evidence'
   ]) {
     assert.ok(publicHtml.includes(marker), `missing release evaluation control: ${marker}`);
   }
-  for (const marker of ['renderEvaluationCenter', 'completedRuns', 'deployedFlows']) {
+  for (const marker of [
+    'renderEvaluationCenter',
+    'completedRuns',
+    'deployedFlows',
+    '/release-evaluation',
+  ]) {
     assert.ok(publicJavaScript.includes(marker), `missing evaluation evidence logic: ${marker}`);
   }
   assert.doesNotMatch(publicJavaScript, /mockEvaluation|fakeEvaluation|simulatedEvaluation/u);

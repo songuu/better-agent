@@ -532,6 +532,7 @@ test('requires one semantic, successful result for every registered gate', () =>
     'architecture-gate-suite/1 run-conversation-browser pass',
     'architecture-gate-suite/1 product-flow-studio pass',
     'architecture-gate-suite/1 product-knowledge-center pass',
+    'architecture-gate-suite/1 product-release-evaluation pass',
     'architecture-gate-suite/1 runtime-security pass',
   ];
   const structuredPostgres = gateResults();

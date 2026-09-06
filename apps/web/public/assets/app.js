@@ -8,6 +8,7 @@ const state = {
   flows: [],
   knowledgeBases: [],
   knowledgeDocuments: [],
+  releaseTargets: [],
   runs: [],
   view: 'agents',
 };
@@ -258,30 +259,38 @@ function setStudioView(view) {
 }
 
 function renderEvaluationCenter() {
-  const publishedAgents = state.agents.filter((agent) => agent.status === 'published');
-  const publishedFlows = state.flows.filter((flow) => flow.status === 'published');
-  const deployedFlows = state.flows.reduce((count, flow) => count + flow.deployments.length, 0);
-  const completedRuns = state.runs.filter((run) => run.status === 'completed').length;
-  const failedRuns = state.runs.filter((run) => run.status === 'failed').length;
-  const pendingRuns = state.runs.filter((run) => run.status === 'pending').length;
-  byId('published-agents').textContent = String(publishedAgents.length);
-  byId('published-flows').textContent = String(publishedFlows.length);
+  const publishedAgents = new Set(
+    state.releaseTargets.filter((target) => target.kind === 'agent').map((target) => target.id),
+  ).size;
+  const publishedFlows = new Set(
+    state.releaseTargets.filter((target) => target.kind === 'flow').map((target) => target.id),
+  ).size;
+  const deployedFlows = state.releaseTargets
+    .filter((target) => target.kind === 'flow')
+    .reduce((count, target) => count + target.environments.length, 0);
+  const completedRuns = state.releaseTargets.reduce(
+    (count, target) => count + target.successfulEvidenceCount,
+    0,
+  );
+  const failedRuns = state.releaseTargets.reduce(
+    (count, target) => count + target.failedEvidenceCount,
+    0,
+  );
+  const totalRuns = state.releaseTargets.reduce(
+    (count, target) => count + target.totalEvidenceCount,
+    0,
+  );
+  const pendingRuns = totalRuns - completedRuns - failedRuns;
+  byId('published-agents').textContent = String(publishedAgents);
+  byId('published-flows').textContent = String(publishedFlows);
   byId('deployed-flows').textContent = String(deployedFlows);
   byId('completed-runs').textContent = String(completedRuns);
-  const targets = [
-    ...publishedAgents.map((agent) => ({
-      detail: `${agent.model} · REV ${agent.revision}`,
-      environments: ['RELEASE'],
-      kind: 'AGENT',
-      name: agent.name,
-    })),
-    ...publishedFlows.map((flow) => ({
-      detail: `VERSION ${flow.publishedVersion} · ${flow.graph.nodes.length} NODES`,
-      environments: flow.deployments.map((deployment) => deployment.environment.toUpperCase()),
-      kind: 'FLOW',
-      name: flow.name,
-    })),
-  ];
+  const targets = state.releaseTargets.map((target) => ({
+    detail: `${target.model || 'DETERMINISTIC'} · VERSION ${target.releaseVersion} · ${target.successfulEvidenceCount}/${target.totalEvidenceCount} PASS`,
+    environments: target.environments.map((environment) => environment.toUpperCase()),
+    kind: target.kind.toUpperCase(),
+    name: target.name,
+  }));
   byId('release-count').textContent = `${String(targets.length).padStart(2, '0')} TARGETS`;
   byId('release-targets').innerHTML = targets.length
     ? targets
@@ -291,7 +300,6 @@ function renderEvaluationCenter() {
         )
         .join('')
     : '<p class="empty-note">尚无已发布资产。请先在 Agent Studio 或 Flow Studio 发布版本。</p>';
-  const totalRuns = completedRuns + failedRuns + pendingRuns;
   const successRate = totalRuns === 0 ? 'N/A' : `${Math.round((completedRuns / totalRuns) * 100)}%`;
   byId('evaluation-evidence').innerHTML = [
     ['已完成', completedRuns, '真实模型响应已持久化'],
@@ -304,6 +312,12 @@ function renderEvaluationCenter() {
         `<article><span>${label}</span><b>${value}</b><small>${note}</small></article>`,
     )
     .join('');
+}
+
+async function loadReleaseTargets() {
+  const payload = await request('/release-evaluation');
+  state.releaseTargets = payload.targets;
+  if (state.view === 'evaluation') renderEvaluationCenter();
 }
 
 function renderRuns() {
@@ -375,7 +389,13 @@ async function bootstrap() {
     byId('build-label').textContent =
       `BUILD · ${health.build_sha === 'development' ? 'LOCAL' : health.build_sha.slice(0, 8).toUpperCase()}`;
     await request('/session');
-    await Promise.all([loadAgents(), loadFlows(), loadKnowledgeBases(), loadRuns()]);
+    await Promise.all([
+      loadAgents(),
+      loadFlows(),
+      loadKnowledgeBases(),
+      loadRuns(),
+      loadReleaseTargets(),
+    ]);
   } catch (error) {
     if (error.status === 401) loginDialog.showModal();
     else {
@@ -396,7 +416,13 @@ byId('login-form').addEventListener('submit', async (event) => {
     });
     loginDialog.close();
     event.currentTarget.reset();
-    await Promise.all([loadAgents(), loadFlows(), loadKnowledgeBases(), loadRuns()]);
+    await Promise.all([
+      loadAgents(),
+      loadFlows(),
+      loadKnowledgeBases(),
+      loadRuns(),
+      loadReleaseTargets(),
+    ]);
     toast('工作区已连接');
   } catch (error) {
     byId('login-error').textContent = error.message;
@@ -458,6 +484,7 @@ byId('publish-agent').addEventListener('click', async () => {
     });
     state.agents[state.agents.findIndex((agent) => agent.id === payload.agent.id)] = payload.agent;
     showEditor(payload.agent);
+    await loadReleaseTargets();
     toast('不可变版本已发布');
   } catch (error) {
     toast(error.message, true);
@@ -526,6 +553,7 @@ byId('publish-flow').addEventListener('click', async () => {
       }),
     });
     upsertFlow(payload.flow);
+    await loadReleaseTargets();
     toast('不可变 Flow 版本已部署');
   } catch (error) {
     toast(error.message, true);

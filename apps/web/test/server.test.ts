@@ -25,6 +25,7 @@ import type {
   ProductKnowledgeBase,
   ProductKnowledgeDocument,
   ProductKnowledgeHit,
+  ProductReleaseEvaluationTarget,
   ProductRun,
   ProductStore,
 } from '../src/product-store.js';
@@ -427,6 +428,23 @@ function productFixture(): {
     async listRuns() {
       return runs;
     },
+    async listReleaseEvaluationTargets() {
+      const agentTargets: ProductReleaseEvaluationTarget[] = agents
+        .filter((agent) => agent.status === 'published')
+        .map((agent) => ({
+          environments: ['release'],
+          failedEvidenceCount: runs.filter((run) => run.status === 'failed').length,
+          id: agent.id,
+          kind: 'agent',
+          model: agent.model,
+          name: agent.name,
+          publishedAt: agent.updatedAt,
+          releaseVersion: 1,
+          successfulEvidenceCount: runs.filter((run) => run.status === 'completed').length,
+          totalEvidenceCount: runs.length,
+        }));
+      return agentTargets;
+    },
     async listAgents() {
       return agents;
     },
@@ -699,6 +717,14 @@ describe('Better Agent web runtime', () => {
     });
     expect(listed.status).toBe(200);
     expect(((await listed.json()) as { agents: AgentDraft[] }).agents).toHaveLength(1);
+
+    const evaluation = await localRequest(origin, '/better-agent/api/product/release-evaluation', {
+      headers: { Cookie: cookie ?? '' },
+    });
+    expect(evaluation.status).toBe(200);
+    expect(
+      ((await evaluation.json()) as { targets: ProductReleaseEvaluationTarget[] }).targets[0],
+    ).toMatchObject({ kind: 'agent', name: '高级研究员', releaseVersion: 1 });
   });
 
   it('persists the Flow Draft, debug trace and immutable environment release lifecycle', async () => {

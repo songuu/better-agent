@@ -431,6 +431,12 @@ export async function createBetterAgentWebServer(
       sendJson(request, response, 200, { runs: await productStore.listRuns(workspaceId) });
       return true;
     }
+    if (path === `${WEB_BASE_PATH}api/product/release-evaluation` && request.method === 'GET') {
+      sendJson(request, response, 200, {
+        targets: await productStore.listReleaseEvaluationTargets(workspaceId),
+      });
+      return true;
+    }
     const conversationCreationMatch = new RegExp(
       `^${WEB_BASE_PATH}api/product/agents/([0-9a-f-]{36})/conversations$`,
       'u',

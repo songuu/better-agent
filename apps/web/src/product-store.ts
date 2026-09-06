@@ -143,6 +143,19 @@ export interface ProductKnowledgeDocumentInput {
   readonly title: string;
 }
 
+export interface ProductReleaseEvaluationTarget {
+  readonly environments: readonly string[];
+  readonly failedEvidenceCount: number;
+  readonly id: string;
+  readonly kind: 'agent' | 'flow';
+  readonly model: ProductModel | null;
+  readonly name: string;
+  readonly publishedAt: string;
+  readonly releaseVersion: number;
+  readonly successfulEvidenceCount: number;
+  readonly totalEvidenceCount: number;
+}
+
 export interface ProductStore {
   beginRun(
     workspaceId: string,
@@ -205,6 +218,9 @@ export interface ProductStore {
     knowledgeBaseId: string,
   ): Promise<readonly ProductKnowledgeDocument[]>;
   listRuns(workspaceId: string): Promise<readonly ProductRun[]>;
+  listReleaseEvaluationTargets(
+    workspaceId: string,
+  ): Promise<readonly ProductReleaseEvaluationTarget[]>;
   publishAgent(
     workspaceId: string,
     actorId: string,
@@ -310,6 +326,19 @@ interface ProductRunRow {
   readonly status: string;
 }
 
+interface ProductReleaseEvaluationTargetRow {
+  readonly environments: unknown;
+  readonly failed_evidence_count: string | number;
+  readonly model: string | null;
+  readonly name: string;
+  readonly published_at: Date | string;
+  readonly release_version: string | number;
+  readonly successful_evidence_count: string | number;
+  readonly target_id: string;
+  readonly target_kind: string;
+  readonly total_evidence_count: string | number;
+}
+
 interface PreparedRunRow {
   readonly agent_id: string;
   readonly conversation_id: string;
@@ -411,6 +440,38 @@ function toRun(row: ProductRunRow): ProductRun {
     providerRequestId: row.provider_request_id,
     sequence: positiveInteger(row.sequence, 'Run sequence'),
     status: row.status,
+  });
+}
+
+function toReleaseEvaluationTarget(
+  row: ProductReleaseEvaluationTargetRow,
+): ProductReleaseEvaluationTarget {
+  if (row.target_kind !== 'agent' && row.target_kind !== 'flow') {
+    throw new Error('product store returned an invalid release target kind');
+  }
+  if (row.model !== null && !PRODUCT_MODELS.includes(row.model as ProductModel)) {
+    throw new Error('product store returned an invalid release target model');
+  }
+  if (
+    !Array.isArray(row.environments) ||
+    row.environments.some((value) => typeof value !== 'string')
+  ) {
+    throw new Error('product store returned invalid release environments');
+  }
+  return Object.freeze({
+    environments: Object.freeze([...row.environments]) as readonly string[],
+    failedEvidenceCount: nonnegativeInteger(row.failed_evidence_count, 'failed evidence count'),
+    id: row.target_id,
+    kind: row.target_kind,
+    model: row.model as ProductModel | null,
+    name: row.name,
+    publishedAt: asIso(row.published_at),
+    releaseVersion: positiveInteger(row.release_version, 'release version'),
+    successfulEvidenceCount: nonnegativeInteger(
+      row.successful_evidence_count,
+      'successful evidence count',
+    ),
+    totalEvidenceCount: nonnegativeInteger(row.total_evidence_count, 'total evidence count'),
   });
 }
 
@@ -828,6 +889,16 @@ export class PostgresProductStore implements ProductStore {
       [workspaceId],
     );
     return Object.freeze(result.rows.map(toRun));
+  }
+
+  async listReleaseEvaluationTargets(
+    workspaceId: string,
+  ): Promise<readonly ProductReleaseEvaluationTarget[]> {
+    const result = await this.#pool.query<ProductReleaseEvaluationTargetRow>(
+      'SELECT * FROM app.list_product_release_evaluation_targets($1::uuid)',
+      [workspaceId],
+    );
+    return Object.freeze(result.rows.map(toReleaseEvaluationTarget));
   }
 
   async listAgents(workspaceId: string): Promise<readonly AgentDraft[]> {
