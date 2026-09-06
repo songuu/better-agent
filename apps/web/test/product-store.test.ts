@@ -18,6 +18,7 @@ describe('product Agent input', () => {
   it('accepts and freezes the closed product draft payload', () => {
     const input = validateAgentInput({
       description: '面向运维团队的助手',
+      database_table_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       instructions: '只根据已核验的运行事实回答。',
       knowledge_base_id: '12345678-1234-4123-8123-123456789abc',
       model: 'gpt-5.6-sol',
@@ -25,6 +26,7 @@ describe('product Agent input', () => {
     });
 
     expect(input).toEqual({
+      databaseTableId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       description: '面向运维团队的助手',
       instructions: '只根据已核验的运行事实回答。',
       knowledgeBaseId: '12345678-1234-4123-8123-123456789abc',
@@ -43,6 +45,15 @@ describe('product Agent input', () => {
         description: '',
         instructions: 'Do work',
         knowledge_base_id: 'not-a-uuid',
+        model: 'gpt-5.6-sol',
+        name: 'A',
+      },
+    ],
+    [
+      {
+        database_table_id: 'not-a-uuid',
+        description: '',
+        instructions: 'Do work',
         model: 'gpt-5.6-sol',
         name: 'A',
       },

@@ -270,6 +270,18 @@ function productFixture(): {
         .filter((row) => String(row.record[input.column] ?? '').includes(input.contains))
         .slice(0, input.limit);
     },
+    async readAgentDatabase(_workspaceId, conversationId) {
+      const conversation = conversations.find((item) => item.id === conversationId);
+      const agent = agents.find((item) => item.id === conversation?.agentId);
+      const table = databaseTables.find((item) => item.id === agent?.databaseTableId);
+      if (table === undefined) return [];
+      return databaseRows.slice(0, 20).map((row) => ({
+        columns: table.columns,
+        ordinal: row.ordinal,
+        record: row.record,
+        tableName: table.name,
+      }));
+    },
     async createKnowledgeBase(_workspaceId, _actorId, input) {
       const knowledgeBase: ProductKnowledgeBase = {
         ...input,
@@ -1056,7 +1068,22 @@ describe('Better Agent web runtime', () => {
   });
 
   it('runs a published Agent through the configured model and persists observable history', async () => {
-    const { agents, knowledgeBases, knowledgeDocuments, store } = productFixture();
+    const { agents, databaseRows, databaseTables, knowledgeBases, knowledgeDocuments, store } =
+      productFixture();
+    databaseTables.push({
+      columns: ['service', 'status'],
+      createdAt: '2026-09-03T00:00:00.000Z',
+      description: '服务状态',
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'service_status',
+      rowCount: 1,
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    });
+    databaseRows.push({
+      createdAt: '2026-09-03T00:00:00.000Z',
+      ordinal: 0,
+      record: { service: 'web', status: 'healthy' },
+    });
     knowledgeBases.push({
       createdAt: '2026-09-03T00:00:00.000Z',
       description: '生产运行手册',
@@ -1074,6 +1101,7 @@ describe('Better Agent web runtime', () => {
     });
     agents.push({
       createdAt: '2026-09-03T00:00:00.000Z',
+      databaseTableId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       description: '运行助手',
       id: '11111111-1111-4111-8111-111111111111',
       instructions: '只回答已核验事实。',
@@ -1092,6 +1120,9 @@ describe('Better Agent web runtime', () => {
         expect(input.instructions).toContain('只回答已核验事实。');
         expect(input.instructions).toContain('KNOWLEDGE_CONTEXT');
         expect(input.instructions).toContain('服务健康检查使用 /healthz。');
+        expect(input.instructions).toContain('DATABASE_CONTEXT');
+        expect(input.instructions).toContain('service_status');
+        expect(input.instructions).toContain('healthy');
         return {
           inputTokens: 12,
           outputText: '当前服务正常。',

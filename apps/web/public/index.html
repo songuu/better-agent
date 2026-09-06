@@ -55,6 +55,7 @@
               </div>
               <label><span>说明</span><input name="description" maxlength="500" placeholder="这个 Agent 负责什么？" /></label>
               <label><span>发布知识快照</span><select name="knowledge_base_id" id="agent-knowledge-base"><option value="">不绑定知识库</option></select></label>
+              <label><span>发布数据库快照</span><select name="database_table_id" id="agent-database-table"><option value="">不绑定数据表</option></select></label>
               <label class="prompt-field"><span>系统指令</span><textarea name="instructions" maxlength="20000" required placeholder="定义职责、边界、输入与输出要求……"></textarea><small><b id="instruction-count">0</b> / 20,000</small></label>
               <footer><button type="button" id="test-agent" class="button button-ghost" disabled>试运行</button><button type="button" id="publish-agent" class="button button-ghost" disabled>发布版本</button><button type="submit" class="button button-primary">保存 Draft</button></footer>
             </form>

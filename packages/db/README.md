@@ -297,6 +297,11 @@ scalar JSON rows, and queries one allowlisted column through a fixed
 parameterized contains operation. Rows are immutable, FORCE-RLS and owner-only;
 the runtime role has function execution only and no direct table access.
 
+Migration `027_product_agent_database_binding` lets an Agent draft select one
+managed table and snapshots the exact row ordinals into every published release.
+Conversation reads are version-pinned, bounded and tenant-isolated; snapshot
+tables remain immutable, owner-only and inaccessible to the runtime role.
+
 Migrations `012_g1_agent_strategy_execution` and
 `013_g1_worker_human_gate` retain the reviewed AgentPlan, fenced Strategy
 state/actions/results and replay-first Human Gate decisions behind phase-local

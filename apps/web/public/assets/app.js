@@ -194,6 +194,19 @@ function renderAgentKnowledgeOptions() {
   select.value = selected;
 }
 
+function renderAgentDatabaseOptions() {
+  const select = byId('agent-database-table');
+  const selected = state.current?.databaseTableId || '';
+  select.innerHTML = [
+    '<option value="">不绑定数据表</option>',
+    ...state.databaseTables.map(
+      (table) =>
+        `<option value="${table.id}">${escapeHtml(table.name)} · ${table.rowCount} ROWS</option>`,
+    ),
+  ].join('');
+  select.value = selected;
+}
+
 function renderKnowledgeDocuments() {
   const list = byId('knowledge-documents');
   if (state.knowledgeDocuments.length === 0) {
@@ -294,6 +307,7 @@ async function loadDatabaseTables() {
   const payload = await request('/database-tables');
   state.databaseTables = payload.database_tables;
   renderDatabaseTables();
+  renderAgentDatabaseOptions();
   if (state.currentDatabase) {
     const id = state.currentDatabase.id;
     state.currentDatabase = state.databaseTables.find((item) => item.id === id) || null;
@@ -441,6 +455,7 @@ function showEditor(agent = null) {
   form.elements.instructions.value = agent?.instructions || '';
   form.elements.model.value = agent?.model || 'gpt-5.6-sol';
   renderAgentKnowledgeOptions();
+  renderAgentDatabaseOptions();
   byId('editor-title').textContent = agent?.name || '未命名 Agent';
   byId('agent-kicker').textContent = agent
     ? `${agent.status.toUpperCase()} · REV ${agent.revision}`
@@ -553,6 +568,7 @@ form.addEventListener('submit', async (event) => {
   const values = Object.fromEntries(new FormData(form));
   const input = {
     ...values,
+    database_table_id: values.database_table_id || null,
     knowledge_base_id: values.knowledge_base_id || null,
   };
   try {

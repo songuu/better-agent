@@ -13,6 +13,7 @@ const PRODUCT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 export interface AgentDraft {
   readonly createdAt: string;
+  readonly databaseTableId: string | null;
   readonly description: string;
   readonly id: string;
   readonly instructions: string;
@@ -25,6 +26,7 @@ export interface AgentDraft {
 }
 
 export interface AgentDraftInput {
+  readonly databaseTableId: string | null;
   readonly description: string;
   readonly instructions: string;
   readonly knowledgeBaseId: string | null;
@@ -168,6 +170,13 @@ export interface ProductDatabaseRow {
   readonly record: Readonly<Record<string, boolean | null | number | string>>;
 }
 
+export interface ProductAgentDatabaseRecord {
+  readonly columns: readonly string[];
+  readonly ordinal: number;
+  readonly record: Readonly<Record<string, boolean | null | number | string>>;
+  readonly tableName: string;
+}
+
 export interface ProductDatabaseRowsInput {
   readonly rows: readonly Readonly<Record<string, boolean | null | number | string>>[];
 }
@@ -260,6 +269,10 @@ export interface ProductStore {
   listFlows(workspaceId: string): Promise<readonly ProductFlowDraft[]>;
   listKnowledgeBases(workspaceId: string): Promise<readonly ProductKnowledgeBase[]>;
   listDatabaseTables(workspaceId: string): Promise<readonly ProductDatabaseTable[]>;
+  readAgentDatabase(
+    workspaceId: string,
+    conversationId: string,
+  ): Promise<readonly ProductAgentDatabaseRecord[]>;
   listKnowledgeDocuments(
     workspaceId: string,
     knowledgeBaseId: string,
@@ -375,6 +388,13 @@ interface DatabaseRecordRow {
   readonly record: unknown;
 }
 
+interface AgentDatabaseRecordRow {
+  readonly columns: unknown;
+  readonly record: unknown;
+  readonly row_ordinal: string | number;
+  readonly table_name: string;
+}
+
 interface ConversationRow {
   readonly agent_id: string;
   readonly created_at: Date | string;
@@ -426,6 +446,7 @@ interface PreparedRunRow {
 interface AgentRow {
   readonly created_at: Date | string;
   readonly description: string;
+  readonly database_table_id: string | null;
   readonly id: string;
   readonly instructions: string;
   readonly knowledge_base_id: string | null;
@@ -456,6 +477,7 @@ function toDraft(row: AgentRow): AgentDraft {
   }
   return Object.freeze({
     createdAt: asIso(row.created_at),
+    databaseTableId: row.database_table_id,
     description: row.description,
     id: row.id,
     instructions: row.instructions,
@@ -710,22 +732,40 @@ function toDatabaseTable(row: DatabaseTableRow): ProductDatabaseTable {
   });
 }
 
-function toDatabaseRow(row: DatabaseRecordRow): ProductDatabaseRow {
-  if (typeof row.record !== 'object' || row.record === null || Array.isArray(row.record)) {
+function toScalarDatabaseRecord(
+  value: unknown,
+): Readonly<Record<string, boolean | null | number | string>> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('product store returned an invalid Database record');
   }
   const record = Object.fromEntries(
-    Object.entries(row.record).map(([key, value]) => {
-      if (value !== null && !['boolean', 'number', 'string'].includes(typeof value)) {
+    Object.entries(value).map(([key, fieldValue]) => {
+      if (fieldValue !== null && !['boolean', 'number', 'string'].includes(typeof fieldValue)) {
         throw new Error('product store returned an invalid Database field');
       }
-      return [key, value as boolean | null | number | string];
+      return [key, fieldValue as boolean | null | number | string];
     }),
   );
+  return Object.freeze(record);
+}
+
+function toDatabaseRow(row: DatabaseRecordRow): ProductDatabaseRow {
   return Object.freeze({
     createdAt: asIso(row.created_at),
     ordinal: nonnegativeInteger(row.ordinal, 'Database row ordinal'),
-    record: Object.freeze(record),
+    record: toScalarDatabaseRecord(row.record),
+  });
+}
+
+function toAgentDatabaseRecord(row: AgentDatabaseRecordRow): ProductAgentDatabaseRecord {
+  if (!Array.isArray(row.columns) || row.columns.some((column) => typeof column !== 'string')) {
+    throw new Error('product store returned invalid Agent Database columns');
+  }
+  return Object.freeze({
+    columns: Object.freeze([...row.columns]) as readonly string[],
+    ordinal: nonnegativeInteger(row.row_ordinal, 'Agent Database row ordinal'),
+    record: toScalarDatabaseRecord(row.record),
+    tableName: row.table_name,
   });
 }
 
@@ -738,7 +778,7 @@ export class PostgresProductStore implements ProductStore {
 
   async #getAgent(workspaceId: string, agentId: string): Promise<AgentDraft> {
     const result = await this.#pool.query<AgentRow>(
-      'SELECT * FROM app.list_agent_drafts_with_knowledge($1::uuid) AS agent WHERE agent.id = $2::uuid',
+      'SELECT * FROM app.list_agent_drafts_with_capabilities($1::uuid) AS agent WHERE agent.id = $2::uuid',
       [workspaceId, agentId],
     );
     const row = result.rows[0];
@@ -926,6 +966,17 @@ export class PostgresProductStore implements ProductStore {
     return Object.freeze(result.rows.map(toDatabaseRow));
   }
 
+  async readAgentDatabase(
+    workspaceId: string,
+    conversationId: string,
+  ): Promise<readonly ProductAgentDatabaseRecord[]> {
+    const result = await this.#pool.query<AgentDatabaseRecordRow>(
+      'SELECT * FROM app.read_agent_product_conversation_database($1::uuid, $2::uuid, 20)',
+      [workspaceId, conversationId],
+    );
+    return Object.freeze(result.rows.map(toAgentDatabaseRecord));
+  }
+
   async createKnowledgeBase(
     workspaceId: string,
     actorId: string,
@@ -1091,7 +1142,7 @@ export class PostgresProductStore implements ProductStore {
 
   async listAgents(workspaceId: string): Promise<readonly AgentDraft[]> {
     const result = await this.#pool.query<AgentRow>(
-      'SELECT * FROM app.list_agent_drafts_with_knowledge($1::uuid)',
+      'SELECT * FROM app.list_agent_drafts_with_capabilities($1::uuid)',
       [workspaceId],
     );
     return Object.freeze(result.rows.map(toDraft));
@@ -1103,7 +1154,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     const result = await this.#pool.query<{ readonly id: string }>(
-      'SELECT (app.create_agent_draft_with_knowledge($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid)).id AS id',
+      'SELECT (app.create_agent_draft_with_capabilities($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid)).id AS id',
       [
         workspaceId,
         actorId,
@@ -1112,6 +1163,7 @@ export class PostgresProductStore implements ProductStore {
         input.instructions,
         input.model,
         input.knowledgeBaseId,
+        input.databaseTableId,
       ],
     );
     const id = result.rows[0]?.id;
@@ -1126,7 +1178,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     await this.#pool.query(
-      'SELECT app.update_agent_draft_with_knowledge($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid)',
+      'SELECT app.update_agent_draft_with_capabilities($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid)',
       [
         workspaceId,
         agentId,
@@ -1136,6 +1188,7 @@ export class PostgresProductStore implements ProductStore {
         input.instructions,
         input.model,
         input.knowledgeBaseId,
+        input.databaseTableId,
       ],
     );
     return await this.#getAgent(workspaceId, agentId);
@@ -1179,7 +1232,15 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   }
   if (
     Object.keys(input).some(
-      (key) => !['name', 'description', 'instructions', 'model', 'knowledge_base_id'].includes(key),
+      (key) =>
+        ![
+          'name',
+          'description',
+          'instructions',
+          'model',
+          'knowledge_base_id',
+          'database_table_id',
+        ].includes(key),
     )
   ) {
     throw new Error('Agent payload contains unknown fields');
@@ -1202,7 +1263,15 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   ) {
     throw new Error('Agent Knowledge base id must be a UUID or null');
   }
+  const databaseTableId = input.database_table_id ?? null;
+  if (
+    databaseTableId !== null &&
+    (typeof databaseTableId !== 'string' || !PRODUCT_UUID.test(databaseTableId))
+  ) {
+    throw new Error('Agent Database table id must be a UUID or null');
+  }
   return Object.freeze({
+    databaseTableId,
     description,
     instructions,
     knowledgeBaseId,
