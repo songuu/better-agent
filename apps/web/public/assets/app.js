@@ -4,13 +4,18 @@ const state = {
   conversationId: null,
   current: null,
   currentFlow: null,
+  currentKnowledge: null,
   flows: [],
+  knowledgeBases: [],
+  knowledgeDocuments: [],
   runs: [],
   view: 'agents',
 };
 const byId = (id) => document.getElementById(id);
 const form = byId('agent-form');
 const flowForm = byId('flow-form');
+const knowledgeBaseForm = byId('knowledge-base-form');
+const knowledgeDocumentForm = byId('knowledge-document-form');
 const loginDialog = byId('login-dialog');
 
 function toast(message, error = false) {
@@ -153,17 +158,95 @@ function upsertFlow(flow) {
   showFlowEditor(flow);
 }
 
+function renderKnowledgeBases() {
+  byId('knowledge-count').textContent = String(state.knowledgeBases.length).padStart(2, '0');
+  const list = byId('knowledge-list');
+  if (state.knowledgeBases.length === 0) {
+    list.innerHTML = '<p class="empty-note">还没有知识库。创建一个开始。</p>';
+    return;
+  }
+  list.innerHTML = state.knowledgeBases
+    .map(
+      (base) =>
+        `<button class="knowledge-row ${state.currentKnowledge?.id === base.id ? 'is-current' : ''}" data-knowledge-id="${base.id}"><i>K</i><span><b>${escapeHtml(base.name)}</b><small>${base.documentCount} DOCUMENTS</small></span><em>READY</em></button>`,
+    )
+    .join('');
+  list.querySelectorAll('[data-knowledge-id]').forEach((button) => {
+    button.addEventListener('click', () => selectKnowledgeBase(button.dataset.knowledgeId));
+  });
+}
+
+function renderKnowledgeDocuments() {
+  const list = byId('knowledge-documents');
+  if (state.knowledgeDocuments.length === 0) {
+    list.innerHTML = '<span class="empty-note">暂无文档。</span>';
+    return;
+  }
+  list.innerHTML = state.knowledgeDocuments
+    .map(
+      (document) =>
+        `<article><i>DOC</i><div><b>${escapeHtml(document.title)}</b><small>${document.chunkCount} CHUNKS · ${new Date(document.createdAt).toLocaleString('zh-CN')}</small></div></article>`,
+    )
+    .join('');
+}
+
+function showKnowledgeCreator() {
+  state.currentKnowledge = null;
+  byId('knowledge-welcome').hidden = true;
+  byId('knowledge-detail').hidden = true;
+  knowledgeBaseForm.hidden = false;
+  knowledgeBaseForm.reset();
+  byId('knowledge-hits').innerHTML = '<span>创建知识库后开始检索。</span>';
+  renderKnowledgeBases();
+}
+
+async function selectKnowledgeBase(id) {
+  const base = state.knowledgeBases.find((item) => item.id === id);
+  if (!base) return;
+  state.currentKnowledge = base;
+  knowledgeBaseForm.hidden = true;
+  byId('knowledge-welcome').hidden = true;
+  byId('knowledge-detail').hidden = false;
+  byId('knowledge-title').textContent = base.name;
+  byId('knowledge-description').textContent = base.description || '无额外说明';
+  byId('knowledge-doc-count').textContent = `${base.documentCount} DOCS`;
+  byId('knowledge-hits').innerHTML = '<span>输入问题或关键词，验证检索结果。</span>';
+  const payload = await request(`/knowledge-bases/${base.id}/documents`);
+  state.knowledgeDocuments = payload.documents;
+  renderKnowledgeDocuments();
+  renderKnowledgeBases();
+}
+
+async function loadKnowledgeBases() {
+  const payload = await request('/knowledge-bases');
+  state.knowledgeBases = payload.knowledge_bases;
+  renderKnowledgeBases();
+}
+
 function setStudioView(view) {
   state.view = view;
   const isFlow = view === 'flows';
-  byId('agent-view').hidden = isFlow;
+  const isKnowledge = view === 'knowledge';
+  const isAgent = view === 'agents';
+  byId('agent-view').hidden = !isAgent;
   byId('flow-view').hidden = !isFlow;
-  byId('show-agents').classList.toggle('is-active', !isFlow);
+  byId('knowledge-view').hidden = !isKnowledge;
+  byId('show-agents').classList.toggle('is-active', isAgent);
   byId('show-flows').classList.toggle('is-active', isFlow);
-  byId('new-agent').hidden = isFlow;
+  byId('show-knowledge').classList.toggle('is-active', isKnowledge);
+  byId('new-agent').hidden = !isAgent;
   byId('new-flow').hidden = !isFlow;
-  byId('workspace-path').textContent = isFlow ? '独立工作区 / FLOWS' : '独立工作区 / AGENTS';
-  byId('studio-title').textContent = isFlow ? 'Flow Studio' : 'Agent Studio';
+  byId('new-knowledge').hidden = !isKnowledge;
+  byId('workspace-path').textContent = isKnowledge
+    ? '独立工作区 / KNOWLEDGE'
+    : isFlow
+      ? '独立工作区 / FLOWS'
+      : '独立工作区 / AGENTS';
+  byId('studio-title').textContent = isKnowledge
+    ? 'Knowledge Center'
+    : isFlow
+      ? 'Flow Studio'
+      : 'Agent Studio';
 }
 
 function renderRuns() {
@@ -235,7 +318,7 @@ async function bootstrap() {
     byId('build-label').textContent =
       `BUILD · ${health.build_sha === 'development' ? 'LOCAL' : health.build_sha.slice(0, 8).toUpperCase()}`;
     await request('/session');
-    await Promise.all([loadAgents(), loadFlows(), loadRuns()]);
+    await Promise.all([loadAgents(), loadFlows(), loadKnowledgeBases(), loadRuns()]);
   } catch (error) {
     if (error.status === 401) loginDialog.showModal();
     else {
@@ -256,7 +339,7 @@ byId('login-form').addEventListener('submit', async (event) => {
     });
     loginDialog.close();
     event.currentTarget.reset();
-    await Promise.all([loadAgents(), loadFlows(), loadRuns()]);
+    await Promise.all([loadAgents(), loadFlows(), loadKnowledgeBases(), loadRuns()]);
     toast('工作区已连接');
   } catch (error) {
     byId('login-error').textContent = error.message;
@@ -269,10 +352,15 @@ document.querySelectorAll('[data-create]').forEach((button) => {
 document.querySelectorAll('[data-create-flow]').forEach((button) => {
   button.addEventListener('click', () => showFlowEditor());
 });
+document.querySelectorAll('[data-create-knowledge]').forEach((button) => {
+  button.addEventListener('click', () => showKnowledgeCreator());
+});
 byId('show-agents').addEventListener('click', () => setStudioView('agents'));
 byId('show-flows').addEventListener('click', () => setStudioView('flows'));
+byId('show-knowledge').addEventListener('click', () => setStudioView('knowledge'));
 byId('new-agent').addEventListener('click', () => showEditor());
 byId('new-flow').addEventListener('click', () => showFlowEditor());
+byId('new-knowledge').addEventListener('click', () => showKnowledgeCreator());
 form.elements.instructions.addEventListener('input', () => {
   byId('instruction-count').textContent = String(form.elements.instructions.value.length);
 });
@@ -382,6 +470,69 @@ byId('publish-flow').addEventListener('click', async () => {
     upsertFlow(payload.flow);
     toast('不可变 Flow 版本已部署');
   } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+knowledgeBaseForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = Object.fromEntries(new FormData(knowledgeBaseForm));
+  try {
+    const payload = await request('/knowledge-bases', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    state.knowledgeBases.unshift(payload.knowledge_base);
+    await selectKnowledgeBase(payload.knowledge_base.id);
+    toast('知识库已持久化');
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+knowledgeDocumentForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.currentKnowledge) return;
+  const input = Object.fromEntries(new FormData(knowledgeDocumentForm));
+  try {
+    await request(`/knowledge-bases/${state.currentKnowledge.id}/documents`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    knowledgeDocumentForm.reset();
+    await loadKnowledgeBases();
+    await selectKnowledgeBase(state.currentKnowledge.id);
+    toast('文档已切分并写入 PostgreSQL');
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+byId('knowledge-search-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.currentKnowledge) {
+    toast('请先选择知识库', true);
+    return;
+  }
+  const query = event.currentTarget.elements.query.value.trim();
+  const hits = byId('knowledge-hits');
+  hits.innerHTML = '<span>正在检索不可变片段……</span>';
+  try {
+    const payload = await request(`/knowledge-bases/${state.currentKnowledge.id}/search`, {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    });
+    hits.innerHTML =
+      payload.hits.length === 0
+        ? '<span>没有匹配片段，请调整关键词。</span>'
+        : payload.hits
+            .map(
+              (hit) =>
+                `<article><header><b>${escapeHtml(hit.documentTitle)}</b><em>#${hit.ordinal + 1} · ${Number(hit.score).toFixed(3)}</em></header><p>${escapeHtml(hit.content)}</p></article>`,
+            )
+            .join('');
+  } catch (error) {
+    hits.textContent = `检索失败：${error.message}`;
     toast(error.message, true);
   }
 });

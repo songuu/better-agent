@@ -19,7 +19,7 @@
         <nav class="studio-nav" aria-label="产品导航">
           <button type="button" id="show-agents" class="is-active"><span>01</span>Agent Studio</button>
           <button type="button" id="show-flows"><span>02</span>Flow 编排</button>
-          <button type="button" disabled><span>03</span>知识与数据</button>
+          <button type="button" id="show-knowledge"><span>03</span>知识与数据</button>
           <button type="button" id="show-runs"><span>04</span>运行记录</button>
           <button type="button" disabled><span>05</span>发布与评测</button>
         </nav>
@@ -29,7 +29,7 @@
       <main class="studio-main">
         <header class="studio-topbar">
           <div><p id="workspace-path">独立工作区 / AGENTS</p><h1 id="studio-title">Agent Studio</h1></div>
-          <div class="top-actions"><span id="build-label">BUILD · PENDING</span><button type="button" id="new-agent" class="button button-primary">＋ 新建 Agent</button><button type="button" id="new-flow" class="button button-primary" hidden>＋ 新建 Flow</button></div>
+          <div class="top-actions"><span id="build-label">BUILD · PENDING</span><button type="button" id="new-agent" class="button button-primary">＋ 新建 Agent</button><button type="button" id="new-flow" class="button button-primary" hidden>＋ 新建 Flow</button><button type="button" id="new-knowledge" class="button button-primary" hidden>＋ 新建知识库</button></div>
         </header>
 
         <section id="agent-view" class="studio-grid">
@@ -101,6 +101,41 @@
             <div id="flow-debug-output" class="flow-debug-output"><span>等待调试</span></div>
             <ol id="flow-debug-logs" class="flow-debug-logs"><li>保存 Flow 后可运行调试。</li></ol>
             <div id="flow-deployments" class="flow-deployments"><span>尚未部署环境</span></div>
+          </aside>
+        </section>
+
+        <section id="knowledge-view" class="knowledge-studio" hidden>
+          <aside class="knowledge-catalog" aria-label="知识库列表">
+            <div class="catalog-head"><span>KNOWLEDGE BASES</span><b id="knowledge-count">00</b></div>
+            <div id="knowledge-list" class="knowledge-list"><p class="empty-note">还没有知识库。创建一个开始。</p></div>
+          </aside>
+          <section class="knowledge-workbench">
+            <div id="knowledge-welcome" class="welcome-panel">
+              <p class="eyebrow">GROUND EVERY ANSWER IN YOUR DATA</p>
+              <h2>导入资料，<br />检索可靠上下文。</h2>
+              <p>将运行手册、产品说明和业务知识切分为有序片段，持久化到独立 PostgreSQL，并通过工作区隔离检索。</p>
+              <button type="button" class="button button-primary" data-create-knowledge>创建第一个知识库</button>
+            </div>
+            <form id="knowledge-base-form" class="knowledge-form" hidden>
+              <header><div><p>KNOWLEDGE · NEW</p><h2>创建知识库</h2></div></header>
+              <label><span>名称</span><input name="name" maxlength="80" required placeholder="例如：生产运行手册" /></label>
+              <label><span>说明</span><input name="description" maxlength="500" placeholder="这里收录哪些知识？" /></label>
+              <footer><button type="submit" class="button button-primary">创建知识库</button></footer>
+            </form>
+            <div id="knowledge-detail" hidden>
+              <header class="knowledge-head"><div><p>ACTIVE KNOWLEDGE BASE</p><h2 id="knowledge-title">未选择知识库</h2><span id="knowledge-description"></span></div><b id="knowledge-doc-count">0 DOCS</b></header>
+              <form id="knowledge-document-form" class="knowledge-form knowledge-ingest">
+                <label><span>文档标题</span><input name="title" maxlength="160" required placeholder="例如：故障处理 SOP" /></label>
+                <label><span>纯文本文档</span><textarea name="content" maxlength="200000" required placeholder="粘贴需要检索的知识内容……"></textarea></label>
+                <footer><small>自动生成重叠、有序且不可变的检索片段</small><button type="submit" class="button button-primary">导入文档</button></footer>
+              </form>
+              <div class="knowledge-documents"><p>INGESTED DOCUMENTS</p><div id="knowledge-documents"><span class="empty-note">暂无文档。</span></div></div>
+            </div>
+          </section>
+          <aside class="knowledge-search">
+            <p>RETRIEVAL PROBE</p>
+            <form id="knowledge-search-form"><label><span>检索当前知识库</span><textarea name="query" maxlength="500" required placeholder="输入问题或关键词……"></textarea></label><button type="submit" class="button button-ghost">检索片段</button></form>
+            <div id="knowledge-hits" class="knowledge-hits"><span>选择知识库后开始检索。</span></div>
           </aside>
         </section>
       </main>

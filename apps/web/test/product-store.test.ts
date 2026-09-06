@@ -5,6 +5,9 @@ import {
   validateFlowDebugInput,
   validateFlowDraftInput,
   validateFlowEnvironment,
+  validateKnowledgeBaseInput,
+  validateKnowledgeDocumentInput,
+  validateKnowledgeQuery,
   validateRunInput,
 } from '../src/product-store.js';
 
@@ -32,6 +35,35 @@ describe('product Agent input', () => {
     [{ description: '', instructions: 'Do work', model: 'latest', name: 'A' }],
   ])('rejects an incomplete, open or mutable draft payload', (payload) => {
     expect(() => validateAgentInput(payload)).toThrow();
+  });
+});
+
+describe('product Knowledge input', () => {
+  it('accepts closed bounded base, document and query inputs', () => {
+    expect(validateKnowledgeBaseInput({ description: '已核验手册', name: '运维知识库' })).toEqual({
+      description: '已核验手册',
+      name: '运维知识库',
+    });
+    expect(
+      validateKnowledgeDocumentInput({ content: '服务健康检查使用 /healthz。', title: '运行手册' }),
+    ).toMatchObject({ title: '运行手册' });
+    expect(validateKnowledgeQuery('  健康检查  ')).toBe('健康检查');
+  });
+
+  it.each([
+    [{ description: '', name: '' }],
+    [{ description: '', extra: true, name: '知识库' }],
+    [{ content: '', title: '空文档' }],
+    [{ content: '内容', title: '' }],
+  ])('rejects malformed Knowledge inputs', (input) => {
+    expect(() =>
+      'name' in input ? validateKnowledgeBaseInput(input) : validateKnowledgeDocumentInput(input),
+    ).toThrow();
+  });
+
+  it('rejects empty and oversized search queries', () => {
+    expect(() => validateKnowledgeQuery('')).toThrow();
+    expect(() => validateKnowledgeQuery('x'.repeat(501))).toThrow();
   });
 });
 

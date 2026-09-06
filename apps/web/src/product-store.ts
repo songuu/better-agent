@@ -5,6 +5,7 @@ import {
   type ProductFlowGraph,
   validateProductFlowGraph,
 } from './flow-runtime.js';
+import { splitKnowledgeText } from './knowledge-runtime.js';
 
 export const PRODUCT_MODELS = ['gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-sol'] as const;
 export type ProductModel = (typeof PRODUCT_MODELS)[number];
@@ -107,6 +108,41 @@ export interface ProductFlowDebugRun {
   readonly status: 'completed';
 }
 
+export interface ProductKnowledgeBase {
+  readonly createdAt: string;
+  readonly description: string;
+  readonly documentCount: number;
+  readonly id: string;
+  readonly name: string;
+  readonly updatedAt: string;
+}
+
+export interface ProductKnowledgeDocument {
+  readonly chunkCount: number;
+  readonly createdAt: string;
+  readonly id: string;
+  readonly knowledgeBaseId: string;
+  readonly title: string;
+}
+
+export interface ProductKnowledgeHit {
+  readonly content: string;
+  readonly documentId: string;
+  readonly documentTitle: string;
+  readonly ordinal: number;
+  readonly score: number;
+}
+
+export interface ProductKnowledgeBaseInput {
+  readonly description: string;
+  readonly name: string;
+}
+
+export interface ProductKnowledgeDocumentInput {
+  readonly content: string;
+  readonly title: string;
+}
+
 export interface ProductStore {
   beginRun(
     workspaceId: string,
@@ -142,6 +178,17 @@ export interface ProductStore {
     actorId: string,
     input: ProductFlowDraftInput,
   ): Promise<ProductFlowDraft>;
+  createKnowledgeBase(
+    workspaceId: string,
+    actorId: string,
+    input: ProductKnowledgeBaseInput,
+  ): Promise<ProductKnowledgeBase>;
+  ingestKnowledgeDocument(
+    workspaceId: string,
+    actorId: string,
+    knowledgeBaseId: string,
+    input: ProductKnowledgeDocumentInput,
+  ): Promise<ProductKnowledgeDocument>;
   debugFlow(
     workspaceId: string,
     actorId: string,
@@ -152,6 +199,11 @@ export interface ProductStore {
   listAgents(workspaceId: string): Promise<readonly AgentDraft[]>;
   listFlowDebugRuns(workspaceId: string, flowId: string): Promise<readonly ProductFlowDebugRun[]>;
   listFlows(workspaceId: string): Promise<readonly ProductFlowDraft[]>;
+  listKnowledgeBases(workspaceId: string): Promise<readonly ProductKnowledgeBase[]>;
+  listKnowledgeDocuments(
+    workspaceId: string,
+    knowledgeBaseId: string,
+  ): Promise<readonly ProductKnowledgeDocument[]>;
   listRuns(workspaceId: string): Promise<readonly ProductRun[]>;
   publishAgent(
     workspaceId: string,
@@ -166,6 +218,11 @@ export interface ProductStore {
     expectedRevision: number,
     environment: ProductFlowEnvironment,
   ): Promise<ProductFlowDraft>;
+  searchKnowledge(
+    workspaceId: string,
+    knowledgeBaseId: string,
+    query: string,
+  ): Promise<readonly ProductKnowledgeHit[]>;
   updateAgent(
     workspaceId: string,
     agentId: string,
@@ -202,6 +259,31 @@ interface FlowDebugRow {
   readonly logs: unknown;
   readonly output_text: string;
   readonly status: string;
+}
+
+interface KnowledgeBaseRow {
+  readonly created_at: Date | string;
+  readonly description: string;
+  readonly document_count: string | number;
+  readonly id: string;
+  readonly name: string;
+  readonly updated_at: Date | string;
+}
+
+interface KnowledgeDocumentRow {
+  readonly chunk_count: string | number;
+  readonly created_at: Date | string;
+  readonly id: string;
+  readonly knowledge_base_id: string;
+  readonly title: string;
+}
+
+interface KnowledgeHitRow {
+  readonly content: string;
+  readonly document_id: string;
+  readonly document_title: string;
+  readonly ordinal: string | number;
+  readonly score: string | number;
 }
 
 interface ConversationRow {
@@ -442,6 +524,41 @@ function toFlowDebug(row: FlowDebugRow): ProductFlowDebugRun {
   });
 }
 
+function toKnowledgeBase(row: KnowledgeBaseRow): ProductKnowledgeBase {
+  return Object.freeze({
+    createdAt: asIso(row.created_at),
+    description: row.description,
+    documentCount: nonnegativeInteger(row.document_count, 'Knowledge document count'),
+    id: row.id,
+    name: row.name,
+    updatedAt: asIso(row.updated_at),
+  });
+}
+
+function toKnowledgeDocument(row: KnowledgeDocumentRow): ProductKnowledgeDocument {
+  return Object.freeze({
+    chunkCount: positiveInteger(row.chunk_count, 'Knowledge chunk count'),
+    createdAt: asIso(row.created_at),
+    id: row.id,
+    knowledgeBaseId: row.knowledge_base_id,
+    title: row.title,
+  });
+}
+
+function toKnowledgeHit(row: KnowledgeHitRow): ProductKnowledgeHit {
+  const score = Number(row.score);
+  if (!Number.isFinite(score) || score < 0) {
+    throw new Error('product store returned an invalid Knowledge score');
+  }
+  return Object.freeze({
+    content: row.content,
+    documentId: row.document_id,
+    documentTitle: row.document_title,
+    ordinal: nonnegativeInteger(row.ordinal, 'Knowledge chunk ordinal'),
+    score,
+  });
+}
+
 export class PostgresProductStore implements ProductStore {
   readonly #pool: Pool;
 
@@ -557,6 +674,80 @@ export class PostgresProductStore implements ProductStore {
       [workspaceId, flowId],
     );
     return Object.freeze(result.rows.map(toFlowDebug));
+  }
+
+  async #getKnowledgeBase(
+    workspaceId: string,
+    knowledgeBaseId: string,
+  ): Promise<ProductKnowledgeBase> {
+    const result = await this.#pool.query<KnowledgeBaseRow>(
+      'SELECT * FROM app.list_product_knowledge_bases($1::uuid) AS base WHERE base.id = $2::uuid',
+      [workspaceId, knowledgeBaseId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('product store did not return the Knowledge base');
+    return toKnowledgeBase(row);
+  }
+
+  async createKnowledgeBase(
+    workspaceId: string,
+    actorId: string,
+    input: ProductKnowledgeBaseInput,
+  ): Promise<ProductKnowledgeBase> {
+    const result = await this.#pool.query<{ readonly id: string }>(
+      'SELECT app.create_product_knowledge_base($1::uuid, $2::uuid, $3::text, $4::text) AS id',
+      [workspaceId, actorId, input.name, input.description],
+    );
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error('product store did not create the Knowledge base');
+    return await this.#getKnowledgeBase(workspaceId, id);
+  }
+
+  async ingestKnowledgeDocument(
+    workspaceId: string,
+    actorId: string,
+    knowledgeBaseId: string,
+    input: ProductKnowledgeDocumentInput,
+  ): Promise<ProductKnowledgeDocument> {
+    const chunks = splitKnowledgeText(input.content);
+    const result = await this.#pool.query<KnowledgeDocumentRow>(
+      'SELECT * FROM app.ingest_product_knowledge_document($1::uuid, $2::uuid, $3::uuid, $4::text, $5::jsonb)',
+      [workspaceId, knowledgeBaseId, actorId, input.title, JSON.stringify(chunks)],
+    );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('product store did not ingest the Knowledge document');
+    return toKnowledgeDocument(row);
+  }
+
+  async listKnowledgeBases(workspaceId: string): Promise<readonly ProductKnowledgeBase[]> {
+    const result = await this.#pool.query<KnowledgeBaseRow>(
+      'SELECT * FROM app.list_product_knowledge_bases($1::uuid)',
+      [workspaceId],
+    );
+    return Object.freeze(result.rows.map(toKnowledgeBase));
+  }
+
+  async listKnowledgeDocuments(
+    workspaceId: string,
+    knowledgeBaseId: string,
+  ): Promise<readonly ProductKnowledgeDocument[]> {
+    const result = await this.#pool.query<KnowledgeDocumentRow>(
+      'SELECT * FROM app.list_product_knowledge_documents($1::uuid, $2::uuid)',
+      [workspaceId, knowledgeBaseId],
+    );
+    return Object.freeze(result.rows.map(toKnowledgeDocument));
+  }
+
+  async searchKnowledge(
+    workspaceId: string,
+    knowledgeBaseId: string,
+    query: string,
+  ): Promise<readonly ProductKnowledgeHit[]> {
+    const result = await this.#pool.query<KnowledgeHitRow>(
+      'SELECT * FROM app.search_product_knowledge($1::uuid, $2::uuid, $3::text, 8)',
+      [workspaceId, knowledgeBaseId, validateKnowledgeQuery(query)],
+    );
+    return Object.freeze(result.rows.map(toKnowledgeHit));
   }
 
   async createConversation(
@@ -807,4 +998,55 @@ export function validateFlowEnvironment(value: unknown): ProductFlowEnvironment 
     throw new Error('Flow environment is unsupported');
   }
   return value as ProductFlowEnvironment;
+}
+
+export function validateKnowledgeBaseInput(value: unknown): ProductKnowledgeBaseInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Knowledge base payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 2 ||
+    typeof input.name !== 'string' ||
+    typeof input.description !== 'string'
+  ) {
+    throw new Error('Knowledge base payload has an invalid shape');
+  }
+  const name = input.name.trim();
+  if (name.length < 1 || name.length > 80) {
+    throw new Error('Knowledge base name must contain 1–80 characters');
+  }
+  if (input.description.length > 500) {
+    throw new Error('Knowledge base description must not exceed 500 characters');
+  }
+  return Object.freeze({ description: input.description, name });
+}
+
+export function validateKnowledgeDocumentInput(value: unknown): ProductKnowledgeDocumentInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Knowledge document payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 2 ||
+    typeof input.title !== 'string' ||
+    typeof input.content !== 'string'
+  ) {
+    throw new Error('Knowledge document payload has an invalid shape');
+  }
+  const title = input.title.trim();
+  if (title.length < 1 || title.length > 160) {
+    throw new Error('Knowledge document title must contain 1–160 characters');
+  }
+  splitKnowledgeText(input.content);
+  return Object.freeze({ content: input.content, title });
+}
+
+export function validateKnowledgeQuery(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('Knowledge query must be text');
+  const query = value.trim();
+  if (query.length < 1 || query.length > 500) {
+    throw new Error('Knowledge query must contain 1–500 characters');
+  }
+  return query;
 }

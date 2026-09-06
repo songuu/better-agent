@@ -119,6 +119,22 @@ test('ships the Flow editor, environment deployment and durable debug controls',
   assert.doesNotMatch(publicJavaScript, /localStorage|sessionStorage/u);
 });
 
+test('ships the durable Knowledge Center ingestion and retrieval controls', () => {
+  for (const marker of [
+    'id="show-knowledge"',
+    'id="knowledge-base-form"',
+    'id="knowledge-document-form"',
+    'id="knowledge-search-form"',
+    'id="knowledge-hits"',
+  ]) {
+    assert.ok(publicHtml.includes(marker), `missing Knowledge Center control: ${marker}`);
+  }
+  for (const route of ['/knowledge-bases', '/documents', '/search']) {
+    assert.ok(publicJavaScript.includes(route), `missing Knowledge Center API route: ${route}`);
+  }
+  assert.doesNotMatch(publicJavaScript, /localStorage|sessionStorage/u);
+});
+
 test('packages the PostgreSQL client dependency required by the product runtime', () => {
   assert.match(
     deploymentWorkflow,

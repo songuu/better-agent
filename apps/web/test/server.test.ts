@@ -22,6 +22,9 @@ import type {
   ProductConversation,
   ProductFlowDebugRun,
   ProductFlowDraft,
+  ProductKnowledgeBase,
+  ProductKnowledgeDocument,
+  ProductKnowledgeHit,
   ProductRun,
   ProductStore,
 } from '../src/product-store.js';
@@ -210,6 +213,8 @@ function productFixture(): {
   readonly conversations: ProductConversation[];
   readonly flowDebugRuns: ProductFlowDebugRun[];
   readonly flows: ProductFlowDraft[];
+  readonly knowledgeBases: ProductKnowledgeBase[];
+  readonly knowledgeDocuments: ProductKnowledgeDocument[];
   readonly runs: ProductRun[];
   readonly store: ProductStore;
 } {
@@ -217,9 +222,57 @@ function productFixture(): {
   const conversations: ProductConversation[] = [];
   const flows: ProductFlowDraft[] = [];
   const flowDebugRuns: ProductFlowDebugRun[] = [];
+  const knowledgeBases: ProductKnowledgeBase[] = [];
+  const knowledgeDocuments: ProductKnowledgeDocument[] = [];
   const runs: ProductRun[] = [];
   const timestamp = '2026-09-03T00:00:00.000Z';
   const store: ProductStore = {
+    async createKnowledgeBase(_workspaceId, _actorId, input) {
+      const knowledgeBase: ProductKnowledgeBase = {
+        ...input,
+        createdAt: timestamp,
+        documentCount: 0,
+        id: '88888888-8888-4888-8888-888888888888',
+        updatedAt: timestamp,
+      };
+      knowledgeBases.push(knowledgeBase);
+      return knowledgeBase;
+    },
+    async ingestKnowledgeDocument(_workspaceId, _actorId, knowledgeBaseId, input) {
+      const knowledgeBase = knowledgeBases.find((item) => item.id === knowledgeBaseId);
+      if (knowledgeBase === undefined) throw new Error('Knowledge base not found');
+      const document: ProductKnowledgeDocument = {
+        chunkCount: 1,
+        createdAt: timestamp,
+        id: '99999999-9999-4999-8999-999999999999',
+        knowledgeBaseId,
+        title: input.title,
+      };
+      knowledgeDocuments.push(document);
+      knowledgeBases[knowledgeBases.indexOf(knowledgeBase)] = {
+        ...knowledgeBase,
+        documentCount: knowledgeBase.documentCount + 1,
+      };
+      return document;
+    },
+    async listKnowledgeBases() {
+      return knowledgeBases;
+    },
+    async listKnowledgeDocuments(_workspaceId, knowledgeBaseId) {
+      return knowledgeDocuments.filter((document) => document.knowledgeBaseId === knowledgeBaseId);
+    },
+    async searchKnowledge(_workspaceId, knowledgeBaseId, query) {
+      const document = knowledgeDocuments.find((item) => item.knowledgeBaseId === knowledgeBaseId);
+      if (document === undefined) return [];
+      const hit: ProductKnowledgeHit = {
+        content: `服务健康检查使用 /healthz。查询：${query}`,
+        documentId: document.id,
+        documentTitle: document.title,
+        ordinal: 0,
+        score: 0.75,
+      };
+      return [hit];
+    },
     async createFlow(_workspaceId, _actorId, input) {
       const flow: ProductFlowDraft = {
         ...input,
@@ -419,7 +472,16 @@ function productFixture(): {
       return agent;
     },
   };
-  return { agents, conversations, flowDebugRuns, flows, runs, store };
+  return {
+    agents,
+    conversations,
+    flowDebugRuns,
+    flows,
+    knowledgeBases,
+    knowledgeDocuments,
+    runs,
+    store,
+  };
 }
 
 afterEach(async () => {
@@ -741,6 +803,88 @@ describe('Better Agent web runtime', () => {
     );
     expect(malformedDebug.status).toBe(400);
     expect(await malformedDebug.json()).toEqual({ error: 'invalid_flow_debug_payload' });
+  });
+
+  it('creates a Knowledge base, ingests a document and returns bounded retrieval hits', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const headers = { ...mutationHeaders, Cookie: cookie };
+    const created = await localRequest(origin, '/better-agent/api/product/knowledge-bases', {
+      body: JSON.stringify({ description: '生产运行知识', name: '运维知识库' }),
+      headers,
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    const knowledgeBase = ((await created.json()) as { knowledge_base: ProductKnowledgeBase })
+      .knowledge_base;
+    expect(knowledgeBase).toMatchObject({ documentCount: 0, name: '运维知识库' });
+
+    const ingested = await localRequest(
+      origin,
+      `/better-agent/api/product/knowledge-bases/${knowledgeBase.id}/documents`,
+      {
+        body: JSON.stringify({
+          content: '服务健康检查使用 /healthz。异常时先检查 PostgreSQL 连接。',
+          title: '运行手册',
+        }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(ingested.status).toBe(201);
+    expect(
+      ((await ingested.json()) as { document: ProductKnowledgeDocument }).document,
+    ).toMatchObject({ chunkCount: 1, title: '运行手册' });
+
+    const search = await localRequest(
+      origin,
+      `/better-agent/api/product/knowledge-bases/${knowledgeBase.id}/search`,
+      {
+        body: JSON.stringify({ query: '健康检查' }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(search.status).toBe(200);
+    expect(((await search.json()) as { hits: ProductKnowledgeHit[] }).hits[0]).toMatchObject({
+      documentTitle: '运行手册',
+      ordinal: 0,
+    });
+
+    const [bases, documents] = await Promise.all([
+      localRequest(origin, '/better-agent/api/product/knowledge-bases', {
+        headers: { Cookie: cookie },
+      }),
+      localRequest(
+        origin,
+        `/better-agent/api/product/knowledge-bases/${knowledgeBase.id}/documents`,
+        { headers: { Cookie: cookie } },
+      ),
+    ]);
+    expect(bases.status).toBe(200);
+    expect(
+      ((await bases.json()) as { knowledge_bases: ProductKnowledgeBase[] }).knowledge_bases,
+    ).toHaveLength(1);
+    expect(documents.status).toBe(200);
+    expect(
+      ((await documents.json()) as { documents: ProductKnowledgeDocument[] }).documents,
+    ).toHaveLength(1);
   });
 
   it('requires the product CSRF header before authenticating mutation routes', async () => {

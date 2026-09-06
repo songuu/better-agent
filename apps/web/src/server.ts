@@ -11,6 +11,9 @@ import {
   validateFlowDebugInput,
   validateFlowDraftInput,
   validateFlowEnvironment,
+  validateKnowledgeBaseInput,
+  validateKnowledgeDocumentInput,
+  validateKnowledgeQuery,
   validateRunInput,
 } from './product-store.js';
 import { createModelRuntimeFromEnvironment, type ProductModelRuntime } from './model-runtime.js';
@@ -95,13 +98,13 @@ function hasSession(
   }
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+async function readJsonBody(request: IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += bytes.byteLength;
-    if (size > 64 * 1024) throw new Error('request_body_too_large');
+    if (size > maxBytes) throw new Error('request_body_too_large');
     chunks.push(bytes);
   }
   if (chunks.length === 0) throw new Error('request_body_required');
@@ -368,6 +371,62 @@ export async function createBetterAgentWebServer(
         return true;
       }
     }
+    if (path === `${WEB_BASE_PATH}api/product/knowledge-bases` && request.method === 'GET') {
+      sendJson(request, response, 200, {
+        knowledge_bases: await productStore.listKnowledgeBases(workspaceId),
+      });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/knowledge-bases` && request.method === 'POST') {
+      const knowledgeBase = await productStore.createKnowledgeBase(
+        workspaceId,
+        actorId,
+        validateKnowledgeBaseInput(await readJsonBody(request)),
+      );
+      sendJson(request, response, 201, { knowledge_base: knowledgeBase });
+      return true;
+    }
+    const knowledgeMatch = new RegExp(
+      `^${WEB_BASE_PATH}api/product/knowledge-bases/([0-9a-f-]{36})(/documents|/search)$`,
+      'u',
+    ).exec(path);
+    if (knowledgeMatch !== null && UUID.test(knowledgeMatch[1] ?? '')) {
+      const knowledgeBaseId = knowledgeMatch[1] as string;
+      if (knowledgeMatch[2] === '/documents' && request.method === 'GET') {
+        sendJson(request, response, 200, {
+          documents: await productStore.listKnowledgeDocuments(workspaceId, knowledgeBaseId),
+        });
+        return true;
+      }
+      if (knowledgeMatch[2] === '/documents' && request.method === 'POST') {
+        const document = await productStore.ingestKnowledgeDocument(
+          workspaceId,
+          actorId,
+          knowledgeBaseId,
+          validateKnowledgeDocumentInput(await readJsonBody(request, 1024 * 1024)),
+        );
+        sendJson(request, response, 201, { document });
+        return true;
+      }
+      if (knowledgeMatch[2] === '/search' && request.method === 'POST') {
+        const value = await readJsonBody(request);
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+          throw new Error('invalid_knowledge_search_payload');
+        }
+        const payload = value as Record<string, unknown>;
+        if (Object.keys(payload).length !== 1 || !Object.hasOwn(payload, 'query')) {
+          throw new Error('invalid_knowledge_search_payload');
+        }
+        sendJson(request, response, 200, {
+          hits: await productStore.searchKnowledge(
+            workspaceId,
+            knowledgeBaseId,
+            validateKnowledgeQuery(payload.query),
+          ),
+        });
+        return true;
+      }
+    }
     if (path === `${WEB_BASE_PATH}api/product/runs` && request.method === 'GET') {
       sendJson(request, response, 200, { runs: await productStore.listRuns(workspaceId) });
       return true;
@@ -495,7 +554,7 @@ export async function createBetterAgentWebServer(
                   : message.startsWith('invalid_') ||
                       message.includes('payload') ||
                       message.includes('request_body') ||
-                      /^(Agent|Flow|Input|Output|Run|Template) /u.test(message)
+                      /^(Agent|Flow|Input|Knowledge|Output|Run|Template) /u.test(message)
                     ? 400
                     : 500;
           sendJson(request, response, status, {
