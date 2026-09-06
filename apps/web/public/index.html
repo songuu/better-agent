@@ -21,7 +21,7 @@
           <button type="button" id="show-flows"><span>02</span>Flow 编排</button>
           <button type="button" id="show-knowledge"><span>03</span>知识与数据</button>
           <button type="button" id="show-runs"><span>04</span>运行记录</button>
-          <button type="button" disabled><span>05</span>发布与评测</button>
+          <button type="button" id="show-evaluation"><span>05</span>发布与评测</button>
         </nav>
         <div class="rail-status"><i></i><div><small>POSTGRES RUNTIME</small><b id="runtime-label">正在探测</b></div></div>
       </aside>
@@ -137,6 +137,23 @@
             <form id="knowledge-search-form"><label><span>检索当前知识库</span><textarea name="query" maxlength="500" required placeholder="输入问题或关键词……"></textarea></label><button type="submit" class="button button-ghost">检索片段</button></form>
             <div id="knowledge-hits" class="knowledge-hits"><span>选择知识库后开始检索。</span></div>
           </aside>
+        </section>
+
+        <section id="evaluation-view" class="evaluation-center" hidden>
+          <header class="evaluation-hero">
+            <div><p class="eyebrow">RELEASE CONTROL / OBSERVED EVIDENCE</p><h2>发布资产与运行证据，<br />在一个控制面完成核对。</h2></div>
+            <p>这里只呈现 PostgreSQL 中已经发布、部署或真实执行过的记录；正式生产晋级仍由 host-attested Acceptance 签发，不在浏览器内伪造通过结果。</p>
+          </header>
+          <div class="evaluation-metrics">
+            <article><span>PUBLISHED AGENTS</span><b id="published-agents">0</b><small>不可变 Agent 版本就绪</small></article>
+            <article><span>PUBLISHED FLOWS</span><b id="published-flows">0</b><small>不可变 Flow 版本就绪</small></article>
+            <article><span>DEPLOYED FLOWS</span><b id="deployed-flows">0</b><small>已绑定环境的版本</small></article>
+            <article><span>COMPLETED RUNS</span><b id="completed-runs">0</b><small>真实模型成功响应</small></article>
+          </div>
+          <div class="evaluation-layout">
+            <section><header><div><p>RELEASE TARGETS</p><h3>可评测发布资产</h3></div><span id="release-count">00 TARGETS</span></header><div id="release-targets" class="release-targets"><p class="empty-note">尚无已发布资产。</p></div></section>
+            <aside><header><p>EVALUATION EVIDENCE</p><h3>运行观测</h3></header><div id="evaluation-evidence" class="evaluation-evidence"></div><div class="attestation-note"><i></i><div><b>HOST-ATTESTED GATE</b><span>浏览器证据用于产品核对；生产晋级需独立审查者能力与不可变 Receipt。</span></div></div></aside>
+          </div>
         </section>
       </main>
     </div>

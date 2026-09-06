@@ -142,6 +142,21 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
   assert.match(publicCss, /@media \(max-width: 1400px\) \{\s*\.flow-studio \{/u);
 });
 
+test('ships a release and evaluation center backed by recorded product evidence', () => {
+  for (const marker of [
+    'id="show-evaluation"',
+    'id="evaluation-view"',
+    'id="release-targets"',
+    'id="evaluation-evidence"',
+  ]) {
+    assert.ok(publicHtml.includes(marker), `missing release evaluation control: ${marker}`);
+  }
+  for (const marker of ['renderEvaluationCenter', 'completedRuns', 'deployedFlows']) {
+    assert.ok(publicJavaScript.includes(marker), `missing evaluation evidence logic: ${marker}`);
+  }
+  assert.doesNotMatch(publicJavaScript, /mockEvaluation|fakeEvaluation|simulatedEvaluation/u);
+});
+
 test('packages the PostgreSQL client dependency required by the product runtime', () => {
   assert.match(
     deploymentWorkflow,

@@ -227,26 +227,83 @@ function setStudioView(view) {
   state.view = view;
   const isFlow = view === 'flows';
   const isKnowledge = view === 'knowledge';
+  const isEvaluation = view === 'evaluation';
   const isAgent = view === 'agents';
   byId('agent-view').hidden = !isAgent;
   byId('flow-view').hidden = !isFlow;
   byId('knowledge-view').hidden = !isKnowledge;
+  byId('evaluation-view').hidden = !isEvaluation;
   byId('show-agents').classList.toggle('is-active', isAgent);
   byId('show-flows').classList.toggle('is-active', isFlow);
   byId('show-knowledge').classList.toggle('is-active', isKnowledge);
+  byId('show-evaluation').classList.toggle('is-active', isEvaluation);
   byId('new-agent').hidden = !isAgent;
   byId('new-flow').hidden = !isFlow;
   byId('new-knowledge').hidden = !isKnowledge;
-  byId('workspace-path').textContent = isKnowledge
-    ? '独立工作区 / KNOWLEDGE'
-    : isFlow
-      ? '独立工作区 / FLOWS'
-      : '独立工作区 / AGENTS';
-  byId('studio-title').textContent = isKnowledge
-    ? 'Knowledge Center'
-    : isFlow
-      ? 'Flow Studio'
-      : 'Agent Studio';
+  byId('workspace-path').textContent = isEvaluation
+    ? '独立工作区 / RELEASES'
+    : isKnowledge
+      ? '独立工作区 / KNOWLEDGE'
+      : isFlow
+        ? '独立工作区 / FLOWS'
+        : '独立工作区 / AGENTS';
+  byId('studio-title').textContent = isEvaluation
+    ? 'Release & Evaluation'
+    : isKnowledge
+      ? 'Knowledge Center'
+      : isFlow
+        ? 'Flow Studio'
+        : 'Agent Studio';
+  if (isEvaluation) renderEvaluationCenter();
+}
+
+function renderEvaluationCenter() {
+  const publishedAgents = state.agents.filter((agent) => agent.status === 'published');
+  const publishedFlows = state.flows.filter((flow) => flow.status === 'published');
+  const deployedFlows = state.flows.reduce((count, flow) => count + flow.deployments.length, 0);
+  const completedRuns = state.runs.filter((run) => run.status === 'completed').length;
+  const failedRuns = state.runs.filter((run) => run.status === 'failed').length;
+  const pendingRuns = state.runs.filter((run) => run.status === 'pending').length;
+  byId('published-agents').textContent = String(publishedAgents.length);
+  byId('published-flows').textContent = String(publishedFlows.length);
+  byId('deployed-flows').textContent = String(deployedFlows);
+  byId('completed-runs').textContent = String(completedRuns);
+  const targets = [
+    ...publishedAgents.map((agent) => ({
+      detail: `${agent.model} · REV ${agent.revision}`,
+      environments: ['RELEASE'],
+      kind: 'AGENT',
+      name: agent.name,
+    })),
+    ...publishedFlows.map((flow) => ({
+      detail: `VERSION ${flow.publishedVersion} · ${flow.graph.nodes.length} NODES`,
+      environments: flow.deployments.map((deployment) => deployment.environment.toUpperCase()),
+      kind: 'FLOW',
+      name: flow.name,
+    })),
+  ];
+  byId('release-count').textContent = `${String(targets.length).padStart(2, '0')} TARGETS`;
+  byId('release-targets').innerHTML = targets.length
+    ? targets
+        .map(
+          (target) =>
+            `<article><i>${target.kind.slice(0, 1)}</i><div><small>${target.kind}</small><b>${escapeHtml(target.name)}</b><span>${escapeHtml(target.detail)}</span></div><em>${target.environments.map(escapeHtml).join(' / ') || 'NOT DEPLOYED'}</em></article>`,
+        )
+        .join('')
+    : '<p class="empty-note">尚无已发布资产。请先在 Agent Studio 或 Flow Studio 发布版本。</p>';
+  const totalRuns = completedRuns + failedRuns + pendingRuns;
+  const successRate = totalRuns === 0 ? 'N/A' : `${Math.round((completedRuns / totalRuns) * 100)}%`;
+  byId('evaluation-evidence').innerHTML = [
+    ['已完成', completedRuns, '真实模型响应已持久化'],
+    ['失败', failedRuns, '保留错误码供定位'],
+    ['执行中', pendingRuns, '尚未形成终态证据'],
+    ['观测成功率', successRate, `${totalRuns} 条 Agent Run`],
+  ]
+    .map(
+      ([label, value, note]) =>
+        `<article><span>${label}</span><b>${value}</b><small>${note}</small></article>`,
+    )
+    .join('');
 }
 
 function renderRuns() {
@@ -358,6 +415,7 @@ document.querySelectorAll('[data-create-knowledge]').forEach((button) => {
 byId('show-agents').addEventListener('click', () => setStudioView('agents'));
 byId('show-flows').addEventListener('click', () => setStudioView('flows'));
 byId('show-knowledge').addEventListener('click', () => setStudioView('knowledge'));
+byId('show-evaluation').addEventListener('click', () => setStudioView('evaluation'));
 byId('new-agent').addEventListener('click', () => showEditor());
 byId('new-flow').addEventListener('click', () => showFlowEditor());
 byId('new-knowledge').addEventListener('click', () => showKnowledgeCreator());
