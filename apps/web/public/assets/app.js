@@ -1,7 +1,16 @@
 const apiRoot = '/better-agent/api/product';
-const state = { agents: [], conversationId: null, current: null, runs: [] };
+const state = {
+  agents: [],
+  conversationId: null,
+  current: null,
+  currentFlow: null,
+  flows: [],
+  runs: [],
+  view: 'agents',
+};
 const byId = (id) => document.getElementById(id);
 const form = byId('agent-form');
+const flowForm = byId('flow-form');
 const loginDialog = byId('login-dialog');
 
 function toast(message, error = false) {
@@ -55,6 +64,106 @@ function renderAgents() {
   list.querySelectorAll('[data-agent-id]').forEach((button) => {
     button.addEventListener('click', () => selectAgent(button.dataset.agentId));
   });
+}
+
+function flowGraph(template) {
+  return {
+    edges: [
+      { id: 'input_prompt', source: 'input', target: 'prompt' },
+      { id: 'prompt_output', source: 'prompt', target: 'output' },
+    ],
+    nodes: [
+      { config: { key: 'message' }, id: 'input', label: '消息输入', type: 'input' },
+      { config: { template }, id: 'prompt', label: '模板映射', type: 'template' },
+      { config: { source: 'prompt' }, id: 'output', label: '结果输出', type: 'output' },
+    ],
+  };
+}
+
+function renderFlows() {
+  byId('flow-count').textContent = String(state.flows.length).padStart(2, '0');
+  const list = byId('flow-list');
+  if (state.flows.length === 0) {
+    list.innerHTML = '<p class="empty-note">还没有 Flow。创建一个开始。</p>';
+    return;
+  }
+  list.innerHTML = state.flows
+    .map(
+      (flow) =>
+        `<button class="flow-row ${state.currentFlow?.id === flow.id ? 'is-current' : ''}" data-flow-id="${flow.id}"><i>F</i><span><b>${escapeHtml(flow.name)}</b><small>${flow.graph.nodes.length} NODES · REV ${flow.revision}</small></span><em>${flow.status === 'published' ? `V${flow.publishedVersion}` : 'DRAFT'}</em></button>`,
+    )
+    .join('');
+  list.querySelectorAll('[data-flow-id]').forEach((button) => {
+    button.addEventListener('click', () => selectFlow(button.dataset.flowId));
+  });
+}
+
+function renderFlowInspector(flow = state.currentFlow) {
+  const deployments = byId('flow-deployments');
+  if (!flow || flow.deployments.length === 0) {
+    deployments.innerHTML = '<span>尚未部署环境</span>';
+    return;
+  }
+  deployments.innerHTML = flow.deployments
+    .map(
+      (deployment) =>
+        `<span><b>${escapeHtml(deployment.environment.toUpperCase())}</b> · V${deployment.releaseVersion}</span>`,
+    )
+    .join('');
+}
+
+function showFlowEditor(flow = null) {
+  state.currentFlow = flow;
+  byId('flow-welcome').hidden = true;
+  flowForm.hidden = false;
+  flowForm.elements.name.value = flow?.name || '';
+  flowForm.elements.description.value = flow?.description || '';
+  const templateNode = flow?.graph.nodes.find((node) => node.type === 'template');
+  flowForm.elements.template.value = templateNode?.config.template || '已处理：{{message}}';
+  byId('flow-editor-title').textContent = flow?.name || '未命名 Flow';
+  byId('flow-kicker').textContent = flow
+    ? `${flow.status.toUpperCase()} · REV ${flow.revision}`
+    : 'DRAFT · NEW';
+  byId('flow-save-state').textContent = flow
+    ? `更新于 ${new Date(flow.updatedAt).toLocaleString('zh-CN')}`
+    : '尚未保存';
+  byId('debug-flow').disabled = !flow;
+  byId('publish-flow').disabled = !flow;
+  byId('flow-debug-output').innerHTML = '<span>等待调试</span>';
+  byId('flow-debug-logs').innerHTML = '<li>输入内容并运行调试。</li>';
+  renderFlowInspector(flow);
+  renderFlows();
+}
+
+function selectFlow(id) {
+  const flow = state.flows.find((item) => item.id === id);
+  if (flow) showFlowEditor(flow);
+}
+
+async function loadFlows() {
+  const payload = await request('/flows');
+  state.flows = payload.flows;
+  renderFlows();
+}
+
+function upsertFlow(flow) {
+  const index = state.flows.findIndex((item) => item.id === flow.id);
+  if (index === -1) state.flows.unshift(flow);
+  else state.flows[index] = flow;
+  showFlowEditor(flow);
+}
+
+function setStudioView(view) {
+  state.view = view;
+  const isFlow = view === 'flows';
+  byId('agent-view').hidden = isFlow;
+  byId('flow-view').hidden = !isFlow;
+  byId('show-agents').classList.toggle('is-active', !isFlow);
+  byId('show-flows').classList.toggle('is-active', isFlow);
+  byId('new-agent').hidden = isFlow;
+  byId('new-flow').hidden = !isFlow;
+  byId('workspace-path').textContent = isFlow ? '独立工作区 / FLOWS' : '独立工作区 / AGENTS';
+  byId('studio-title').textContent = isFlow ? 'Flow Studio' : 'Agent Studio';
 }
 
 function renderRuns() {
@@ -126,7 +235,7 @@ async function bootstrap() {
     byId('build-label').textContent =
       `BUILD · ${health.build_sha === 'development' ? 'LOCAL' : health.build_sha.slice(0, 8).toUpperCase()}`;
     await request('/session');
-    await Promise.all([loadAgents(), loadRuns()]);
+    await Promise.all([loadAgents(), loadFlows(), loadRuns()]);
   } catch (error) {
     if (error.status === 401) loginDialog.showModal();
     else {
@@ -147,7 +256,7 @@ byId('login-form').addEventListener('submit', async (event) => {
     });
     loginDialog.close();
     event.currentTarget.reset();
-    await Promise.all([loadAgents(), loadRuns()]);
+    await Promise.all([loadAgents(), loadFlows(), loadRuns()]);
     toast('工作区已连接');
   } catch (error) {
     byId('login-error').textContent = error.message;
@@ -157,12 +266,21 @@ byId('login-form').addEventListener('submit', async (event) => {
 document.querySelectorAll('[data-create]').forEach((button) => {
   button.addEventListener('click', () => showEditor());
 });
+document.querySelectorAll('[data-create-flow]').forEach((button) => {
+  button.addEventListener('click', () => showFlowEditor());
+});
+byId('show-agents').addEventListener('click', () => setStudioView('agents'));
+byId('show-flows').addEventListener('click', () => setStudioView('flows'));
 byId('new-agent').addEventListener('click', () => showEditor());
+byId('new-flow').addEventListener('click', () => showFlowEditor());
 form.elements.instructions.addEventListener('input', () => {
   byId('instruction-count').textContent = String(form.elements.instructions.value.length);
 });
 form.elements.name.addEventListener('input', () => {
   byId('editor-title').textContent = form.elements.name.value.trim() || '未命名 Agent';
+});
+flowForm.elements.name.addEventListener('input', () => {
+  byId('flow-editor-title').textContent = flowForm.elements.name.value.trim() || '未命名 Flow';
 });
 
 form.addEventListener('submit', async (event) => {
@@ -195,6 +313,74 @@ byId('publish-agent').addEventListener('click', async () => {
     state.agents[state.agents.findIndex((agent) => agent.id === payload.agent.id)] = payload.agent;
     showEditor(payload.agent);
     toast('不可变版本已发布');
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+flowForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = {
+    description: flowForm.elements.description.value,
+    graph: flowGraph(flowForm.elements.template.value),
+    name: flowForm.elements.name.value,
+  };
+  try {
+    const payload = state.currentFlow
+      ? await request(`/flows/${state.currentFlow.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...input, expected_revision: state.currentFlow.revision }),
+        })
+      : await request('/flows', { method: 'POST', body: JSON.stringify(input) });
+    upsertFlow(payload.flow);
+    toast('Flow Draft 已持久化');
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+byId('debug-flow').addEventListener('click', async () => {
+  if (!state.currentFlow) return;
+  const input = byId('flow-debug-input').value.trim();
+  if (!input) {
+    toast('请输入调试内容', true);
+    return;
+  }
+  byId('debug-flow').disabled = true;
+  byId('flow-debug-output').innerHTML = '<span>正在执行节点图……</span>';
+  try {
+    const payload = await request(`/flows/${state.currentFlow.id}/debug`, {
+      method: 'POST',
+      body: JSON.stringify({ expected_revision: state.currentFlow.revision, input }),
+    });
+    byId('flow-debug-output').textContent = payload.debug.outputText;
+    byId('flow-debug-logs').innerHTML = payload.debug.logs
+      .map(
+        (log, index) =>
+          `<li><span>${String(index + 1).padStart(2, '0')}</span><div><b>${escapeHtml(log.nodeId)}</b><small>${escapeHtml(log.outputPreview)}</small></div><em>PASS</em></li>`,
+      )
+      .join('');
+    toast('Flow 调试完成并已记录');
+  } catch (error) {
+    byId('flow-debug-output').textContent = `调试失败：${error.message}`;
+    toast(error.message, true);
+  } finally {
+    byId('debug-flow').disabled = false;
+  }
+});
+
+byId('publish-flow').addEventListener('click', async () => {
+  if (!state.currentFlow) return;
+  try {
+    const payload = await request(`/flows/${state.currentFlow.id}/publish`, {
+      method: 'POST',
+      body: JSON.stringify({
+        environment: byId('flow-environment').value,
+        expected_revision: state.currentFlow.revision,
+      }),
+    });
+    upsertFlow(payload.flow);
+    toast('不可变 Flow 版本已部署');
   } catch (error) {
     toast(error.message, true);
   }

@@ -20,6 +20,8 @@ import type {
   AgentDraft,
   AgentDraftInput,
   ProductConversation,
+  ProductFlowDebugRun,
+  ProductFlowDraft,
   ProductRun,
   ProductStore,
 } from '../src/product-store.js';
@@ -206,14 +208,94 @@ async function localRequest(
 function productFixture(): {
   readonly agents: AgentDraft[];
   readonly conversations: ProductConversation[];
+  readonly flowDebugRuns: ProductFlowDebugRun[];
+  readonly flows: ProductFlowDraft[];
   readonly runs: ProductRun[];
   readonly store: ProductStore;
 } {
   const agents: AgentDraft[] = [];
   const conversations: ProductConversation[] = [];
+  const flows: ProductFlowDraft[] = [];
+  const flowDebugRuns: ProductFlowDebugRun[] = [];
   const runs: ProductRun[] = [];
   const timestamp = '2026-09-03T00:00:00.000Z';
   const store: ProductStore = {
+    async createFlow(_workspaceId, _actorId, input) {
+      const flow: ProductFlowDraft = {
+        ...input,
+        createdAt: timestamp,
+        deployments: [],
+        id: '66666666-6666-4666-8666-666666666666',
+        publishedVersion: null,
+        revision: 1,
+        status: 'draft',
+        updatedAt: timestamp,
+      };
+      flows.push(flow);
+      return flow;
+    },
+    async updateFlow(_workspaceId, flowId, expectedRevision, input) {
+      const index = flows.findIndex((flow) => flow.id === flowId);
+      const current = flows[index];
+      if (current === undefined || current.revision !== expectedRevision)
+        throw new Error('Flow draft revision conflict');
+      const flow: ProductFlowDraft = {
+        ...current,
+        ...input,
+        revision: current.revision + 1,
+        status: 'draft',
+        updatedAt: timestamp,
+      };
+      flows[index] = flow;
+      return flow;
+    },
+    async publishFlow(_workspaceId, _actorId, flowId, expectedRevision, environment) {
+      const index = flows.findIndex((flow) => flow.id === flowId);
+      const current = flows[index];
+      if (current === undefined || current.revision !== expectedRevision)
+        throw new Error('Flow draft revision conflict');
+      const releaseVersion = (current.publishedVersion ?? 0) + 1;
+      const flow: ProductFlowDraft = {
+        ...current,
+        deployments: [
+          ...current.deployments.filter((deployment) => deployment.environment !== environment),
+          { deployedAt: timestamp, environment, releaseVersion },
+        ],
+        publishedVersion: releaseVersion,
+        revision: current.revision + 1,
+        status: 'published',
+        updatedAt: timestamp,
+      };
+      flows[index] = flow;
+      return flow;
+    },
+    async debugFlow(_workspaceId, _actorId, flowId, expectedRevision, inputText) {
+      const flow = flows.find((item) => item.id === flowId);
+      if (flow === undefined || flow.revision !== expectedRevision)
+        throw new Error('Flow draft revision conflict');
+      const debug: ProductFlowDebugRun = {
+        createdAt: timestamp,
+        draftRevision: expectedRevision,
+        flowId,
+        id: '77777777-7777-4777-8777-777777777777',
+        inputText,
+        logs: flow.graph.nodes.map((node) => ({
+          nodeId: node.id,
+          outputPreview: `完成 ${node.label}`,
+          status: 'completed' as const,
+        })),
+        outputText: `已处理：${inputText}`,
+        status: 'completed',
+      };
+      flowDebugRuns.push(debug);
+      return debug;
+    },
+    async listFlows() {
+      return flows;
+    },
+    async listFlowDebugRuns(_workspaceId, flowId) {
+      return flowDebugRuns.filter((run) => run.flowId === flowId);
+    },
     async createConversation(_workspaceId, _actorId, agentId) {
       const agent = agents.find((item) => item.id === agentId && item.status === 'published');
       if (agent === undefined) throw new Error('agent has no published release');
@@ -337,7 +419,7 @@ function productFixture(): {
       return agent;
     },
   };
-  return { agents, conversations, runs, store };
+  return { agents, conversations, flowDebugRuns, flows, runs, store };
 }
 
 afterEach(async () => {
@@ -430,7 +512,7 @@ describe('Better Agent web runtime', () => {
       await childClosed;
       await rm(directory, { force: true, recursive: true });
     }
-  });
+  }, 30_000);
 
   it('redirects the base path to its canonical trailing-slash form', async () => {
     const origin = await start();
@@ -555,6 +637,110 @@ describe('Better Agent web runtime', () => {
     });
     expect(listed.status).toBe(200);
     expect(((await listed.json()) as { agents: AgentDraft[] }).agents).toHaveLength(1);
+  });
+
+  it('persists the Flow Draft, debug trace and immutable environment release lifecycle', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const headers = { ...mutationHeaders, Cookie: cookie };
+    const graph = {
+      edges: [
+        { id: 'input_prompt', source: 'input', target: 'prompt' },
+        { id: 'prompt_output', source: 'prompt', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        {
+          config: { template: '已处理：{{message}}' },
+          id: 'prompt',
+          label: '模板',
+          type: 'template',
+        },
+        { config: { source: 'prompt' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+
+    const created = await localRequest(origin, '/better-agent/api/product/flows', {
+      body: JSON.stringify({ description: '三节点映射', graph, name: '响应管线' }),
+      headers,
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    const flow = ((await created.json()) as { flow: ProductFlowDraft }).flow;
+    expect(flow).toMatchObject({ revision: 1, status: 'draft' });
+
+    const debugResponse = await localRequest(
+      origin,
+      `/better-agent/api/product/flows/${flow.id}/debug`,
+      {
+        body: JSON.stringify({ expected_revision: 1, input: '验证变量映射' }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(debugResponse.status).toBe(201);
+    expect(((await debugResponse.json()) as { debug: ProductFlowDebugRun }).debug).toMatchObject({
+      draftRevision: 1,
+      inputText: '验证变量映射',
+      outputText: '已处理：验证变量映射',
+      status: 'completed',
+    });
+
+    const published = await localRequest(
+      origin,
+      `/better-agent/api/product/flows/${flow.id}/publish`,
+      {
+        body: JSON.stringify({ environment: 'staging', expected_revision: 1 }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(published.status).toBe(200);
+    expect(((await published.json()) as { flow: ProductFlowDraft }).flow).toMatchObject({
+      deployments: [{ environment: 'staging', releaseVersion: 1 }],
+      publishedVersion: 1,
+      revision: 2,
+      status: 'published',
+    });
+
+    const [listed, debugHistory] = await Promise.all([
+      localRequest(origin, '/better-agent/api/product/flows', {
+        headers: { Cookie: cookie },
+      }),
+      localRequest(origin, `/better-agent/api/product/flows/${flow.id}/debug-runs`, {
+        headers: { Cookie: cookie },
+      }),
+    ]);
+    expect(listed.status).toBe(200);
+    expect(((await listed.json()) as { flows: ProductFlowDraft[] }).flows).toHaveLength(1);
+    expect(debugHistory.status).toBe(200);
+    expect(
+      ((await debugHistory.json()) as { debug_runs: ProductFlowDebugRun[] }).debug_runs,
+    ).toHaveLength(1);
+
+    const malformedDebug = await localRequest(
+      origin,
+      `/better-agent/api/product/flows/${flow.id}/debug`,
+      { body: 'null', headers, method: 'POST' },
+    );
+    expect(malformedDebug.status).toBe(400);
+    expect(await malformedDebug.json()).toEqual({ error: 'invalid_flow_debug_payload' });
   });
 
   it('requires the product CSRF header before authenticating mutation routes', async () => {

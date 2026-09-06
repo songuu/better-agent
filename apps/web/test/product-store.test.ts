@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { validateAgentInput, validateRunInput } from '../src/product-store.js';
+import {
+  validateAgentInput,
+  validateFlowDebugInput,
+  validateFlowDraftInput,
+  validateFlowEnvironment,
+  validateRunInput,
+} from '../src/product-store.js';
 
 describe('product Agent input', () => {
   it('accepts and freezes the closed product draft payload', () => {
@@ -44,5 +50,45 @@ describe('product Run input', () => {
     [{ extra: true, message: 'hello' }],
   ])('rejects malformed, empty, oversized or open input', (input) => {
     expect(() => validateRunInput(input)).toThrow();
+  });
+});
+
+describe('product Flow input', () => {
+  const graph = {
+    edges: [
+      { id: 'input_prompt', source: 'input', target: 'prompt' },
+      { id: 'prompt_output', source: 'prompt', target: 'output' },
+    ],
+    nodes: [
+      { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+      {
+        config: { template: '处理 {{message}}' },
+        id: 'prompt',
+        label: '模板',
+        type: 'template',
+      },
+      { config: { source: 'prompt' }, id: 'output', label: '输出', type: 'output' },
+    ],
+  };
+
+  it('accepts a closed bounded Flow draft and debug request', () => {
+    expect(
+      validateFlowDraftInput({ description: '串联输入与模板', graph, name: '快速处理' }),
+    ).toMatchObject({ description: '串联输入与模板', name: '快速处理' });
+    expect(validateFlowDebugInput({ input: '  验证映射  ' })).toBe('验证映射');
+    expect(validateFlowEnvironment('production')).toBe('production');
+  });
+
+  it.each([
+    [{ description: '', graph, name: '' }],
+    [{ description: '', extra: true, graph, name: 'Flow' }],
+    [{ description: '', graph: { edges: [], nodes: [] }, name: 'Flow' }],
+  ])('rejects malformed Flow drafts', (input) => {
+    expect(() => validateFlowDraftInput(input)).toThrow();
+  });
+
+  it('rejects open debug input and unknown deployment environments', () => {
+    expect(() => validateFlowDebugInput({ input: 'ok', extra: true })).toThrow();
+    expect(() => validateFlowEnvironment('preview')).toThrow('unsupported');
   });
 });

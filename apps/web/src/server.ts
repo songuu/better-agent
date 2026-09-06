@@ -8,6 +8,9 @@ import {
   createPostgresProductStore,
   type ProductStore,
   validateAgentInput,
+  validateFlowDebugInput,
+  validateFlowDraftInput,
+  validateFlowEnvironment,
   validateRunInput,
 } from './product-store.js';
 import { createModelRuntimeFromEnvironment, type ProductModelRuntime } from './model-runtime.js';
@@ -269,6 +272,102 @@ export async function createBetterAgentWebServer(
       sendJson(request, response, 201, { agent });
       return true;
     }
+    if (path === `${WEB_BASE_PATH}api/product/flows` && request.method === 'GET') {
+      sendJson(request, response, 200, { flows: await productStore.listFlows(workspaceId) });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/flows` && request.method === 'POST') {
+      const flow = await productStore.createFlow(
+        workspaceId,
+        actorId,
+        validateFlowDraftInput(await readJsonBody(request)),
+      );
+      sendJson(request, response, 201, { flow });
+      return true;
+    }
+    const flowMatch = new RegExp(
+      `^${WEB_BASE_PATH}api/product/flows/([0-9a-f-]{36})(/debug|/debug-runs|/publish)?$`,
+      'u',
+    ).exec(path);
+    if (flowMatch !== null && UUID.test(flowMatch[1] ?? '')) {
+      const flowId = flowMatch[1] as string;
+      if (flowMatch[2] === '/debug-runs' && request.method === 'GET') {
+        sendJson(request, response, 200, {
+          debug_runs: await productStore.listFlowDebugRuns(workspaceId, flowId),
+        });
+        return true;
+      }
+      if (flowMatch[2] === '/debug' && request.method === 'POST') {
+        const value = await readJsonBody(request);
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+          throw new Error('invalid_flow_debug_payload');
+        }
+        const payload = value as Record<string, unknown>;
+        if (
+          Object.keys(payload).length !== 2 ||
+          !Object.hasOwn(payload, 'expected_revision') ||
+          !Object.hasOwn(payload, 'input')
+        ) {
+          throw new Error('invalid_flow_debug_payload');
+        }
+        const expectedRevision = payload.expected_revision;
+        if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) {
+          throw new Error('invalid_expected_revision');
+        }
+        const debug = await productStore.debugFlow(
+          workspaceId,
+          actorId,
+          flowId,
+          Number(expectedRevision),
+          validateFlowDebugInput({ input: payload.input }),
+        );
+        sendJson(request, response, 201, { debug });
+        return true;
+      }
+      if (flowMatch[2] === '/publish' && request.method === 'POST') {
+        const value = await readJsonBody(request);
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+          throw new Error('invalid_flow_publish_payload');
+        }
+        const payload = value as Record<string, unknown>;
+        if (
+          Object.keys(payload).length !== 2 ||
+          !Object.hasOwn(payload, 'expected_revision') ||
+          !Object.hasOwn(payload, 'environment')
+        ) {
+          throw new Error('invalid_flow_publish_payload');
+        }
+        const expectedRevision = payload.expected_revision;
+        if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) {
+          throw new Error('invalid_expected_revision');
+        }
+        const flow = await productStore.publishFlow(
+          workspaceId,
+          actorId,
+          flowId,
+          Number(expectedRevision),
+          validateFlowEnvironment(payload.environment),
+        );
+        sendJson(request, response, 200, { flow });
+        return true;
+      }
+      if (flowMatch[2] === undefined && request.method === 'PUT') {
+        const payload = (await readJsonBody(request)) as Record<string, unknown>;
+        const expectedRevision = payload.expected_revision;
+        if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) {
+          throw new Error('invalid_expected_revision');
+        }
+        const { expected_revision: _, ...flowPayload } = payload;
+        const flow = await productStore.updateFlow(
+          workspaceId,
+          flowId,
+          Number(expectedRevision),
+          validateFlowDraftInput(flowPayload),
+        );
+        sendJson(request, response, 200, { flow });
+        return true;
+      }
+    }
     if (path === `${WEB_BASE_PATH}api/product/runs` && request.method === 'GET') {
       sendJson(request, response, 200, { runs: await productStore.listRuns(workspaceId) });
       return true;
@@ -395,7 +494,8 @@ export async function createBetterAgentWebServer(
                   ? 502
                   : message.startsWith('invalid_') ||
                       message.includes('payload') ||
-                      message.includes('request_body')
+                      message.includes('request_body') ||
+                      /^(Agent|Flow|Input|Output|Run|Template) /u.test(message)
                     ? 400
                     : 500;
           sendJson(request, response, status, {

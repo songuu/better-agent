@@ -16,6 +16,7 @@
     "g1-vertical-agent",
     "run-billing",
     "run-conversation-browser",
+    "product-flow-studio",
     "runtime-security"
   ],
   "openapi": {
@@ -79,7 +80,9 @@
     "020_product_agent_studio.down.sql",
     "020_product_agent_studio.up.sql",
     "021_product_agent_runtime.down.sql",
-    "021_product_agent_runtime.up.sql"
+    "021_product_agent_runtime.up.sql",
+    "022_product_flow_studio.down.sql",
+    "022_product_flow_studio.up.sql"
   ],
   "postgresSuites": [
     {
@@ -188,6 +191,13 @@
       "successMarker": "architecture-gate-suite/1 run-conversation-browser pass"
     },
     {
+      "id": "product-flow-studio",
+      "file": "infra/test/postgres/run-product-flow-studio-integration.mjs",
+      "sha256": "0e7921407f5e5a830e58090b8496fc93d778a36a0206882e0c7a99879ed1e549",
+      "mode": "real",
+      "successMarker": "architecture-gate-suite/1 product-flow-studio pass"
+    },
+    {
       "id": "runtime-security",
       "file": "infra/test/postgres/run-runtime-security-integration.mjs",
       "sha256": "a7853d2633d27aeed25ef9e4c58d43300bbdefd88e0d2eb81c1e3aac3655e5f1",
@@ -267,8 +277,8 @@
     {
       "packageName": "@better-agent/db",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 156,
-      "successMarker": "@better-agent/db:test:       Tests  156 passed (156)"
+      "testCount": 160,
+      "successMarker": "@better-agent/db:test:       Tests  160 passed (160)"
     },
     {
       "packageName": "@better-agent/domain-contracts",
@@ -309,8 +319,8 @@
     {
       "packageName": "@better-agent/web",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 38,
-      "successMarker": "@better-agent/web:test:       Tests  38 passed (38)"
+      "testCount": 48,
+      "successMarker": "@better-agent/web:test:       Tests  48 passed (48)"
     }
   ],
   "scripts": {
@@ -318,7 +328,7 @@
     "rootArchitectureGateTest": "node --test tests/architecture-gate/architecture-gate.test.mjs",
     "rootCheck": "pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build",
     "rootPostgres16": "pnpm --filter @better-agent/db test:integration",
-    "dbIntegration": "pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs"
+    "dbIntegration": "pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-product-flow-studio-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs"
   },
   "gates": [
     {
@@ -343,14 +353,14 @@
         "@better-agent/auth:test:       Tests  54 passed (54)",
         "@better-agent/billing-core:test:       Tests  43 passed (43)",
         "@better-agent/database-capability:test:       Tests  8 passed (8)",
-        "@better-agent/db:test:       Tests  156 passed (156)",
+        "@better-agent/db:test:       Tests  160 passed (160)",
         "@better-agent/domain-contracts:test:       Tests  193 passed (193)",
         "@better-agent/instruction-skill:test:       Tests  8 passed (8)",
         "@better-agent/knowledge-core:test:       Tests  7 passed (7)",
         "@better-agent/release-core:test:       Tests  1118 passed (1118)",
         "@better-agent/run-core:test:       Tests  146 passed (146)",
         "@better-agent/test-support:test:       Tests  23 passed (23)",
-        "@better-agent/web:test:       Tests  38 passed (38)"
+        "@better-agent/web:test:       Tests  48 passed (48)"
       ],
       "forbidSkippedOutput": true,
       "timeoutMs": 300000
@@ -376,6 +386,7 @@
         "architecture-gate-suite/1 g1-vertical-agent pass",
         "architecture-gate-suite/1 run-billing pass",
         "architecture-gate-suite/1 run-conversation-browser pass",
+        "architecture-gate-suite/1 product-flow-studio pass",
         "architecture-gate-suite/1 runtime-security pass"
       ],
       "forbidSkippedOutput": true,

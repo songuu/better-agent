@@ -17,8 +17,8 @@
         </a>
         <p class="rail-caption">CONTROL PLANE · CN01</p>
         <nav class="studio-nav" aria-label="产品导航">
-          <button type="button" class="is-active"><span>01</span>Agent Studio</button>
-          <button type="button" disabled><span>02</span>Flow 编排</button>
+          <button type="button" id="show-agents" class="is-active"><span>01</span>Agent Studio</button>
+          <button type="button" id="show-flows"><span>02</span>Flow 编排</button>
           <button type="button" disabled><span>03</span>知识与数据</button>
           <button type="button" id="show-runs"><span>04</span>运行记录</button>
           <button type="button" disabled><span>05</span>发布与评测</button>
@@ -28,11 +28,11 @@
 
       <main class="studio-main">
         <header class="studio-topbar">
-          <div><p>独立工作区 / AGENTS</p><h1>Agent Studio</h1></div>
-          <div class="top-actions"><span id="build-label">BUILD · PENDING</span><button type="button" id="new-agent" class="button button-primary">＋ 新建 Agent</button></div>
+          <div><p id="workspace-path">独立工作区 / AGENTS</p><h1 id="studio-title">Agent Studio</h1></div>
+          <div class="top-actions"><span id="build-label">BUILD · PENDING</span><button type="button" id="new-agent" class="button button-primary">＋ 新建 Agent</button><button type="button" id="new-flow" class="button button-primary" hidden>＋ 新建 Flow</button></div>
         </header>
 
-        <section class="studio-grid">
+        <section id="agent-view" class="studio-grid">
           <aside class="agent-catalog" aria-label="Agent 列表">
             <div class="catalog-head"><span>AGENTS</span><b id="agent-count">00</b></div>
             <div id="agent-list" class="agent-list"><p class="empty-note">登录后加载工作区 Agent。</p></div>
@@ -63,6 +63,44 @@
             <div class="signal-orbit"><span>BA</span><i></i><i></i></div>
             <dl><div><dt>持久化</dt><dd id="persistence-state">等待登录</dd></div><div><dt>版本策略</dt><dd>不可变 Release</dd></div><div><dt>权限</dt><dd>只收窄</dd></div></dl>
             <div id="activity" class="activity"><span></span><p>等待操作</p></div>
+          </aside>
+        </section>
+
+        <section id="flow-view" class="flow-studio" hidden>
+          <aside class="flow-catalog" aria-label="Flow 列表">
+            <div class="catalog-head"><span>FLOWS</span><b id="flow-count">00</b></div>
+            <div id="flow-list" class="flow-list"><p class="empty-note">还没有 Flow。创建一个开始。</p></div>
+          </aside>
+
+          <section class="flow-workbench">
+            <div id="flow-welcome" class="welcome-panel">
+              <p class="eyebrow">ORCHESTRATE DETERMINISTIC WORK</p>
+              <h2>连接变量，<br />观察每一步。</h2>
+              <p>从输入、模板处理到输出，建立可调试 Flow Draft，再发布到独立环境。每次调试都生成持久化节点日志。</p>
+              <button type="button" class="button button-primary" data-create-flow>创建第一个 Flow</button>
+            </div>
+            <form id="flow-form" class="flow-form" hidden>
+              <header><div><p id="flow-kicker">DRAFT · NEW</p><h2 id="flow-editor-title">未命名 Flow</h2></div><span id="flow-save-state">尚未保存</span></header>
+              <div class="form-grid">
+                <label><span>名称</span><input name="name" maxlength="80" required placeholder="例如：输入整理管线" /></label>
+                <label><span>说明</span><input name="description" maxlength="500" placeholder="这个 Flow 完成什么？" /></label>
+              </div>
+              <fieldset class="flow-canvas"><legend>Flow 节点画布</legend>
+                <div class="flow-wire wire-one"></div><div class="flow-wire wire-two"></div>
+                <article class="flow-node node-input"><small>INPUT</small><b>消息输入</b><code>message</code></article>
+                <article class="flow-node node-template"><small>TRANSFORM</small><b>模板映射</b><label><span>TEMPLATE</span><textarea name="template" maxlength="8000" required>已处理：{{message}}</textarea></label></article>
+                <article class="flow-node node-output"><small>OUTPUT</small><b>结果输出</b><code>prompt → output</code></article>
+              </fieldset>
+              <footer><button type="button" id="debug-flow" class="button button-ghost" disabled>调试 Flow</button><label class="environment-field"><span>部署环境</span><select id="flow-environment"><option value="development">Development</option><option value="staging">Staging</option><option value="production">Production</option></select></label><button type="button" id="publish-flow" class="button button-ghost" disabled>发布并部署</button><button type="submit" class="button button-primary">保存 Draft</button></footer>
+            </form>
+          </section>
+
+          <aside class="flow-inspector">
+            <p>DEBUG CONSOLE</p>
+            <label><span>调试输入</span><textarea id="flow-debug-input" maxlength="8000" placeholder="输入一段文本，观察变量如何经过每个节点。"></textarea></label>
+            <div id="flow-debug-output" class="flow-debug-output"><span>等待调试</span></div>
+            <ol id="flow-debug-logs" class="flow-debug-logs"><li>保存 Flow 后可运行调试。</li></ol>
+            <div id="flow-deployments" class="flow-deployments"><span>尚未部署环境</span></div>
           </aside>
         </section>
       </main>

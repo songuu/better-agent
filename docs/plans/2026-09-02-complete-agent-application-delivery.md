@@ -49,6 +49,6 @@ tags: [plan, product, agent, frontend, backend, deployment]
 
 ## 当前事实
 
-截至 2026-09-05，独立 Web/Studio、同源认证 API、Agent Draft/不可变 Product Release、PostgreSQL 持久化和首页路由已部署到 `songuu.top`。迁移 021 继续补齐 Release 绑定的 Conversation、顺序 Run、模型 Responses 适配器、失败终态、token 用量和 Run Console；本地真实 PostgreSQL 与浏览器纵向链已通过。生产模型执行仍须由独立 `BETTER_AGENT_MODEL_API_KEY` Secret 激活，禁止借用相邻项目凭据或用模拟响应冒充生产模型完成。
+截至 2026-09-05，独立 Web/Studio、同源认证 API、Agent Draft/不可变 Product Release、PostgreSQL 持久化和首页路由已部署到 `songuu.top`。迁移 021 补齐 Release 绑定的 Conversation、顺序 Run、模型 Responses 适配器、失败终态、token 用量和 Run Console。迁移 022 继续交付 Flow Studio 首个纵向闭环：Input/Template/Output 有向无环图、变量映射、调试日志、Draft revision CAS、不可变 Release 以及 development/staging/production 环境发布；UI、API、PostgreSQL RLS/ACL 和一次性 PostgreSQL 16 集成验证绑定在同一架构门禁中。生产模型执行仍须由独立 `BETTER_AGENT_MODEL_API_KEY` Secret 激活，禁止借用相邻项目凭据或用模拟响应冒充生产模型完成。
 
-尚未完成的产品面包括 Flow Studio、知识摄取与检索、Plugin/MCP/Skill Pack/SubAgent 编排、异步任务、Deployment/API/Webhook、成员权限以及完整运营治理。现有 G1 内核和门禁是这些能力的安全基础，不能替代最终产品验收。
+Flow Studio 仍需扩展代码/API/逻辑/插件等节点、历史版本回滚和 Agent 组合能力。尚未完成的产品面包括知识摄取与检索、Database Operation、Plugin/MCP/Skill Pack/SubAgent 编排、异步任务、Deployment/API/Webhook、成员权限以及完整运营治理。现有 G1 内核和门禁是这些能力的安全基础，不能替代最终产品验收。

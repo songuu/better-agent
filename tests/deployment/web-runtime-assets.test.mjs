@@ -22,6 +22,10 @@ const publicHtml = readFileSync(
   new URL('../../apps/web/public/index.html', import.meta.url),
   'utf8',
 );
+const publicJavaScript = readFileSync(
+  new URL('../../apps/web/public/assets/app.js', import.meta.url),
+  'utf8',
+);
 const webCurrentSymlinkGuard = ['[[ -L "', '$', '{WEB_CURRENT}', '" ]]'].join('');
 const publicPageMarker = '<title>Better Agent · Studio</title>';
 const modelConfigurator = readFileSync(
@@ -98,6 +102,21 @@ test('verifies the deployed page with a marker owned by the public HTML', () => 
   assert.ok(publicHtml.includes(publicPageMarker));
   assert.ok(deploymentWorkflow.includes(`grep -Fq '${publicPageMarker}'`));
   assert.doesNotMatch(deploymentWorkflow, /BETTER AGENT \/ STUDIO/u);
+});
+
+test('ships the Flow editor, environment deployment and durable debug controls', () => {
+  for (const marker of [
+    'id="show-flows"',
+    'id="flow-form"',
+    'id="flow-debug-logs"',
+    'id="flow-environment"',
+  ]) {
+    assert.ok(publicHtml.includes(marker), `missing Flow Studio control: ${marker}`);
+  }
+  for (const route of ['/flows', '/debug', '/publish']) {
+    assert.ok(publicJavaScript.includes(route), `missing Flow Studio API route: ${route}`);
+  }
+  assert.doesNotMatch(publicJavaScript, /localStorage|sessionStorage/u);
 });
 
 test('packages the PostgreSQL client dependency required by the product runtime', () => {
