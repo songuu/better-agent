@@ -13,6 +13,11 @@
   --display: "Bahnschrift Condensed", "Arial Narrow", "Microsoft YaHei", sans-serif;
 }
 
+/* Product views are grid layouts; preserve the hidden attribute during navigation. */
+[hidden] {
+  display: none !important;
+}
+
 /* Product Studio — dense industrial control plane. */
 .studio-shell {
   min-height: 100vh;

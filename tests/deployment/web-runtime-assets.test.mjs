@@ -26,6 +26,10 @@ const publicJavaScript = readFileSync(
   new URL('../../apps/web/public/assets/app.js', import.meta.url),
   'utf8',
 );
+const publicCss = readFileSync(
+  new URL('../../apps/web/public/assets/app.css', import.meta.url),
+  'utf8',
+);
 const webCurrentSymlinkGuard = ['[[ -L "', '$', '{WEB_CURRENT}', '" ]]'].join('');
 const publicPageMarker = '<title>Better Agent · Studio</title>';
 const modelConfigurator = readFileSync(
@@ -133,6 +137,7 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
     assert.ok(publicJavaScript.includes(route), `missing Knowledge Center API route: ${route}`);
   }
   assert.doesNotMatch(publicJavaScript, /localStorage|sessionStorage/u);
+  assert.match(publicCss, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/u);
 });
 
 test('packages the PostgreSQL client dependency required by the product runtime', () => {
