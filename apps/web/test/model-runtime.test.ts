@@ -80,6 +80,65 @@ describe('OpenAI-compatible product model runtime', () => {
     ).resolves.toMatchObject({ model: 'gpt-5.6-sol', inputTokens: 12, outputTokens: 5 });
   });
 
+  it('extracts only closed bounded capability parameters from strict provider JSON', async () => {
+    const runtime = new OpenAiResponsesRuntime({
+      apiKey: 'test-secret',
+      baseUrl: 'https://models.example.test/v1',
+      fetchImplementation: async () =>
+        new Response(
+          JSON.stringify({
+            id: 'resp_parameters',
+            output_text: JSON.stringify({
+              database_contains: 'healthy',
+              knowledge_query: '生产健康检查',
+            }),
+            usage: { input_tokens: 18, output_tokens: 9 },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    await expect(
+      runtime.extractParameters({
+        maxOutputTokens: 128,
+        model: 'gpt-5.6-sol',
+        prompt: '请判断生产服务是否健康',
+      }),
+    ).resolves.toEqual({
+      databaseContains: 'healthy',
+      inputTokens: 18,
+      knowledgeQuery: '生产健康检查',
+      outputText: '{"database_contains":"healthy","knowledge_query":"生产健康检查"}',
+      outputTokens: 9,
+      providerRequestId: 'resp_parameters',
+    });
+  });
+
+  it.each([
+    { database_contains: 'healthy' },
+    { database_contains: 'healthy', extra: true, knowledge_query: 'health' },
+    { database_contains: 'x'.repeat(501), knowledge_query: 'health' },
+    { database_contains: '', knowledge_query: '' },
+  ])('rejects open, incomplete or unbounded extracted parameters', async (parameters) => {
+    const runtime = new OpenAiResponsesRuntime({
+      apiKey: 'test-secret',
+      baseUrl: 'https://models.example.test/v1',
+      fetchImplementation: async () =>
+        new Response(
+          JSON.stringify({
+            id: 'resp_parameters',
+            output_text: JSON.stringify(parameters),
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    await expect(
+      runtime.extractParameters({ maxOutputTokens: 128, model: 'gpt-5.5', prompt: 'extract' }),
+    ).rejects.toThrow('model_parameter_extraction_invalid_output');
+  });
+
   it('fails with bounded context without reflecting provider bodies or credentials', async () => {
     const runtime = new OpenAiResponsesRuntime({
       apiKey: 'never-reflect-this',

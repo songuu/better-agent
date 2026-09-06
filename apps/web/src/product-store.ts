@@ -343,6 +343,18 @@ export interface ProductStore {
       readonly providerRequestId: string;
     },
   ): Promise<void>;
+  recordRunParameters?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    extraction: {
+      readonly databaseContains: string;
+      readonly inputTokens: number;
+      readonly knowledgeQuery: string;
+      readonly outputTokens: number;
+      readonly providerRequestId: string;
+    },
+  ): Promise<void>;
   searchAgentKnowledge(
     workspaceId: string,
     conversationId: string,
@@ -1392,6 +1404,35 @@ export class PostgresProductStore implements ProductStore {
         route.providerRequestId,
         route.inputTokens,
         route.outputTokens,
+      ],
+    );
+  }
+
+  async recordRunParameters(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    extraction: {
+      readonly databaseContains: string;
+      readonly inputTokens: number;
+      readonly knowledgeQuery: string;
+      readonly outputTokens: number;
+      readonly providerRequestId: string;
+    },
+  ): Promise<void> {
+    await this.#pool.query(
+      'SELECT app.record_agent_product_run_parameters($1::uuid, $2::uuid, $3::uuid, $4::jsonb, $5::text, $6::bigint, $7::bigint)',
+      [
+        workspaceId,
+        runId,
+        actorId,
+        JSON.stringify({
+          database_contains: extraction.databaseContains,
+          knowledge_query: extraction.knowledgeQuery,
+        }),
+        extraction.providerRequestId,
+        extraction.inputTokens,
+        extraction.outputTokens,
       ],
     );
   }

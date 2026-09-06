@@ -1098,6 +1098,11 @@ describe('Better Agent web runtime', () => {
       ordinal: 0,
       record: { service: 'web', status: 'healthy' },
     });
+    databaseRows.push({
+      createdAt: '2026-09-03T00:00:00.000Z',
+      ordinal: 1,
+      record: { service: 'worker', status: 'paused' },
+    });
     knowledgeBases.push({
       createdAt: '2026-09-03T00:00:00.000Z',
       description: '生产运行手册',
@@ -1133,24 +1138,27 @@ describe('Better Agent web runtime', () => {
           { description: '复杂诊断', model: 'gpt-5.6-sol' },
         ],
         routingMode: 'autonomous',
+        parameterExtraction: true,
       },
       strategyVersion: 1,
       updatedAt: '2026-09-03T00:00:00.000Z',
     });
     let providerFails = false;
+    const extractedQueries: string[] = [];
+    const persistedParameters: unknown[] = [];
+    const generationInputs: Parameters<ProductModelRuntime['generate']>[0][] = [];
+    const originalSearchAgentKnowledge = store.searchAgentKnowledge.bind(store);
+    store.searchAgentKnowledge = async (workspaceId, conversationId, query) => {
+      extractedQueries.push(query);
+      return await originalSearchAgentKnowledge(workspaceId, conversationId, query);
+    };
+    store.recordRunParameters = async (_workspaceId, _actorId, _runId, extraction) => {
+      persistedParameters.push(extraction);
+    };
     const modelRuntime: ProductModelRuntime = {
       async generate(input) {
         if (providerFails) throw new Error('model_provider_http_503');
-        expect(input.prompt).toBe('当前服务正常吗？');
-        expect(input.instructions).toContain('只回答已核验事实。');
-        expect(input.instructions).toContain('KNOWLEDGE_CONTEXT');
-        expect(input.instructions).toContain('服务健康检查使用 /healthz。');
-        expect(input.instructions).toContain('DATABASE_CONTEXT');
-        expect(input.instructions).toContain('service_status');
-        expect(input.instructions).toContain('healthy');
-        expect(input.model).toBe('gpt-5.4-mini');
-        expect(input.maxOutputTokens).toBe(2_000);
-        expect(input.temperature).toBe(0.2);
+        generationInputs.push(input);
         return {
           inputTokens: 12,
           outputText: '当前服务正常。',
@@ -1165,6 +1173,17 @@ describe('Better Agent web runtime', () => {
           outputText: '{"model":"gpt-5.4-mini"}',
           outputTokens: 2,
           providerRequestId: 'resp_route',
+        };
+      },
+      async extractParameters(input) {
+        expect(input.maxOutputTokens).toBe(1_998);
+        return {
+          databaseContains: 'healthy',
+          inputTokens: 6,
+          knowledgeQuery: '生产健康检查',
+          outputText: '{"database_contains":"healthy","knowledge_query":"生产健康检查"}',
+          outputTokens: 3,
+          providerRequestId: 'resp_parameters',
         };
       },
     };
@@ -1206,12 +1225,28 @@ describe('Better Agent web runtime', () => {
         method: 'POST',
       },
     );
-    expect(runResponse.status).toBe(201);
+    expect(runResponse.status, JSON.stringify(await runResponse.clone().json())).toBe(201);
     expect(((await runResponse.json()) as { run: ProductRun }).run).toMatchObject({
       inputText: '当前服务正常吗？',
       outputText: '当前服务正常。',
       status: 'completed',
     });
+    expect(extractedQueries).toEqual(['生产健康检查']);
+    expect(persistedParameters).toHaveLength(1);
+    expect(generationInputs).toHaveLength(1);
+    expect(generationInputs[0]).toMatchObject({
+      maxOutputTokens: 1_995,
+      model: 'gpt-5.4-mini',
+      prompt: '当前服务正常吗？',
+      temperature: 0.2,
+    });
+    expect(generationInputs[0]?.instructions).toContain('只回答已核验事实。');
+    expect(generationInputs[0]?.instructions).toContain('KNOWLEDGE_CONTEXT');
+    expect(generationInputs[0]?.instructions).toContain('服务健康检查使用 /healthz。');
+    expect(generationInputs[0]?.instructions).toContain('DATABASE_CONTEXT');
+    expect(generationInputs[0]?.instructions).toContain('service_status');
+    expect(generationInputs[0]?.instructions).toContain('healthy');
+    expect(generationInputs[0]?.instructions).not.toContain('paused');
 
     providerFails = true;
     const failedResponse = await localRequest(

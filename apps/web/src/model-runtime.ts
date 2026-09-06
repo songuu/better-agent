@@ -21,7 +21,17 @@ export interface ModelGenerationResult {
   readonly providerRequestId: string;
 }
 
+export interface ProductAgentExtractedParameters {
+  readonly databaseContains: string;
+  readonly knowledgeQuery: string;
+}
+
 export interface ProductModelRuntime {
+  extractParameters?(input: {
+    readonly maxOutputTokens: number;
+    readonly model: ProductModel;
+    readonly prompt: string;
+  }): Promise<ModelGenerationResult & ProductAgentExtractedParameters>;
   generate(input: ModelGenerationInput): Promise<ModelGenerationResult>;
   selectModel?(input: {
     readonly defaultModel: ProductModel;
@@ -175,6 +185,55 @@ export class OpenAiResponsesRuntime implements ProductModelRuntime {
       outputTokens: boundedInteger(usage.output_tokens),
       providerRequestId,
     });
+  }
+
+  async extractParameters(input: {
+    readonly maxOutputTokens: number;
+    readonly model: ProductModel;
+    readonly prompt: string;
+  }): Promise<ModelGenerationResult & ProductAgentExtractedParameters> {
+    const result = await this.generate({
+      history: [],
+      instructions: [
+        '你是 Agent 能力参数抽取器。只输出一个 JSON 对象，且只能包含以下两个字段：',
+        'knowledge_query：用于知识检索的非空字符串，1–500 字符。',
+        'database_contains：用于收窄数据库快照记录的字符串，0–500 字符；无需过滤时输出空字符串。',
+        '不得输出 Markdown、解释或其他字段。',
+      ].join('\n'),
+      maxOutputTokens: Math.min(256, input.maxOutputTokens),
+      model: input.model,
+      prompt: input.prompt,
+      temperature: 0,
+    });
+    try {
+      const parsed: unknown = JSON.parse(result.outputText);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('invalid');
+      }
+      const record = parsed as Record<string, unknown>;
+      const keys = Object.keys(record).sort();
+      if (
+        keys.length !== 2 ||
+        keys[0] !== 'database_contains' ||
+        keys[1] !== 'knowledge_query' ||
+        typeof record.database_contains !== 'string' ||
+        typeof record.knowledge_query !== 'string'
+      ) {
+        throw new Error('invalid');
+      }
+      const databaseContains = record.database_contains.trim();
+      const knowledgeQuery = record.knowledge_query.trim();
+      if (
+        databaseContains.length > 500 ||
+        knowledgeQuery.length < 1 ||
+        knowledgeQuery.length > 500
+      ) {
+        throw new Error('invalid');
+      }
+      return Object.freeze({ ...result, databaseContains, knowledgeQuery });
+    } catch (error) {
+      throw new Error('model_parameter_extraction_invalid_output', { cause: error });
+    }
   }
 
   async selectModel(input: {

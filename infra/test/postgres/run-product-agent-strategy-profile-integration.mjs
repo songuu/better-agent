@@ -103,7 +103,48 @@ async function main() {
   );
   await harness.psql(
     'ba_runtime_test',
+    `SELECT app.record_agent_product_run_parameters('${workspaceId}','${runV1}','${actorId}',
+      '{"database_contains":"healthy","knowledge_query":"production health"}'::jsonb,
+      'resp-parameters-1',30,5);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT extracted_parameters->>'knowledge_query'||':'||parameter_provider_request_id||':'||parameter_input_tokens||':'||parameter_output_tokens
+       FROM app.list_agent_product_runs('${workspaceId}') WHERE id='${runV1}';`,
+    ),
+    'production health:resp-parameters-1:30:5',
+    'parameter extraction evidence',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.record_agent_product_run_parameters('${workspaceId}','${runV1}','${actorId}',
+        '{"database_contains":"changed","knowledge_query":"changed"}'::jsonb,
+        'resp-parameters-replay',1,1);`,
+      { allowFailure: true },
+    ),
+    /parameter extraction conflict|40001/u,
+    'parameter extraction replay',
+  );
+  await harness.psql(
+    'ba_runtime_test',
     `SELECT app.complete_agent_product_run('${workspaceId}','${runV1}','${actorId}','done','resp-1',100,80);`,
+  );
+  const fixedRun = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT run_id FROM app.begin_agent_product_run('${workspaceId}','${conversationV2}','${actorId}','no extraction');`,
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.record_agent_product_run_parameters('${workspaceId}','${fixedRun}','${actorId}',
+        '{"database_contains":"","knowledge_query":"no extraction"}'::jsonb,
+        'resp-parameters-denied',1,1);`,
+      { allowFailure: true },
+    ),
+    /parameter extraction conflict|40001/u,
+    'disabled parameter extraction',
   );
   assertRejected(
     await harness.psql(
@@ -131,7 +172,7 @@ async function main() {
     'immutable strategy release',
   );
   process.stdout.write(
-    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed profiles, versioned drafts, immutable releases, conversation pinning, autonomous route allowlist and token budgets.\n`,
+    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed profiles, versioned drafts, immutable releases, conversation pinning, autonomous route allowlist, audited parameter extraction and aggregate token budgets.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-agent-strategy-profile pass\n');
 }

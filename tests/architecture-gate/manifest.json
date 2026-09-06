@@ -103,7 +103,9 @@
     "028_product_agent_role_profile.down.sql",
     "028_product_agent_role_profile.up.sql",
     "029_product_agent_strategy_profile.down.sql",
-    "029_product_agent_strategy_profile.up.sql"
+    "029_product_agent_strategy_profile.up.sql",
+    "030_product_agent_parameter_extraction.down.sql",
+    "030_product_agent_parameter_extraction.up.sql"
   ],
   "postgresSuites": [
     {
@@ -263,7 +265,7 @@
     {
       "id": "product-agent-strategy-profile",
       "file": "infra/test/postgres/run-product-agent-strategy-profile-integration.mjs",
-      "sha256": "5db843fa7888705b71b92a1075ec4993ecc24eb2dcf9148088afbed7b292703f",
+      "sha256": "7300852cfb824a12e11305db13cbe7dcd5c998aeb97654170c02050c3f415640",
       "mode": "real",
       "successMarker": "architecture-gate-suite/1 product-agent-strategy-profile pass"
     },
@@ -347,8 +349,8 @@
     {
       "packageName": "@better-agent/db",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 180,
-      "successMarker": "@better-agent/db:test:       Tests  180 passed (180)"
+      "testCount": 182,
+      "successMarker": "@better-agent/db:test:       Tests  182 passed (182)"
     },
     {
       "packageName": "@better-agent/domain-contracts",
@@ -389,8 +391,8 @@
     {
       "packageName": "@better-agent/web",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 91,
-      "successMarker": "@better-agent/web:test:       Tests  91 passed (91)"
+      "testCount": 96,
+      "successMarker": "@better-agent/web:test:       Tests  96 passed (96)"
     }
   ],
   "scripts": {
@@ -423,14 +425,14 @@
         "@better-agent/auth:test:       Tests  54 passed (54)",
         "@better-agent/billing-core:test:       Tests  43 passed (43)",
         "@better-agent/database-capability:test:       Tests  8 passed (8)",
-        "@better-agent/db:test:       Tests  180 passed (180)",
+        "@better-agent/db:test:       Tests  182 passed (182)",
         "@better-agent/domain-contracts:test:       Tests  193 passed (193)",
         "@better-agent/instruction-skill:test:       Tests  8 passed (8)",
         "@better-agent/knowledge-core:test:       Tests  7 passed (7)",
         "@better-agent/release-core:test:       Tests  1118 passed (1118)",
         "@better-agent/run-core:test:       Tests  146 passed (146)",
         "@better-agent/test-support:test:       Tests  23 passed (23)",
-        "@better-agent/web:test:       Tests  91 passed (91)"
+        "@better-agent/web:test:       Tests  96 passed (96)"
       ],
       "forbidSkippedOutput": true,
       "timeoutMs": 300000
