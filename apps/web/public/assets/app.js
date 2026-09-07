@@ -8,6 +8,8 @@ const state = {
   currentDatabase: null,
   databaseTables: [],
   flows: [],
+  flowReleases: [],
+  flowRollbacks: [],
   knowledgeBases: [],
   knowledgeDocuments: [],
   releaseTargets: [],
@@ -408,6 +410,52 @@ function renderFlowInspector(flow = state.currentFlow) {
     .join('');
 }
 
+function renderFlowHistory() {
+  const environment = byId('flow-environment').value;
+  const deployment = state.currentFlow?.deployments.find(
+    (item) => item.environment === environment,
+  );
+  byId('flow-release-history').innerHTML = state.flowReleases.length
+    ? state.flowReleases
+        .map(
+          (release) =>
+            `<article><span><b>V${release.version} · ${escapeHtml(release.name)}</b><small>${new Date(release.publishedAt).toLocaleString('zh-CN')}</small></span><button type="button" class="button button-ghost" data-rollback-version="${release.version}" ${!deployment || deployment.releaseVersion === release.version ? 'disabled' : ''}>恢复</button></article>`,
+        )
+        .join('')
+    : '<span>尚无已发布版本。</span>';
+  byId('flow-rollback-history').innerHTML = state.flowRollbacks.length
+    ? state.flowRollbacks
+        .map(
+          (receipt) =>
+            `<article><span><b>${escapeHtml(receipt.environment.toUpperCase())} · V${receipt.fromReleaseVersion} → V${receipt.targetReleaseVersion}</b><small>${escapeHtml(receipt.reason)} · ${new Date(receipt.rolledBackAt).toLocaleString('zh-CN')}</small></span></article>`,
+        )
+        .join('')
+    : '<span>暂无回滚记录。</span>';
+  byId('flow-release-history')
+    .querySelectorAll('[data-rollback-version]')
+    .forEach((button) => {
+      button.addEventListener('click', () => rollbackFlow(Number(button.dataset.rollbackVersion)));
+    });
+}
+
+async function loadFlowHistory(flow = state.currentFlow) {
+  if (!flow) {
+    state.flowReleases = [];
+    state.flowRollbacks = [];
+    renderFlowHistory();
+    return;
+  }
+  const flowId = flow.id;
+  const [releases, rollbacks] = await Promise.all([
+    request(`/flows/${flowId}/releases`),
+    request(`/flows/${flowId}/rollbacks`),
+  ]);
+  if (state.currentFlow?.id !== flowId) return;
+  state.flowReleases = releases.releases;
+  state.flowRollbacks = rollbacks.rollbacks;
+  renderFlowHistory();
+}
+
 function showFlowEditor(flow = null) {
   state.currentFlow = flow;
   byId('flow-welcome').hidden = true;
@@ -435,7 +483,39 @@ function showFlowEditor(flow = null) {
   byId('flow-debug-output').innerHTML = '<span>等待调试</span>';
   byId('flow-debug-logs').innerHTML = '<li>输入内容并运行调试。</li>';
   renderFlowInspector(flow);
+  state.flowReleases = [];
+  state.flowRollbacks = [];
+  renderFlowHistory();
+  if (flow) loadFlowHistory(flow).catch((error) => toast(error.message, true));
   renderFlows();
+}
+
+async function rollbackFlow(targetReleaseVersion) {
+  const flow = state.currentFlow;
+  if (!flow) return;
+  const environment = byId('flow-environment').value;
+  const deployment = flow.deployments.find((item) => item.environment === environment);
+  const reason = byId('flow-rollback-reason').value.trim();
+  if (!deployment) return toast('当前环境尚未部署', true);
+  if (!reason) return toast('请填写回滚原因', true);
+  try {
+    const payload = await request(`/flows/${flow.id}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({
+        environment,
+        expected_release_version: deployment.releaseVersion,
+        reason,
+        target_release_version: targetReleaseVersion,
+      }),
+    });
+    upsertFlow(payload.flow);
+    byId('flow-rollback-reason').value = '';
+    await loadFlowHistory(payload.flow);
+    toast(`已恢复 ${environment} 到 V${targetReleaseVersion}`);
+  } catch (error) {
+    toast(error.message, true);
+    await loadFlows();
+  }
 }
 
 function selectFlow(id) {
@@ -1038,6 +1118,8 @@ byId('publish-flow').addEventListener('click', async () => {
     toast(error.message, true);
   }
 });
+
+byId('flow-environment').addEventListener('change', renderFlowHistory);
 
 knowledgeBaseForm.addEventListener('submit', async (event) => {
   event.preventDefault();

@@ -25,6 +25,8 @@ import type {
   ProductDatabaseTable,
   ProductFlowDebugRun,
   ProductFlowDraft,
+  ProductFlowRelease,
+  ProductFlowRollback,
   ProductKnowledgeBase,
   ProductKnowledgeDocument,
   ProductKnowledgeHit,
@@ -231,6 +233,8 @@ function productFixture(): {
   const databaseTables: ProductDatabaseTable[] = [];
   const flows: ProductFlowDraft[] = [];
   const flowDebugRuns: ProductFlowDebugRun[] = [];
+  const flowReleases: ProductFlowRelease[] = [];
+  const flowRollbacks: ProductFlowRollback[] = [];
   const knowledgeBases: ProductKnowledgeBase[] = [];
   const knowledgeDocuments: ProductKnowledgeDocument[] = [];
   const runs: ProductRun[] = [];
@@ -365,6 +369,37 @@ function productFixture(): {
       flows[index] = flow;
       return flow;
     },
+    async rollbackFlow(_workspaceId, _actorId, flowId, input) {
+      const index = flows.findIndex((flow) => flow.id === flowId);
+      const current = flows[index];
+      const deployment = current?.deployments.find(
+        (item) => item.environment === input.environment,
+      );
+      if (current === undefined || deployment?.releaseVersion !== input.expectedReleaseVersion) {
+        throw new Error('Flow deployment rollback conflict');
+      }
+      if (!flowReleases.some((release) => release.version === input.targetReleaseVersion)) {
+        throw new Error('Flow rollback target release not found');
+      }
+      const flow: ProductFlowDraft = {
+        ...current,
+        deployments: current.deployments.map((item) =>
+          item.environment === input.environment
+            ? { ...item, deployedAt: timestamp, releaseVersion: input.targetReleaseVersion }
+            : item,
+        ),
+      };
+      flows[index] = flow;
+      flowRollbacks.unshift({
+        environment: input.environment,
+        fromReleaseVersion: input.expectedReleaseVersion,
+        id: `55555555-5555-4555-8555-${String(flowRollbacks.length + 1).padStart(12, '0')}`,
+        reason: input.reason,
+        rolledBackAt: timestamp,
+        targetReleaseVersion: input.targetReleaseVersion,
+      });
+      return flow;
+    },
     async publishFlow(_workspaceId, _actorId, flowId, expectedRevision, environment) {
       const index = flows.findIndex((flow) => flow.id === flowId);
       const current = flows[index];
@@ -383,6 +418,12 @@ function productFixture(): {
         updatedAt: timestamp,
       };
       flows[index] = flow;
+      flowReleases.unshift({
+        description: current.description,
+        name: current.name,
+        publishedAt: timestamp,
+        version: releaseVersion,
+      });
       return flow;
     },
     async debugFlow(_workspaceId, _actorId, flowId, expectedRevision, inputText) {
@@ -408,6 +449,12 @@ function productFixture(): {
     },
     async listFlowDebugRuns(_workspaceId, flowId) {
       return flowDebugRuns.filter((run) => run.flowId === flowId);
+    },
+    async listFlowReleases() {
+      return flowReleases;
+    },
+    async listFlowRollbacks() {
+      return flowRollbacks;
     },
     async createConversation(_workspaceId, _actorId, agentId) {
       const agent = agents.find((item) => item.id === agentId && item.status === 'published');
@@ -898,6 +945,96 @@ describe('Better Agent web runtime', () => {
       revision: 2,
       status: 'published',
     });
+
+    const updated = await localRequest(origin, `/better-agent/api/product/flows/${flow.id}`, {
+      body: JSON.stringify({
+        description: '第二版条件节点映射',
+        expected_revision: 2,
+        graph,
+        name: '响应管线 V2',
+      }),
+      headers,
+      method: 'PUT',
+    });
+    expect(updated.status).toBe(200);
+    const publishedV2 = await localRequest(
+      origin,
+      `/better-agent/api/product/flows/${flow.id}/publish`,
+      {
+        body: JSON.stringify({ environment: 'staging', expected_revision: 3 }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(publishedV2.status).toBe(200);
+    expect(((await publishedV2.json()) as { flow: ProductFlowDraft }).flow).toMatchObject({
+      deployments: [{ environment: 'staging', releaseVersion: 2 }],
+      publishedVersion: 2,
+      revision: 4,
+    });
+
+    const releases = await localRequest(
+      origin,
+      `/better-agent/api/product/flows/${flow.id}/releases`,
+      { headers: { Cookie: cookie } },
+    );
+    expect(releases.status).toBe(200);
+    expect(((await releases.json()) as { releases: ProductFlowRelease[] }).releases).toMatchObject([
+      { name: '响应管线 V2', version: 2 },
+      { name: '响应管线', version: 1 },
+    ]);
+
+    const rolledBack = await localRequest(
+      origin,
+      `/better-agent/api/product/flows/${flow.id}/rollback`,
+      {
+        body: JSON.stringify({
+          environment: 'staging',
+          expected_release_version: 2,
+          reason: '第二版输出异常，恢复稳定版本',
+          target_release_version: 1,
+        }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(rolledBack.status).toBe(200);
+    expect(
+      ((await rolledBack.json()) as { flow: ProductFlowDraft }).flow.deployments,
+    ).toMatchObject([{ environment: 'staging', releaseVersion: 1 }]);
+
+    const rollbackHistory = await localRequest(
+      origin,
+      `/better-agent/api/product/flows/${flow.id}/rollbacks`,
+      { headers: { Cookie: cookie } },
+    );
+    expect(rollbackHistory.status).toBe(200);
+    expect(
+      ((await rollbackHistory.json()) as { rollbacks: ProductFlowRollback[] }).rollbacks,
+    ).toMatchObject([
+      {
+        environment: 'staging',
+        fromReleaseVersion: 2,
+        reason: '第二版输出异常，恢复稳定版本',
+        targetReleaseVersion: 1,
+      },
+    ]);
+
+    const staleRollback = await localRequest(
+      origin,
+      `/better-agent/api/product/flows/${flow.id}/rollback`,
+      {
+        body: JSON.stringify({
+          environment: 'staging',
+          expected_release_version: 2,
+          reason: '过期页面重试',
+          target_release_version: 1,
+        }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(staleRollback.status).toBe(400);
 
     const [listed, debugHistory] = await Promise.all([
       localRequest(origin, '/better-agent/api/product/flows', {

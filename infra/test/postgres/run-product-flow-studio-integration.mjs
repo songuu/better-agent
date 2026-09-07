@@ -131,6 +131,81 @@ WHERE workspace_id='${workspaceId}' AND flow_id='${flowId}' AND version=1;`,
     'condition',
     'immutable Flow release preserves the exact executable condition node',
   );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.update_product_flow_draft(
+  '${workspaceId}','${flowId}',2,'Acceptance Flow V2','Second release',${jsonb(graph)}
+);`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_product_flow('${workspaceId}','${flowId}',3,'${actorId}','staging');`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT string_agg(concat(version,':',name),',' ORDER BY version DESC)
+FROM app.list_product_flow_releases('${workspaceId}','${flowId}');`,
+    ),
+    '2:Acceptance Flow V2,1:Acceptance Flow',
+    'runtime reads bounded immutable Flow release history',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.rollback_product_flow_deployment(
+  '${workspaceId}','${flowId}','staging',2,1,'${actorId}','V2 acceptance regression'
+);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_bootstrap_test',
+      `SELECT concat_ws('|',release_version,revision) FROM public.product_flow_deployments
+WHERE workspace_id='${workspaceId}' AND flow_id='${flowId}' AND environment='staging';`,
+    ),
+    '1|3',
+    'rollback atomically switches only the environment deployment pointer',
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT concat_ws('|',environment,from_release_version,target_release_version,reason)
+FROM app.list_product_flow_rollbacks('${workspaceId}','${flowId}');`,
+    ),
+    'staging|2|1|V2 acceptance regression',
+    'rollback produces an owner-read immutable audit receipt',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.rollback_product_flow_deployment(
+  '${workspaceId}','${flowId}','staging',2,1,'${actorId}','stale retry'
+);`,
+      { allowFailure: true },
+    ),
+    /Flow deployment rollback conflict|40001/u,
+    'stale rollback loses the deployment release CAS',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `INSERT INTO public.product_flow_deployment_rollbacks(
+  workspace_id,id,flow_id,environment,from_release_version,target_release_version,reason,rolled_back_by
+) VALUES('${workspaceId}',gen_random_uuid(),'${flowId}','staging',2,1,'forbidden','${actorId}');`,
+      { allowFailure: true },
+    ),
+    /permission denied|42501/u,
+    'runtime cannot forge rollback receipts with direct DML',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_bootstrap_test',
+      `UPDATE public.product_flow_deployment_rollbacks SET reason='tampered'
+WHERE workspace_id='${workspaceId}' AND flow_id='${flowId}';`,
+      { allowFailure: true },
+    ),
+    /product Flow history is immutable|55000/u,
+    'rollback receipts remain immutable to the fixture principal',
+  );
   assertRejected(
     await harness.psql(
       'ba_runtime_test',
@@ -154,7 +229,7 @@ WHERE workspace_id='${workspaceId}' AND flow_id='${flowId}' AND version=1;`,
   );
 
   process.stdout.write(
-    `PostgreSQL 16 product Flow Studio passed: ${migrations.length} migrations, executable condition nodes, owner-only Draft CAS, immutable releases, environment deployment, durable debug traces and direct-DML denial.\n`,
+    `PostgreSQL 16 product Flow Studio passed: ${migrations.length} migrations, executable condition nodes, owner-only Draft CAS, immutable releases, audited environment rollback, durable debug traces and direct-DML denial.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-flow-studio pass\n');
 }

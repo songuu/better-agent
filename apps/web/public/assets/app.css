@@ -1936,6 +1936,58 @@ body::before {
 .flow-deployments b {
   color: #45f2ac;
 }
+.flow-release-panel {
+  display: grid;
+  gap: 10px;
+  margin: 18px 18px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid #26332f;
+}
+.flow-release-panel > p {
+  margin: 0;
+  color: #61736b;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+}
+.flow-release-panel label {
+  display: grid;
+  gap: 6px;
+}
+.flow-release-panel label span,
+.flow-history > span {
+  color: #71877c;
+  font-size: 8px;
+}
+.flow-history {
+  display: grid;
+  gap: 8px;
+}
+.flow-history article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #26332f;
+}
+.flow-history b,
+.flow-history small {
+  display: block;
+}
+.flow-history b {
+  color: #dbe8e1;
+  font-size: 9px;
+}
+.flow-history small {
+  margin-top: 4px;
+  color: #71877c;
+  font-size: 7px;
+}
+.flow-history .button {
+  min-height: 28px;
+  padding: 5px 8px;
+  font-size: 8px;
+}
 
 @media (max-width: 1400px) {
   .flow-studio {

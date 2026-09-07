@@ -16,6 +16,7 @@ import {
   validateFlowDebugInput,
   validateFlowDraftInput,
   validateFlowEnvironment,
+  validateFlowRollbackInput,
   validateKnowledgeBaseInput,
   validateKnowledgeDocumentInput,
   validateKnowledgeQuery,
@@ -379,11 +380,23 @@ export async function createBetterAgentWebServer(
       return true;
     }
     const flowMatch = new RegExp(
-      `^${WEB_BASE_PATH}api/product/flows/([0-9a-f-]{36})(/debug|/debug-runs|/publish)?$`,
+      `^${WEB_BASE_PATH}api/product/flows/([0-9a-f-]{36})(/debug|/debug-runs|/publish|/releases|/rollbacks|/rollback)?$`,
       'u',
     ).exec(path);
     if (flowMatch !== null && UUID.test(flowMatch[1] ?? '')) {
       const flowId = flowMatch[1] as string;
+      if (flowMatch[2] === '/releases' && request.method === 'GET') {
+        sendJson(request, response, 200, {
+          releases: await productStore.listFlowReleases(workspaceId, flowId),
+        });
+        return true;
+      }
+      if (flowMatch[2] === '/rollbacks' && request.method === 'GET') {
+        sendJson(request, response, 200, {
+          rollbacks: await productStore.listFlowRollbacks(workspaceId, flowId),
+        });
+        return true;
+      }
       if (flowMatch[2] === '/debug-runs' && request.method === 'GET') {
         sendJson(request, response, 200, {
           debug_runs: await productStore.listFlowDebugRuns(workspaceId, flowId),
@@ -440,6 +453,16 @@ export async function createBetterAgentWebServer(
           flowId,
           Number(expectedRevision),
           validateFlowEnvironment(payload.environment),
+        );
+        sendJson(request, response, 200, { flow });
+        return true;
+      }
+      if (flowMatch[2] === '/rollback' && request.method === 'POST') {
+        const flow = await productStore.rollbackFlow(
+          workspaceId,
+          actorId,
+          flowId,
+          validateFlowRollbackInput(await readJsonBody(request)),
         );
         sendJson(request, response, 200, { flow });
         return true;

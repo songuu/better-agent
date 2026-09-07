@@ -188,6 +188,29 @@ export interface ProductFlowDeployment {
   readonly releaseVersion: number;
 }
 
+export interface ProductFlowRelease {
+  readonly description: string;
+  readonly name: string;
+  readonly publishedAt: string;
+  readonly version: number;
+}
+
+export interface ProductFlowRollback {
+  readonly environment: ProductFlowEnvironment;
+  readonly fromReleaseVersion: number;
+  readonly id: string;
+  readonly reason: string;
+  readonly rolledBackAt: string;
+  readonly targetReleaseVersion: number;
+}
+
+export interface ProductFlowRollbackInput {
+  readonly environment: ProductFlowEnvironment;
+  readonly expectedReleaseVersion: number;
+  readonly reason: string;
+  readonly targetReleaseVersion: number;
+}
+
 export interface ProductFlowDraftInput {
   readonly description: string;
   readonly graph: ProductFlowGraph;
@@ -378,6 +401,8 @@ export interface ProductStore {
   ): Promise<ProductFlowDebugRun>;
   listAgents(workspaceId: string): Promise<readonly AgentDraft[]>;
   listFlowDebugRuns(workspaceId: string, flowId: string): Promise<readonly ProductFlowDebugRun[]>;
+  listFlowReleases(workspaceId: string, flowId: string): Promise<readonly ProductFlowRelease[]>;
+  listFlowRollbacks(workspaceId: string, flowId: string): Promise<readonly ProductFlowRollback[]>;
   listFlows(workspaceId: string): Promise<readonly ProductFlowDraft[]>;
   listKnowledgeBases(workspaceId: string): Promise<readonly ProductKnowledgeBase[]>;
   listDatabaseTables(workspaceId: string): Promise<readonly ProductDatabaseTable[]>;
@@ -502,6 +527,12 @@ export interface ProductStore {
     expectedRevision: number,
     environment: ProductFlowEnvironment,
   ): Promise<ProductFlowDraft>;
+  rollbackFlow(
+    workspaceId: string,
+    actorId: string,
+    flowId: string,
+    input: ProductFlowRollbackInput,
+  ): Promise<ProductFlowDraft>;
   searchKnowledge(
     workspaceId: string,
     knowledgeBaseId: string,
@@ -548,6 +579,22 @@ interface FlowDebugRow {
   readonly logs: unknown;
   readonly output_text: string;
   readonly status: string;
+}
+
+interface FlowReleaseRow {
+  readonly description: string;
+  readonly name: string;
+  readonly published_at: Date | string;
+  readonly version: string | number;
+}
+
+interface FlowRollbackRow {
+  readonly environment: string;
+  readonly from_release_version: string | number;
+  readonly id: string;
+  readonly reason: string;
+  readonly rolled_back_at: Date | string;
+  readonly target_release_version: string | number;
 }
 
 interface KnowledgeBaseRow {
@@ -1326,6 +1373,32 @@ function toFlowDebug(row: FlowDebugRow): ProductFlowDebugRun {
   });
 }
 
+function toFlowRelease(row: FlowReleaseRow): ProductFlowRelease {
+  return Object.freeze({
+    description: row.description,
+    name: row.name,
+    publishedAt: asIso(row.published_at),
+    version: positiveInteger(row.version, 'Flow release version'),
+  });
+}
+
+function toFlowRollback(row: FlowRollbackRow): ProductFlowRollback {
+  if (!PRODUCT_FLOW_ENVIRONMENTS.includes(row.environment as ProductFlowEnvironment)) {
+    throw new Error('product store returned an invalid Flow rollback environment');
+  }
+  return Object.freeze({
+    environment: row.environment as ProductFlowEnvironment,
+    fromReleaseVersion: positiveInteger(row.from_release_version, 'Flow rollback source version'),
+    id: row.id,
+    reason: row.reason,
+    rolledBackAt: asIso(row.rolled_back_at),
+    targetReleaseVersion: positiveInteger(
+      row.target_release_version,
+      'Flow rollback target version',
+    ),
+  });
+}
+
 function toKnowledgeBase(row: KnowledgeBaseRow): ProductKnowledgeBase {
   return Object.freeze({
     createdAt: asIso(row.created_at),
@@ -1488,6 +1561,27 @@ export class PostgresProductStore implements ProductStore {
     return await this.#getFlow(workspaceId, flowId);
   }
 
+  async rollbackFlow(
+    workspaceId: string,
+    actorId: string,
+    flowId: string,
+    input: ProductFlowRollbackInput,
+  ): Promise<ProductFlowDraft> {
+    await this.#pool.query(
+      'SELECT app.rollback_product_flow_deployment($1::uuid, $2::uuid, $3::text, $4::bigint, $5::bigint, $6::uuid, $7::text)',
+      [
+        workspaceId,
+        flowId,
+        input.environment,
+        input.expectedReleaseVersion,
+        input.targetReleaseVersion,
+        actorId,
+        input.reason,
+      ],
+    );
+    return await this.#getFlow(workspaceId, flowId);
+  }
+
   async debugFlow(
     workspaceId: string,
     actorId: string,
@@ -1538,6 +1632,28 @@ export class PostgresProductStore implements ProductStore {
       [workspaceId, flowId],
     );
     return Object.freeze(result.rows.map(toFlowDebug));
+  }
+
+  async listFlowReleases(
+    workspaceId: string,
+    flowId: string,
+  ): Promise<readonly ProductFlowRelease[]> {
+    const result = await this.#pool.query<FlowReleaseRow>(
+      'SELECT * FROM app.list_product_flow_releases($1::uuid, $2::uuid)',
+      [workspaceId, flowId],
+    );
+    return Object.freeze(result.rows.map(toFlowRelease));
+  }
+
+  async listFlowRollbacks(
+    workspaceId: string,
+    flowId: string,
+  ): Promise<readonly ProductFlowRollback[]> {
+    const result = await this.#pool.query<FlowRollbackRow>(
+      'SELECT * FROM app.list_product_flow_rollbacks($1::uuid, $2::uuid)',
+      [workspaceId, flowId],
+    );
+    return Object.freeze(result.rows.map(toFlowRollback));
   }
 
   async #getKnowledgeBase(
@@ -2277,6 +2393,39 @@ export function validateFlowEnvironment(value: unknown): ProductFlowEnvironment 
     throw new Error('Flow environment is unsupported');
   }
   return value as ProductFlowEnvironment;
+}
+
+export function validateFlowRollbackInput(value: unknown): ProductFlowRollbackInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Flow rollback payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 4 ||
+    !['environment', 'expected_release_version', 'target_release_version', 'reason'].every((key) =>
+      Object.hasOwn(input, key),
+    )
+  ) {
+    throw new Error('Flow rollback payload has an invalid shape');
+  }
+  if (
+    !Number.isSafeInteger(input.expected_release_version) ||
+    Number(input.expected_release_version) < 1 ||
+    !Number.isSafeInteger(input.target_release_version) ||
+    Number(input.target_release_version) < 1
+  ) {
+    throw new Error('Flow rollback versions must be positive integers');
+  }
+  const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+  if (reason.length < 1 || reason.length > 500) {
+    throw new Error('Flow rollback reason must contain 1–500 characters');
+  }
+  return Object.freeze({
+    environment: validateFlowEnvironment(input.environment),
+    expectedReleaseVersion: Number(input.expected_release_version),
+    reason,
+    targetReleaseVersion: Number(input.target_release_version),
+  });
 }
 
 export function validateKnowledgeBaseInput(value: unknown): ProductKnowledgeBaseInput {

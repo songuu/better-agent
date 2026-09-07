@@ -11,6 +11,7 @@ import {
   validateFlowDebugInput,
   validateFlowDraftInput,
   validateFlowEnvironment,
+  validateFlowRollbackInput,
   validateKnowledgeBaseInput,
   validateKnowledgeDocumentInput,
   validateKnowledgeQuery,
@@ -453,6 +454,19 @@ describe('product Flow input', () => {
     ).toMatchObject({ description: '串联输入与模板', name: '快速处理' });
     expect(validateFlowDebugInput({ input: '  验证映射  ' })).toBe('验证映射');
     expect(validateFlowEnvironment('production')).toBe('production');
+    expect(
+      validateFlowRollbackInput({
+        environment: 'staging',
+        expected_release_version: 2,
+        reason: '  release regression  ',
+        target_release_version: 1,
+      }),
+    ).toEqual({
+      environment: 'staging',
+      expectedReleaseVersion: 2,
+      reason: 'release regression',
+      targetReleaseVersion: 1,
+    });
   });
 
   it.each([
@@ -466,5 +480,13 @@ describe('product Flow input', () => {
   it('rejects open debug input and unknown deployment environments', () => {
     expect(() => validateFlowDebugInput({ input: 'ok', extra: true })).toThrow();
     expect(() => validateFlowEnvironment('preview')).toThrow('unsupported');
+    expect(() =>
+      validateFlowRollbackInput({
+        environment: 'staging',
+        expected_release_version: 0,
+        reason: '',
+        target_release_version: 1,
+      }),
+    ).toThrow();
   });
 });
