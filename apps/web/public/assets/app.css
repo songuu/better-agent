@@ -1727,6 +1727,12 @@ body::before {
 .flow-canvas.has-condition {
   min-height: 650px;
 }
+.flow-canvas.has-transform {
+  min-height: 650px;
+}
+.flow-canvas.has-condition.has-transform {
+  min-height: 850px;
+}
 .flow-canvas > legend {
   position: absolute;
   width: 1px;
@@ -1800,6 +1806,19 @@ body::before {
   width: min(520px, calc(100% - 48px));
   transform: translateX(-50%);
   border-color: #88713d;
+}
+.node-code {
+  left: 50%;
+  top: 350px;
+  width: min(360px, calc(100% - 48px));
+  transform: translateX(-50%);
+  border-color: #4f78a8;
+}
+.node-code small {
+  color: #69a9ff;
+}
+.flow-canvas.has-transform .node-condition {
+  top: 550px;
 }
 .node-condition small {
   color: #ffd166;
@@ -2020,6 +2039,7 @@ body::before {
   .node-input,
   .node-template,
   .node-condition,
+  .node-code,
   .node-output {
     left: 50%;
     right: auto;
@@ -2037,6 +2057,24 @@ body::before {
   }
   .flow-canvas.has-condition {
     min-height: 900px;
+  }
+  .flow-canvas.has-transform {
+    min-height: 820px;
+  }
+  .flow-canvas.has-condition.has-transform {
+    min-height: 1120px;
+  }
+  .flow-canvas.has-transform .node-output {
+    top: 690px;
+  }
+  .flow-canvas.has-condition.has-transform .node-output {
+    top: 980px;
+  }
+  .node-code {
+    top: 470px;
+  }
+  .flow-canvas.has-transform .node-condition {
+    top: 690px;
   }
   .flow-canvas.has-condition .node-output {
     top: 760px;

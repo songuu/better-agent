@@ -333,17 +333,25 @@ function renderAgents() {
   });
 }
 
-function flowGraph(template, condition) {
+function flowGraph(template, transform, condition) {
   const nodes = [
     { config: { key: 'message' }, id: 'input', label: '消息输入', type: 'input' },
     { config: { template }, id: 'prompt', label: '模板映射', type: 'template' },
   ];
+  if (transform.enabled) {
+    nodes.push({
+      config: { operation: transform.operation, source: 'prompt' },
+      id: 'transform',
+      label: '受控代码变换',
+      type: 'transform',
+    });
+  }
   if (condition.enabled) {
     nodes.push({
       config: {
         operand: condition.operand,
         operator: condition.operator,
-        source: 'prompt',
+        source: transform.enabled ? 'transform' : 'prompt',
         whenFalse: condition.whenFalse,
         whenTrue: condition.whenTrue,
       },
@@ -352,16 +360,30 @@ function flowGraph(template, condition) {
       type: 'condition',
     });
   }
-  const outputSource = condition.enabled ? 'condition' : 'prompt';
+  const upstreamSource = transform.enabled ? 'transform' : 'prompt';
+  const outputSource = condition.enabled ? 'condition' : upstreamSource;
   nodes.push({ config: { source: outputSource }, id: 'output', label: '结果输出', type: 'output' });
   return {
     edges: [
       { id: 'input_prompt', source: 'input', target: 'prompt' },
       {
-        id: condition.enabled ? 'prompt_condition' : 'prompt_output',
+        id: transform.enabled
+          ? 'prompt_transform'
+          : condition.enabled
+            ? 'prompt_condition'
+            : 'prompt_output',
         source: 'prompt',
-        target: condition.enabled ? 'condition' : 'output',
+        target: transform.enabled ? 'transform' : condition.enabled ? 'condition' : 'output',
       },
+      ...(transform.enabled
+        ? [
+            {
+              id: condition.enabled ? 'transform_condition' : 'transform_output',
+              source: 'transform',
+              target: condition.enabled ? 'condition' : 'output',
+            },
+          ]
+        : []),
       ...(condition.enabled
         ? [{ id: 'condition_output', source: 'condition', target: 'output' }]
         : []),
@@ -371,12 +393,14 @@ function flowGraph(template, condition) {
 }
 
 function syncFlowConditionEditor() {
-  const enabled = flowForm.elements.conditionEnabled.checked;
-  byId('flow-condition-node').hidden = !enabled;
-  byId('flow-canvas').classList.toggle('has-condition', enabled);
-  byId('flow-canvas').querySelector('.node-output code').textContent = enabled
-    ? 'condition → output'
-    : 'prompt → output';
+  const conditionEnabled = flowForm.elements.conditionEnabled.checked;
+  const transformEnabled = flowForm.elements.transformEnabled.checked;
+  byId('flow-condition-node').hidden = !conditionEnabled;
+  byId('flow-transform-node').hidden = !transformEnabled;
+  byId('flow-canvas').classList.toggle('has-condition', conditionEnabled);
+  byId('flow-canvas').classList.toggle('has-transform', transformEnabled);
+  byId('flow-canvas').querySelector('.node-output code').textContent =
+    `${conditionEnabled ? 'condition' : transformEnabled ? 'transform' : 'prompt'} → output`;
 }
 
 function renderFlows() {
@@ -465,12 +489,15 @@ function showFlowEditor(flow = null) {
   flowForm.elements.description.value = flow?.description || '';
   const templateNode = flow?.graph.nodes.find((node) => node.type === 'template');
   const conditionNode = flow?.graph.nodes.find((node) => node.type === 'condition');
+  const transformNode = flow?.graph.nodes.find((node) => node.type === 'transform');
   flowForm.elements.template.value = templateNode?.config.template || '已处理：{{message}}';
   flowForm.elements.conditionEnabled.checked = Boolean(conditionNode);
   flowForm.elements.conditionOperator.value = conditionNode?.config.operator || 'contains';
   flowForm.elements.conditionOperand.value = conditionNode?.config.operand || '紧急';
   flowForm.elements.conditionTrue.value = conditionNode?.config.whenTrue || '紧急队列：{{value}}';
   flowForm.elements.conditionFalse.value = conditionNode?.config.whenFalse || '普通队列：{{value}}';
+  flowForm.elements.transformEnabled.checked = Boolean(transformNode);
+  flowForm.elements.transformOperation.value = transformNode?.config.operation || 'trim';
   syncFlowConditionEditor();
   byId('flow-editor-title').textContent = flow?.name || '未命名 Flow';
   byId('flow-kicker').textContent = flow
@@ -1014,6 +1041,7 @@ flowForm.elements.name.addEventListener('input', () => {
 });
 
 flowForm.elements.conditionEnabled.addEventListener('change', syncFlowConditionEditor);
+flowForm.elements.transformEnabled.addEventListener('change', syncFlowConditionEditor);
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1068,13 +1096,20 @@ flowForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const input = {
     description: flowForm.elements.description.value,
-    graph: flowGraph(flowForm.elements.template.value, {
-      enabled: flowForm.elements.conditionEnabled.checked,
-      operand: flowForm.elements.conditionOperand.value,
-      operator: flowForm.elements.conditionOperator.value,
-      whenFalse: flowForm.elements.conditionFalse.value,
-      whenTrue: flowForm.elements.conditionTrue.value,
-    }),
+    graph: flowGraph(
+      flowForm.elements.template.value,
+      {
+        enabled: flowForm.elements.transformEnabled.checked,
+        operation: flowForm.elements.transformOperation.value,
+      },
+      {
+        enabled: flowForm.elements.conditionEnabled.checked,
+        operand: flowForm.elements.conditionOperand.value,
+        operator: flowForm.elements.conditionOperator.value,
+        whenFalse: flowForm.elements.conditionFalse.value,
+        whenTrue: flowForm.elements.conditionTrue.value,
+      },
+    ),
     name: flowForm.elements.name.value,
   };
   try {

@@ -20,6 +20,59 @@ const graph = {
 };
 
 describe('product Flow runtime', () => {
+  it('executes a connected allowlisted transform without evaluating code', () => {
+    const transformGraph = {
+      edges: [
+        { id: 'edge_input_transform', source: 'input', target: 'transform' },
+        { id: 'edge_transform_output', source: 'transform', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        {
+          config: { operation: 'uppercase', source: 'input' },
+          id: 'transform',
+          label: '受控变换',
+          type: 'transform',
+        },
+        { config: { source: 'transform' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+
+    expect(executeProductFlow(transformGraph, { input: 'Release 36' }).output).toBe('RELEASE 36');
+  });
+
+  it('rejects unsupported or disconnected transforms', () => {
+    const transform = {
+      config: { operation: 'eval', source: 'input' },
+      id: 'transform',
+      label: '禁止执行',
+      type: 'transform',
+    };
+    const transformGraph = {
+      edges: [
+        { id: 'edge_input_transform', source: 'input', target: 'transform' },
+        { id: 'edge_transform_output', source: 'transform', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        transform,
+        { config: { source: 'transform' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+    expect(() => validateProductFlowGraph(transformGraph)).toThrow('Transform operation');
+    expect(() =>
+      validateProductFlowGraph({
+        ...transformGraph,
+        edges: transformGraph.edges.filter((edge) => edge.target !== 'transform'),
+        nodes: transformGraph.nodes.map((node) =>
+          node.id === 'transform'
+            ? { ...node, config: { operation: 'trim', source: 'input' } }
+            : node,
+        ),
+      }),
+    ).toThrow('source must be connected');
+  });
+
   it('executes a closed condition node against a connected upstream value', () => {
     const conditionalGraph = {
       edges: [

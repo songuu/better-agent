@@ -24,6 +24,15 @@ export type ProductFlowNode =
       readonly type: 'condition';
     }
   | {
+      readonly config: {
+        readonly operation: ProductFlowTransformOperation;
+        readonly source: string;
+      };
+      readonly id: string;
+      readonly label: string;
+      readonly type: 'transform';
+    }
+  | {
       readonly config: { readonly source: string };
       readonly id: string;
       readonly label: string;
@@ -57,6 +66,8 @@ export const PRODUCT_FLOW_CONDITION_OPERATORS = [
   'ends_with',
 ] as const;
 export type ProductFlowConditionOperator = (typeof PRODUCT_FLOW_CONDITION_OPERATORS)[number];
+export const PRODUCT_FLOW_TRANSFORM_OPERATIONS = ['trim', 'uppercase', 'lowercase'] as const;
+export type ProductFlowTransformOperation = (typeof PRODUCT_FLOW_TRANSFORM_OPERATIONS)[number];
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]{0,39}$/u;
 const TEMPLATE_REFERENCE = /\{\{\s*([a-z][a-z0-9_-]{0,39})\s*\}\}/gu;
@@ -132,6 +143,25 @@ function validateNode(value: unknown): ProductFlowNode {
       id,
       label,
       type: 'condition',
+    });
+  }
+  if (node.type === 'transform') {
+    const config = closedObject(node.config, ['source', 'operation'], 'Transform node config');
+    const source = boundedText(config.source, 1, 40, 'Transform source');
+    if (!IDENTIFIER.test(source)) throw new Error('Transform source is invalid');
+    if (
+      !PRODUCT_FLOW_TRANSFORM_OPERATIONS.includes(config.operation as ProductFlowTransformOperation)
+    ) {
+      throw new Error('Transform operation is unsupported');
+    }
+    return Object.freeze({
+      config: Object.freeze({
+        operation: config.operation as ProductFlowTransformOperation,
+        source,
+      }),
+      id,
+      label,
+      type: 'transform',
     });
   }
   if (node.type === 'output') {
@@ -235,6 +265,10 @@ export function validateProductFlowGraph(value: unknown): ProductFlowGraph {
       if (!incomingByTarget.get(node.id)?.has(node.config.source)) {
         throw new Error('Condition source must be connected to the condition node');
       }
+    } else if (node.type === 'transform') {
+      if (!incomingByTarget.get(node.id)?.has(node.config.source)) {
+        throw new Error('Transform source must be connected to the transform node');
+      }
     }
   }
   const reachable = new Set([inputNode.id]);
@@ -286,6 +320,15 @@ export function executeProductFlow(
               : sourceValue.endsWith(node.config.operand);
       const selected = matches ? node.config.whenTrue : node.config.whenFalse;
       output = selected.replace(CONDITION_VALUE_REFERENCE, () => sourceValue);
+    } else if (node.type === 'transform') {
+      const sourceValue = values.get(node.config.source);
+      if (sourceValue === undefined) throw new Error('Flow transform source is unavailable');
+      output =
+        node.config.operation === 'trim'
+          ? sourceValue.trim()
+          : node.config.operation === 'uppercase'
+            ? sourceValue.toLocaleUpperCase()
+            : sourceValue.toLocaleLowerCase();
     } else {
       const value = values.get(node.config.source);
       if (value === undefined) throw new Error('Flow output source is unavailable');
