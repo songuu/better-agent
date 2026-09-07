@@ -112,8 +112,9 @@ async function main() {
   assertEqual(
     await harness.queryScalar(
       'ba_runtime_test',
-      `SELECT parameter_source||':'||effective_parameters->>'database_contains'||':'||effective_parameters->>'knowledge_query'||':'||
-        extracted_parameters->>'knowledge_query'||':'||parameter_provider_request_id||':'||parameter_input_tokens||':'||parameter_output_tokens
+      `SELECT parameter_source||':'||(effective_parameters->>'database_contains')||':'||
+        (effective_parameters->>'knowledge_query')||':'||(extracted_parameters->>'knowledge_query')||':'||
+        parameter_provider_request_id||':'||parameter_input_tokens||':'||parameter_output_tokens
        FROM app.list_agent_product_runs('${workspaceId}') WHERE id='${runV1}';`,
     ),
     'extracted:healthy:production health::resp-parameters-1:30:5',
@@ -168,7 +169,7 @@ async function main() {
   assertEqual(
     await harness.queryScalar(
       'ba_runtime_test',
-      `SELECT parameter_source||':'||effective_parameters->>'knowledge_query'
+      `SELECT parameter_source||':'||(effective_parameters->>'knowledge_query')
        FROM app.list_agent_product_runs('${workspaceId}') WHERE id='${fixedRun}';`,
     ),
     'defaults:fixed default',
