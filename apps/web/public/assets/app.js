@@ -140,7 +140,7 @@ function readStrategyProfile() {
     parameter_extraction: form.elements.parameter_extraction.checked,
     routes,
     routing_mode: form.elements.routing_mode.value,
-    schema_version: 'product-agent-strategy/3',
+    schema_version: 'product-agent-strategy/4',
     temperature: Number(form.elements.temperature.value),
   };
 }
@@ -149,7 +149,7 @@ function populateStrategyProfile(profile = null, model = 'gpt-5.6-sol', version 
   const strategy = profile || {
     forcedCapability: 'none',
     maxInputTokens: 32000,
-    maxIterations: 1,
+    maxIterations: 3,
     maxOutputTokens: 2000,
     maxToolCalls: 2,
     parameterDefaults: { databaseContains: '', knowledgeQuery: '' },
@@ -679,10 +679,15 @@ function renderRuns() {
     return;
   }
   list.innerHTML = state.runs
-    .map(
-      (run) =>
-        `<article class="run-row"><span>${String(run.sequence).padStart(2, '0')}</span><div><b>${escapeHtml(run.inputText)}</b><small>${escapeHtml(run.outputText || run.errorCode || '运行中')} · ${Number(run.iterationCount || 0)} ITER</small></div><em class="is-${run.status}">${run.status.toUpperCase()}</em><time>${new Date(run.createdAt).toLocaleString('zh-CN')}</time></article>`,
-    )
+    .map((run) => {
+      const tools = (run.iterationTrace || [])
+        .filter((iteration) => iteration.action === 'tool')
+        .map(
+          (iteration) =>
+            `${String(iteration.iteration)} ${String(iteration.capability).toUpperCase()} · ${String(iteration.toolInput).slice(0, 80)}`,
+        );
+      return `<article class="run-row"><span>${String(run.sequence).padStart(2, '0')}</span><div><b>${escapeHtml(run.inputText)}</b><small>${escapeHtml(run.outputText || run.errorCode || '运行中')} · ${Number(run.iterationCount || 0)} ITER</small>${tools.length > 0 ? `<small>TOOLS · ${tools.map(escapeHtml).join(' / ')}</small>` : ''}</div><em class="is-${run.status}">${run.status.toUpperCase()}</em><time>${new Date(run.createdAt).toLocaleString('zh-CN')}</time></article>`;
+    })
     .join('');
 }
 

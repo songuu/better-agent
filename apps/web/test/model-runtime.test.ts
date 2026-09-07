@@ -114,6 +114,61 @@ describe('OpenAI-compatible product model runtime', () => {
     });
   });
 
+  it('accepts only a closed final or bound tool decision', async () => {
+    const outputs = [
+      JSON.stringify({ action: 'tool', capability: 'knowledge', input: '生产健康检查' }),
+      JSON.stringify({ action: 'final', output: '服务当前健康。' }),
+      JSON.stringify({ action: 'tool', capability: 'database', input: 'secret' }),
+    ];
+    const runtime = new OpenAiResponsesRuntime({
+      apiKey: 'test-secret',
+      baseUrl: 'https://models.example.test/v1',
+      fetchImplementation: async () =>
+        new Response(
+          JSON.stringify({
+            id: `resp_action_${String(outputs.length)}`,
+            output_text: outputs.shift(),
+            usage: { input_tokens: 10, output_tokens: 4 },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    await expect(
+      runtime.decideAction({
+        availableCapabilities: ['knowledge'],
+        history: [],
+        instructions: '只回答已核验事实。',
+        maxOutputTokens: 200,
+        model: 'gpt-5.6-sol',
+        prompt: '服务健康吗？',
+        temperature: 0.2,
+      }),
+    ).resolves.toMatchObject({
+      action: 'tool',
+      capability: 'knowledge',
+      toolInput: '生产健康检查',
+    });
+    await expect(
+      runtime.decideAction({
+        availableCapabilities: ['knowledge'],
+        history: [],
+        instructions: '只回答已核验事实。',
+        model: 'gpt-5.6-sol',
+        prompt: '继续',
+      }),
+    ).resolves.toMatchObject({ action: 'final', finalOutput: '服务当前健康。' });
+    await expect(
+      runtime.decideAction({
+        availableCapabilities: ['knowledge'],
+        history: [],
+        instructions: '只回答已核验事实。',
+        model: 'gpt-5.6-sol',
+        prompt: '调用未绑定能力',
+      }),
+    ).rejects.toThrow('model_action_invalid_output');
+  });
+
   it.each([
     { database_contains: 'healthy' },
     { database_contains: 'healthy', extra: true, knowledge_query: 'health' },

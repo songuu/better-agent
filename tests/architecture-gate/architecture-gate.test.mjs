@@ -826,7 +826,9 @@ test('launches pnpm with the sanitized cross-platform gate environment', async (
   });
   assert.equal(result.exitCode, 0, result.output.toString('utf8'));
   assert.match(result.stdout.toString('utf8').trim(), /^\d+\.\d+\.\d+$/u);
-  const storeRoot = await resolvePnpmStoreRoot(process.cwd(), environment);
+  const storeRoot = await resolvePnpmStoreRoot(process.cwd(), environment, async () => ({
+    isDirectory: () => true,
+  }));
   assert.equal(path.isAbsolute(storeRoot), true);
   assert.doesNotMatch(path.basename(storeRoot), /^v\d+$/u);
   assert.equal(parsePnpmStoreRoot('/var/cache/pnpm/v10'), '/var/cache/pnpm');

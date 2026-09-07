@@ -222,7 +222,11 @@ export async function validatePnpmStorePath(storePath, inspectPath = lstat) {
   return storeRoot;
 }
 
-export async function resolvePnpmStoreRoot(root, environment = createGateEnvironment()) {
+export async function resolvePnpmStoreRoot(
+  root,
+  environment = createGateEnvironment(),
+  inspectPath = lstat,
+) {
   const result = await runPnpm(['store', 'path', '--silent'], {
     cwd: root,
     context: 'pnpm store path',
@@ -230,7 +234,7 @@ export async function resolvePnpmStoreRoot(root, environment = createGateEnviron
     timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
   });
   const storePath = result.stdout.toString('utf8').trim();
-  return validatePnpmStorePath(storePath);
+  return validatePnpmStorePath(storePath, inspectPath);
 }
 
 export async function gitBytes(root, args) {

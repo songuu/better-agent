@@ -167,7 +167,7 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
   assert.ok(publicJavaScript.includes('/role-assist'));
   assert.ok(publicJavaScript.includes('compileRolePreview'));
   assert.ok(publicJavaScript.includes('readStrategyProfile'));
-  assert.ok(publicJavaScript.includes('product-agent-strategy/3'));
+  assert.ok(publicJavaScript.includes('product-agent-strategy/4'));
   assert.ok(publicJavaScript.includes('parameter_defaults'));
   assert.ok(publicJavaScript.includes('knowledge_query_default'));
   assert.ok(publicJavaScript.includes('database_contains_default'));

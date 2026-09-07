@@ -84,6 +84,21 @@ describe('product Agent input', () => {
         temperature: 0.2,
       }),
     ).toMatchObject({ maxIterations: 3, schemaVersion: 'product-agent-strategy/3' });
+    expect(
+      parseAgentStrategyProfile({
+        forced_capability: 'none',
+        max_input_tokens: 32000,
+        max_iterations: 4,
+        max_output_tokens: 2000,
+        max_tool_calls: 2,
+        parameter_defaults: { database_contains: '', knowledge_query: '' },
+        parameter_extraction: false,
+        routes: [{ description: '工具决策模型', model: 'gpt-5.6-sol' }],
+        routing_mode: 'fixed',
+        schema_version: 'product-agent-strategy/4',
+        temperature: 0.2,
+      }),
+    ).toMatchObject({ maxIterations: 4, schemaVersion: 'product-agent-strategy/4' });
     expect(() => parseAgentStrategyProfile({ ...strategy, maxIterations: 2 })).toThrow(
       'Agent strategy v2 supports exactly one model iteration',
     );

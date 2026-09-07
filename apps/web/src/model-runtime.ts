@@ -1,4 +1,8 @@
-import type { ProductAgentModelRoute, ProductModel } from './product-store.js';
+import type {
+  ProductAgentModelRoute,
+  ProductAgentToolCapability,
+  ProductModel,
+} from './product-store.js';
 
 export interface ModelHistoryTurn {
   readonly assistant: string;
@@ -21,12 +25,30 @@ export interface ModelGenerationResult {
   readonly providerRequestId: string;
 }
 
+export type ProductAgentActionDecision =
+  | {
+      readonly action: 'final';
+      readonly finalOutput: string;
+    }
+  | {
+      readonly action: 'tool';
+      readonly capability: ProductAgentToolCapability;
+      readonly toolInput: string;
+    };
+
+export type ModelActionDecisionResult = ModelGenerationResult & ProductAgentActionDecision;
+
 export interface ProductAgentExtractedParameters {
   readonly databaseContains: string;
   readonly knowledgeQuery: string;
 }
 
 export interface ProductModelRuntime {
+  decideAction?(
+    input: ModelGenerationInput & {
+      readonly availableCapabilities: readonly ProductAgentToolCapability[];
+    },
+  ): Promise<ModelActionDecisionResult>;
   extractParameters?(input: {
     readonly maxOutputTokens: number;
     readonly model: ProductModel;
@@ -229,6 +251,72 @@ export class OpenAiResponsesRuntime implements ProductModelRuntime {
       return Object.freeze({ ...result, databaseContains, knowledgeQuery });
     } catch (error) {
       throw new Error('model_parameter_extraction_invalid_output', { cause: error });
+    }
+  }
+
+  async decideAction(
+    input: ModelGenerationInput & {
+      readonly availableCapabilities: readonly ProductAgentToolCapability[];
+    },
+  ): Promise<ModelActionDecisionResult> {
+    const available = [...new Set(input.availableCapabilities)];
+    if (available.some((capability) => capability !== 'knowledge' && capability !== 'database')) {
+      throw new Error('model_action_capabilities_invalid');
+    }
+    const result = await this.generate({
+      history: input.history,
+      instructions: [
+        input.instructions,
+        '',
+        'AGENT_ACTION_PROTOCOL_V1',
+        '只输出一个 JSON 对象，不得输出 Markdown 或解释。',
+        '直接回答：{"action":"final","output":"1–50000 字符的最终回答"}',
+        ...(available.length === 0
+          ? ['当前没有可调用能力。']
+          : [
+              '调用能力：{"action":"tool","capability":"knowledge|database","input":"1–500 字符"}',
+              `可调用能力：${available.join(',')}`,
+            ]),
+        'END_AGENT_ACTION_PROTOCOL_V1',
+      ].join('\n'),
+      model: input.model,
+      prompt: input.prompt,
+      ...(input.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.maxOutputTokens }),
+      ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    });
+    try {
+      const parsed: unknown = JSON.parse(result.outputText);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('invalid');
+      }
+      const decision = parsed as Record<string, unknown>;
+      if (
+        decision.action === 'final' &&
+        Object.keys(decision).sort().join(',') === 'action,output' &&
+        typeof decision.output === 'string'
+      ) {
+        const finalOutput = decision.output.trim();
+        if (finalOutput.length < 1 || finalOutput.length > 50_000) throw new Error('invalid');
+        return Object.freeze({ ...result, action: 'final', finalOutput });
+      }
+      if (
+        decision.action === 'tool' &&
+        Object.keys(decision).sort().join(',') === 'action,capability,input' &&
+        available.includes(decision.capability as ProductAgentToolCapability) &&
+        typeof decision.input === 'string'
+      ) {
+        const toolInput = decision.input.trim();
+        if (toolInput.length < 1 || toolInput.length > 500) throw new Error('invalid');
+        return Object.freeze({
+          ...result,
+          action: 'tool',
+          capability: decision.capability as ProductAgentToolCapability,
+          toolInput,
+        });
+      }
+      throw new Error('invalid');
+    } catch (error) {
+      throw new Error('model_action_invalid_output', { cause: error });
     }
   }
 

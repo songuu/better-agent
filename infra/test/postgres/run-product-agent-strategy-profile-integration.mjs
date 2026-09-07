@@ -40,6 +40,19 @@ const fixed = JSON.stringify({
   schema_version: 'product-agent-strategy/2',
   temperature: 0,
 });
+const actionStrategy = JSON.stringify({
+  forced_capability: 'knowledge',
+  max_input_tokens: 500,
+  max_iterations: 2,
+  max_output_tokens: 100,
+  max_tool_calls: 1,
+  parameter_defaults: { database_contains: '', knowledge_query: 'healthz' },
+  parameter_extraction: false,
+  routes: [{ model: 'gpt-5.6-sol', description: 'tool decision' }],
+  routing_mode: 'fixed',
+  schema_version: 'product-agent-strategy/4',
+  temperature: 0,
+});
 
 async function main() {
   await harness.start();
@@ -227,6 +240,103 @@ async function main() {
     'ba_runtime_test',
     `SELECT app.complete_agent_product_run('${workspaceId}','${fixedRun}','${actorId}','fixed done','resp-fixed',10,10);`,
   );
+  const knowledgeBaseId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT app.create_product_knowledge_base('${workspaceId}','${actorId}','Actions','Bound evidence');`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.ingest_product_knowledge_document('${workspaceId}','${knowledgeBaseId}','${actorId}',
+      'Action Manual','[{"ordinal":0,"content":"healthz is the production readiness endpoint"}]'::jsonb);`,
+  );
+  const actionAgentId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities('${workspaceId}','${actorId}',
+      'Action Agent','','choose evidence','gpt-5.6-sol','${knowledgeBaseId}',NULL,'text',NULL,
+      '${actionStrategy}'::jsonb)).id;`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_agent_draft('${workspaceId}','${actionAgentId}',1,'${actorId}');`,
+  );
+  const actionConversation = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_product_conversation('${workspaceId}','${actionAgentId}','${actorId}')).id;`,
+  );
+  const actionRun = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT run_id FROM app.begin_agent_product_run('${workspaceId}','${actionConversation}','${actorId}','is it healthy');`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT * FROM app.resolve_agent_product_run_parameters('${workspaceId}','${actionRun}','${actorId}',
+      '{"database_contains":"","knowledge_query":"healthz"}'::jsonb,NULL,NULL,0,0);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT knowledge::text||':'||database::text FROM app.read_agent_product_run_capabilities(
+        '${workspaceId}','${actionRun}','${actorId}');`,
+    ),
+    'true:false',
+    'release-bound action capabilities',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.record_agent_product_run_decision('${workspaceId}','${actionRun}','${actorId}',1,
+        'gpt-5.6-sol','final',NULL,NULL,NULL,'unverified','resp-premature',5,2);`,
+      { allowFailure: true },
+    ),
+    /tool decision|40001/u,
+    'forced capability before final',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.record_agent_product_run_decision('${workspaceId}','${actionRun}','${actorId}',1,
+        'gpt-5.6-sol','tool','database','healthy','[]',NULL,'resp-unbound',5,2);`,
+      { allowFailure: true },
+    ),
+    /tool decision|40001/u,
+    'unbound model tool decision',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.record_agent_product_run_decision('${workspaceId}','${actionRun}','${actorId}',1,
+      'gpt-5.6-sol','tool','knowledge','healthz','[{"content":"readiness endpoint"}]',NULL,
+      'resp-tool',20,8);`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.record_agent_product_run_decision('${workspaceId}','${actionRun}','${actorId}',2,
+      'gpt-5.6-sol','final',NULL,NULL,NULL,'healthy via healthz','resp-final',30,12);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT iteration_count||':'||(iteration_trace->0->>'action')||':'||
+        (iteration_trace->0->>'capability')||':'||(iteration_trace->1->>'action')
+       FROM app.list_agent_product_runs('${workspaceId}') WHERE id='${actionRun}';`,
+    ),
+    '2:tool:knowledge:final',
+    'ordered model tool and final decisions',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.complete_agent_product_run('${workspaceId}','${actionRun}','${actorId}',
+        'forged','resp-final',50,20);`,
+      { allowFailure: true },
+    ),
+    /iteration|40001/u,
+    'v4 terminal output matches final decision',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.complete_agent_product_run('${workspaceId}','${actionRun}','${actorId}',
+      'healthy via healthz','resp-final',50,20);`,
+  );
   assertRejected(
     await harness.psql(
       'ba_runtime_test',
@@ -263,7 +373,7 @@ async function main() {
     'immutable strategy release',
   );
   process.stdout.write(
-    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2/v3 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback, ordered iteration traces and aggregate token budgets.\n`,
+    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2/v3/v4 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback, ordered iteration/action traces, release-bound model tool decisions and aggregate token budgets.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-agent-strategy-profile pass\n');
 }

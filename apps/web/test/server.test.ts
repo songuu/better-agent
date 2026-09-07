@@ -1318,6 +1318,166 @@ describe('Better Agent web runtime', () => {
     });
   });
 
+  it('lets a v4 model select a bound tool and stop on a durable final decision', async () => {
+    const { agents, knowledgeBases, knowledgeDocuments, store } = productFixture();
+    knowledgeBases.push({
+      createdAt: '2026-09-03T00:00:00.000Z',
+      description: '生产运行手册',
+      documentCount: 1,
+      id: '88888888-8888-4888-8888-888888888888',
+      name: '运维知识库',
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    });
+    knowledgeDocuments.push({
+      chunkCount: 1,
+      createdAt: '2026-09-03T00:00:00.000Z',
+      id: '99999999-9999-4999-8999-999999999999',
+      knowledgeBaseId: '88888888-8888-4888-8888-888888888888',
+      title: '运行手册',
+    });
+    agents.push({
+      createdAt: '2026-09-03T00:00:00.000Z',
+      databaseTableId: null,
+      description: '工具决策助手',
+      id: '11111111-1111-4111-8111-111111111111',
+      instructions: '只回答已核验事实。',
+      knowledgeBaseId: '88888888-8888-4888-8888-888888888888',
+      model: 'gpt-5.6-sol',
+      name: '工具决策助手',
+      revision: 2,
+      roleMode: 'text',
+      roleProfile: null,
+      status: 'published',
+      strategyProfile: {
+        ...createDefaultAgentStrategyProfile('gpt-5.6-sol'),
+        maxIterations: 2,
+        maxToolCalls: 2,
+        schemaVersion: 'product-agent-strategy/4',
+      },
+      strategyVersion: 1,
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    });
+    const recorded: unknown[] = [];
+    store.getRunCapabilities = async () => ({ database: false, knowledge: true });
+    store.recordRunDecision = async (_workspaceId, _actorId, _runId, decision) => {
+      recorded.push(decision);
+    };
+    const actionInputs: unknown[] = [];
+    let action = 0;
+    let toolOnly = false;
+    const modelRuntime: ProductModelRuntime = {
+      async decideAction(input) {
+        actionInputs.push(input);
+        action += 1;
+        return toolOnly || action === 1
+          ? {
+              action: 'tool',
+              capability: 'knowledge',
+              inputTokens: 10,
+              outputText: '{"action":"tool","capability":"knowledge","input":"生产健康检查"}',
+              outputTokens: 4,
+              providerRequestId: 'resp_tool',
+              toolInput: '生产健康检查',
+            }
+          : {
+              action: 'final',
+              finalOutput: '服务健康检查使用 /healthz。',
+              inputTokens: 12,
+              outputText: '{"action":"final","output":"服务健康检查使用 /healthz。"}',
+              outputTokens: 6,
+              providerRequestId: 'resp_final',
+            };
+      },
+      async generate() {
+        throw new Error('legacy generation must not run for strategy v4');
+      },
+    };
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      modelRuntime,
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const headers = {
+      ...mutationHeaders,
+      Cookie: login.headers.get('set-cookie')?.split(';', 1)[0] ?? '',
+    };
+    const conversationResponse = await localRequest(
+      origin,
+      '/better-agent/api/product/agents/11111111-1111-4111-8111-111111111111/conversations',
+      { body: '{}', headers, method: 'POST' },
+    );
+    const conversation = (await conversationResponse.json()) as {
+      conversation: ProductConversation;
+    };
+    const response = await localRequest(
+      origin,
+      `/better-agent/api/product/conversations/${conversation.conversation.id}/runs`,
+      {
+        body: JSON.stringify({ message: '服务健康吗？' }),
+        headers,
+        method: 'POST',
+      },
+    );
+
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(201);
+    expect(((await response.json()) as { run: ProductRun }).run).toMatchObject({
+      inputTokens: 22,
+      outputText: '服务健康检查使用 /healthz。',
+      outputTokens: 10,
+      providerRequestId: 'resp_final',
+      status: 'completed',
+    });
+    expect(actionInputs).toHaveLength(2);
+    expect(actionInputs[0]).toMatchObject({ availableCapabilities: ['knowledge'] });
+    expect(actionInputs[1]).toMatchObject({
+      history: [
+        {
+          assistant: '{"action":"tool","capability":"knowledge","input":"生产健康检查"}',
+          user: expect.stringContaining('服务健康检查使用 /healthz。'),
+        },
+      ],
+    });
+    expect(recorded).toEqual([
+      expect.objectContaining({
+        action: 'tool',
+        capability: 'knowledge',
+        iteration: 1,
+        toolInput: '生产健康检查',
+        toolOutput: expect.stringContaining('服务健康检查使用 /healthz。'),
+      }),
+      expect.objectContaining({
+        action: 'final',
+        iteration: 2,
+        outputText: '服务健康检查使用 /healthz。',
+      }),
+    ]);
+
+    toolOnly = true;
+    const limited = await localRequest(
+      origin,
+      `/better-agent/api/product/conversations/${conversation.conversation.id}/runs`,
+      {
+        body: JSON.stringify({ message: '持续调用工具。' }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(limited.status).toBe(502);
+    expect(await limited.json()).toEqual({ error: 'model_iteration_limit_reached' });
+  });
+
   it('resolves published defaults without invoking the parameter extraction model', async () => {
     const { agents, store } = productFixture();
     agents.push({

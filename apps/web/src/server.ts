@@ -695,6 +695,156 @@ export async function createBetterAgentWebServer(
         if (consumedOutputTokens >= strategy.maxOutputTokens) {
           throw new Error('model_output_budget_exhausted');
         }
+        if (strategy.schemaVersion === 'product-agent-strategy/4') {
+          if (
+            modelRuntime.decideAction === undefined ||
+            productStore.getRunCapabilities === undefined ||
+            productStore.recordRunDecision === undefined
+          ) {
+            throw new Error('model_action_runtime_unavailable');
+          }
+          const capabilityFlags = await productStore.getRunCapabilities(
+            workspaceId,
+            actorId,
+            prepared.runId,
+          );
+          const availableCapabilities = [
+            ...(capabilityFlags.knowledge ? (['knowledge'] as const) : []),
+            ...(capabilityFlags.database ? (['database'] as const) : []),
+          ];
+          if (
+            strategy.forcedCapability !== 'none' &&
+            !availableCapabilities.includes(strategy.forcedCapability)
+          ) {
+            throw new Error('model_required_capability_not_bound');
+          }
+          let actionHistory = [...prepared.history];
+          let generationInputTokens = 0;
+          let generationOutputTokens = 0;
+          let toolCalls = 0;
+          const calledCapabilities = new Set<string>();
+          let finalResult:
+            | {
+                readonly inputTokens: number;
+                readonly outputText: string;
+                readonly outputTokens: number;
+                readonly providerRequestId: string;
+              }
+            | undefined;
+          for (let iteration = 1; iteration <= strategy.maxIterations; iteration += 1) {
+            if (consumedInputTokens >= strategy.maxInputTokens) {
+              throw new Error('model_input_budget_exhausted');
+            }
+            if (consumedOutputTokens >= strategy.maxOutputTokens) {
+              throw new Error('model_output_budget_exhausted');
+            }
+            const decision = await modelRuntime.decideAction({
+              availableCapabilities,
+              history: actionHistory,
+              instructions: prepared.instructions,
+              maxOutputTokens: strategy.maxOutputTokens - consumedOutputTokens,
+              model: selectedModel,
+              prompt:
+                iteration === 1
+                  ? prepared.inputText
+                  : '根据上一条工具结果继续，选择下一步能力或给出最终回答。',
+              temperature: strategy.temperature,
+            });
+            consumedInputTokens += decision.inputTokens;
+            consumedOutputTokens += decision.outputTokens;
+            generationInputTokens += decision.inputTokens;
+            generationOutputTokens += decision.outputTokens;
+            if (consumedInputTokens > strategy.maxInputTokens) {
+              throw new Error('model_input_budget_exhausted');
+            }
+            if (consumedOutputTokens > strategy.maxOutputTokens) {
+              throw new Error('model_output_budget_exhausted');
+            }
+            if (decision.action === 'final') {
+              if (
+                strategy.forcedCapability !== 'none' &&
+                !calledCapabilities.has(strategy.forcedCapability)
+              ) {
+                throw new Error('model_required_capability_not_called');
+              }
+              await productStore.recordRunDecision(workspaceId, actorId, prepared.runId, {
+                action: 'final',
+                inputTokens: decision.inputTokens,
+                iteration,
+                model: selectedModel,
+                outputText: decision.finalOutput,
+                outputTokens: decision.outputTokens,
+                providerRequestId: decision.providerRequestId,
+              });
+              finalResult = {
+                inputTokens: generationInputTokens,
+                outputText: decision.finalOutput,
+                outputTokens: generationOutputTokens,
+                providerRequestId: decision.providerRequestId,
+              };
+              break;
+            }
+            if (toolCalls >= strategy.maxToolCalls) {
+              throw new Error('model_tool_budget_exhausted');
+            }
+            toolCalls += 1;
+            calledCapabilities.add(decision.capability);
+            const toolOutput =
+              decision.capability === 'knowledge'
+                ? withKnowledgeContext(
+                    '',
+                    await productStore.searchAgentKnowledge(
+                      workspaceId,
+                      prepared.conversationId,
+                      decision.toolInput,
+                    ),
+                  ).trim() || 'KNOWLEDGE_CONTEXT\n[]\nEND_KNOWLEDGE_CONTEXT'
+                : withDatabaseContext(
+                    '',
+                    filterDatabaseContext(
+                      await productStore.readAgentDatabase(workspaceId, prepared.conversationId),
+                      decision.toolInput,
+                    ),
+                  ).trim() || 'DATABASE_CONTEXT\n[]\nEND_DATABASE_CONTEXT';
+            if (
+              strategy.forcedCapability === decision.capability &&
+              toolOutput.includes('\n[]\n')
+            ) {
+              throw new Error(
+                decision.capability === 'knowledge'
+                  ? 'model_required_knowledge_no_result'
+                  : 'model_required_database_no_result',
+              );
+            }
+            await productStore.recordRunDecision(workspaceId, actorId, prepared.runId, {
+              action: 'tool',
+              capability: decision.capability,
+              inputTokens: decision.inputTokens,
+              iteration,
+              model: selectedModel,
+              outputTokens: decision.outputTokens,
+              providerRequestId: decision.providerRequestId,
+              toolInput: decision.toolInput,
+              toolOutput,
+            });
+            actionHistory = [
+              ...actionHistory,
+              {
+                assistant: decision.outputText,
+                user: `TOOL_RESULT\n${toolOutput}\nEND_TOOL_RESULT`,
+              },
+            ];
+          }
+          if (finalResult === undefined) throw new Error('model_iteration_limit_reached');
+          const run = await productStore.completeRun(
+            workspaceId,
+            actorId,
+            prepared.runId,
+            finalResult,
+          );
+          sendJson(request, response, 201, { run });
+          return true;
+        }
         const callKnowledge =
           strategy.maxToolCalls > 0 &&
           (strategy.forcedCapability === 'knowledge' || strategy.forcedCapability === 'none');
