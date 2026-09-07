@@ -116,6 +116,7 @@ function currentCapabilityKinds() {
     ...(form.elements.knowledge_base_id.value ? ['knowledge'] : []),
     ...(form.elements.database_table_id.value ? ['database'] : []),
     ...(form.elements.child_agent_id.value ? ['subagent'] : []),
+    ...(form.elements.flow_id.value ? ['flow'] : []),
   ];
 }
 
@@ -527,6 +528,7 @@ async function loadFlows() {
   const payload = await request('/flows');
   state.flows = payload.flows;
   renderFlows();
+  renderAgentFlowOptions();
 }
 
 function upsertFlow(flow) {
@@ -588,6 +590,21 @@ function renderAgentChildOptions() {
     ...state.agents
       .filter((agent) => agent.status === 'published' && agent.id !== state.current?.id)
       .map((agent) => `<option value="${agent.id}">${escapeHtml(agent.name)} · LIVE</option>`),
+  ].join('');
+  select.value = selected;
+}
+
+function renderAgentFlowOptions() {
+  const select = byId('agent-flow');
+  const selected = state.current?.flowId || '';
+  select.innerHTML = [
+    '<option value="">不绑定 Flow</option>',
+    ...state.flows
+      .filter((flow) => flow.publishedVersion)
+      .map(
+        (flow) =>
+          `<option value="${flow.id}">${escapeHtml(flow.name)} · V${flow.publishedVersion}</option>`,
+      ),
   ].join('');
   select.value = selected;
 }
@@ -693,6 +710,8 @@ async function loadDatabaseTables() {
   state.databaseTables = payload.database_tables;
   renderDatabaseTables();
   renderAgentDatabaseOptions();
+  renderAgentChildOptions();
+  renderAgentFlowOptions();
   renderAgentChildOptions();
   if (state.currentDatabase) {
     const id = state.currentDatabase.id;
@@ -1003,6 +1022,7 @@ form.addEventListener('submit', async (event) => {
     child_agent_id: values.child_agent_id || null,
     database_table_id: values.database_table_id || null,
     description: values.description,
+    flow_id: values.flow_id || null,
     instructions: values.instructions,
     knowledge_base_id: values.knowledge_base_id || null,
     model: values.model,

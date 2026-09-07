@@ -63,6 +63,7 @@ export interface AgentDraft {
   readonly createdAt: string;
   readonly databaseTableId: string | null;
   readonly description: string;
+  readonly flowId?: string | null;
   readonly id: string;
   readonly instructions: string;
   readonly knowledgeBaseId: string | null;
@@ -81,6 +82,7 @@ export interface AgentDraftInput {
   readonly childAgentId: string | null;
   readonly databaseTableId: string | null;
   readonly description: string;
+  readonly flowId: string | null;
   readonly instructions: string;
   readonly knowledgeBaseId: string | null;
   readonly model: ProductModel;
@@ -154,6 +156,13 @@ export interface ProductRunCapabilities {
   readonly database: boolean;
   readonly knowledge: boolean;
   readonly subagent: boolean;
+}
+
+export interface ProductRunFlowResult {
+  readonly flowId: string;
+  readonly flowReleaseVersion: number;
+  readonly name: string;
+  readonly outputText: string;
 }
 
 export interface ProductRunSubagent {
@@ -341,6 +350,12 @@ export interface ProductStore {
     actorId: string,
     runId: string,
   ): Promise<ProductRunCapabilities>;
+  executeRunFlow?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    inputText: string,
+  ): Promise<ProductRunFlowResult | null>;
   getRunSubagent?(workspaceId: string, actorId: string, runId: string): Promise<ProductRunSubagent>;
   completeRun(
     workspaceId: string,
@@ -701,6 +716,7 @@ interface AgentRow {
   readonly child_agent_id: string | null;
   readonly created_at: Date | string;
   readonly description: string;
+  readonly flow_id: string | null;
   readonly database_table_id: string | null;
   readonly id: string;
   readonly instructions: string;
@@ -1046,6 +1062,7 @@ function toDraft(row: AgentRow): AgentDraft {
     createdAt: asIso(row.created_at),
     databaseTableId: row.database_table_id,
     description: row.description,
+    flowId: row.flow_id,
     id: row.id,
     instructions: row.instructions,
     knowledgeBaseId: row.knowledge_base_id,
@@ -1869,6 +1886,34 @@ export class PostgresProductStore implements ProductStore {
     });
   }
 
+  async executeRunFlow(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    inputText: string,
+  ): Promise<ProductRunFlowResult | null> {
+    const result = await this.#pool.query<{
+      readonly flow_id: string;
+      readonly flow_release_version: string | number;
+      readonly graph: unknown;
+      readonly name: string;
+    }>('SELECT * FROM app.read_agent_product_run_flow($1::uuid, $2::uuid, $3::uuid)', [
+      workspaceId,
+      runId,
+      actorId,
+    ]);
+    const row = result.rows[0];
+    if (row === undefined) return null;
+    const graph = validateProductFlowGraph(row.graph);
+    const execution = executeProductFlow(graph, { input: inputText });
+    return Object.freeze({
+      flowId: row.flow_id,
+      flowReleaseVersion: positiveInteger(row.flow_release_version, 'Flow release version'),
+      name: row.name,
+      outputText: execution.output,
+    });
+  }
+
   async getRunSubagent(
     workspaceId: string,
     actorId: string,
@@ -2159,7 +2204,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     const result = await this.#pool.query<{ readonly id: string }>(
-      'SELECT (app.create_agent_draft_with_strategy_capabilities_v5($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid)).id AS id',
+      'SELECT (app.create_agent_draft_with_strategy_capabilities_v6($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid, $13::uuid)).id AS id',
       [
         workspaceId,
         actorId,
@@ -2173,6 +2218,7 @@ export class PostgresProductStore implements ProductStore {
         input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
         strategyProfileToStorage(input.strategyProfile),
         input.childAgentId,
+        input.flowId,
       ],
     );
     const id = result.rows[0]?.id;
@@ -2187,7 +2233,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     await this.#pool.query(
-      'SELECT app.update_agent_draft_with_strategy_capabilities_v5($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid)',
+      'SELECT app.update_agent_draft_with_strategy_capabilities_v6($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid, $14::uuid)',
       [
         workspaceId,
         agentId,
@@ -2202,6 +2248,7 @@ export class PostgresProductStore implements ProductStore {
         input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
         strategyProfileToStorage(input.strategyProfile),
         input.childAgentId,
+        input.flowId,
       ],
     );
     return await this.#getAgent(workspaceId, agentId);
@@ -2257,6 +2304,7 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
           'role_profile',
           'strategy_profile',
           'child_agent_id',
+          'flow_id',
         ].includes(key),
     )
   ) {
@@ -2320,10 +2368,15 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   }
   if (strategyProfile.forcedCapability === 'subagent' && childAgentId === null)
     throw new Error('A forced SubAgent call requires a bound child Agent');
+  const flowId = input.flow_id ?? null;
+  if (flowId !== null && (typeof flowId !== 'string' || !PRODUCT_UUID.test(flowId))) {
+    throw new Error('Agent Flow id must be a UUID or null');
+  }
   return Object.freeze({
     childAgentId,
     databaseTableId,
     description,
+    flowId,
     instructions,
     knowledgeBaseId,
     model: input.model as ProductModel,

@@ -262,8 +262,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/db',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 193,
-    successMarker: '@better-agent/db:test:       Tests  193 passed (193)',
+    testCount: 196,
+    successMarker: '@better-agent/db:test:       Tests  196 passed (196)',
   }),
   Object.freeze({
     packageName: '@better-agent/domain-contracts',
@@ -504,6 +504,7 @@ function validateMigrationFiles(value) {
       '033',
       '034',
       '035',
+      '036',
     ],
     'migration IDs',
   );
