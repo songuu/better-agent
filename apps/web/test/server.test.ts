@@ -439,6 +439,8 @@ function productFixture(): {
         id: runId,
         inputText: input.message,
         inputTokens: 0,
+        iterationCount: 0,
+        iterationTrace: [],
         model: agent.model,
         outputText: null,
         outputTokens: 0,
@@ -1136,12 +1138,14 @@ describe('Better Agent web runtime', () => {
       status: 'published',
       strategyProfile: {
         ...createDefaultAgentStrategyProfile('gpt-5.6-sol'),
+        maxIterations: 2,
         parameterDefaults: { databaseContains: 'healthy', knowledgeQuery: '默认健康检查' },
         routes: [
           { description: '快速状态查询', model: 'gpt-5.4-mini' },
           { description: '复杂诊断', model: 'gpt-5.6-sol' },
         ],
         routingMode: 'autonomous',
+        schemaVersion: 'product-agent-strategy/3',
         parameterExtraction: true,
       },
       strategyVersion: 1,
@@ -1150,6 +1154,7 @@ describe('Better Agent web runtime', () => {
     let providerFails = false;
     const extractedQueries: string[] = [];
     const persistedParameters: unknown[] = [];
+    const persistedIterations: unknown[] = [];
     const generationInputs: Parameters<ProductModelRuntime['generate']>[0][] = [];
     const originalSearchAgentKnowledge = store.searchAgentKnowledge.bind(store);
     store.searchAgentKnowledge = async (workspaceId, conversationId, query) => {
@@ -1160,15 +1165,18 @@ describe('Better Agent web runtime', () => {
       persistedParameters.push(resolution);
       return resolution.effectiveParameters;
     };
+    store.recordRunIteration = async (_workspaceId, _actorId, _runId, iteration) => {
+      persistedIterations.push(iteration);
+    };
     const modelRuntime: ProductModelRuntime = {
       async generate(input) {
         if (providerFails) throw new Error('model_provider_http_503');
         generationInputs.push(input);
         return {
           inputTokens: 12,
-          outputText: '当前服务正常。',
+          outputText: generationInputs.length === 1 ? '初步判断服务正常。' : '当前服务正常。',
           outputTokens: 6,
-          providerRequestId: 'resp_test',
+          providerRequestId: `resp_test_${String(generationInputs.length)}`,
         };
       },
       async selectModel() {
@@ -1246,7 +1254,25 @@ describe('Better Agent web runtime', () => {
       extractedParameters: { databaseContains: '', knowledgeQuery: '生产健康检查' },
       providerRequestId: 'resp_parameters',
     });
-    expect(generationInputs).toHaveLength(1);
+    expect(persistedIterations).toEqual([
+      {
+        inputTokens: 12,
+        iteration: 1,
+        model: 'gpt-5.4-mini',
+        outputText: '初步判断服务正常。',
+        outputTokens: 6,
+        providerRequestId: 'resp_test_1',
+      },
+      {
+        inputTokens: 12,
+        iteration: 2,
+        model: 'gpt-5.4-mini',
+        outputText: '当前服务正常。',
+        outputTokens: 6,
+        providerRequestId: 'resp_test_2',
+      },
+    ]);
+    expect(generationInputs).toHaveLength(2);
     expect(generationInputs[0]).toMatchObject({
       maxOutputTokens: 1_995,
       model: 'gpt-5.4-mini',
@@ -1260,6 +1286,12 @@ describe('Better Agent web runtime', () => {
     expect(generationInputs[0]?.instructions).toContain('service_status');
     expect(generationInputs[0]?.instructions).toContain('healthy');
     expect(generationInputs[0]?.instructions).not.toContain('paused');
+    expect(generationInputs[1]).toMatchObject({
+      maxOutputTokens: 1_989,
+      model: 'gpt-5.4-mini',
+    });
+    expect(generationInputs[1]?.history.at(-1)?.assistant).toBe('初步判断服务正常。');
+    expect(generationInputs[1]?.instructions).toContain('ITERATION_REFINEMENT');
 
     providerFails = true;
     const failedResponse = await localRequest(

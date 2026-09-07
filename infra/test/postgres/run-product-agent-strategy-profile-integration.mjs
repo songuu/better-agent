@@ -14,7 +14,7 @@ const actorId = 'f2900000-0000-4000-8000-000000000002';
 const autonomous = JSON.stringify({
   forced_capability: 'none',
   max_input_tokens: 1000,
-  max_iterations: 1,
+  max_iterations: 2,
   max_output_tokens: 200,
   max_tool_calls: 2,
   parameter_defaults: { database_contains: 'healthy', knowledge_query: 'production health' },
@@ -24,7 +24,7 @@ const autonomous = JSON.stringify({
     { model: 'gpt-5.6-sol', description: 'reasoning' },
   ],
   routing_mode: 'autonomous',
-  schema_version: 'product-agent-strategy/2',
+  schema_version: 'product-agent-strategy/3',
   temperature: 0.3,
 });
 const fixed = JSON.stringify({
@@ -132,9 +132,57 @@ async function main() {
     /parameter resolution conflict|40001/u,
     'parameter resolution replay',
   );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.complete_agent_product_run('${workspaceId}','${runV1}','${actorId}','bypass','resp-bypass',100,80);`,
+      { allowFailure: true },
+    ),
+    /iteration|40001/u,
+    'v3 completion before iteration evidence',
+  );
   await harness.psql(
     'ba_runtime_test',
-    `SELECT app.complete_agent_product_run('${workspaceId}','${runV1}','${actorId}','done','resp-1',100,80);`,
+    `SELECT app.record_agent_product_run_iteration('${workspaceId}','${runV1}','${actorId}',1,
+      'gpt-5.4-mini','draft','resp-iteration-1',40,30);`,
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.record_agent_product_run_iteration('${workspaceId}','${runV1}','${actorId}',1,
+        'gpt-5.4-mini','duplicate','resp-iteration-duplicate',1,1);`,
+      { allowFailure: true },
+    ),
+    /iteration|40001/u,
+    'iteration sequence replay',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.record_agent_product_run_iteration('${workspaceId}','${runV1}','${actorId}',2,
+      'gpt-5.4-mini','done','resp-iteration-2',60,50);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT iteration_count||':'||(iteration_trace->0->>'output_text')||':'||
+        (iteration_trace->1->>'provider_request_id')
+       FROM app.list_agent_product_runs('${workspaceId}') WHERE id='${runV1}';`,
+    ),
+    '2:draft:resp-iteration-2',
+    'ordered immutable iteration evidence',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.complete_agent_product_run('${workspaceId}','${runV1}','${actorId}','forged','resp-iteration-2',100,80);`,
+      { allowFailure: true },
+    ),
+    /iteration|40001/u,
+    'terminal output must match final iteration',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.complete_agent_product_run('${workspaceId}','${runV1}','${actorId}','done','resp-iteration-2',100,80);`,
   );
   const fixedRun = await harness.queryScalar(
     'ba_runtime_test',
@@ -215,7 +263,7 @@ async function main() {
     'immutable strategy release',
   );
   process.stdout.write(
-    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback and aggregate token budgets.\n`,
+    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2/v3 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback, ordered iteration traces and aggregate token budgets.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-agent-strategy-profile pass\n');
 }

@@ -720,19 +720,70 @@ export async function createBetterAgentWebServer(
         if (strategy.forcedCapability === 'database' && selectedDatabaseRows.length === 0) {
           throw new Error('model_required_database_no_result');
         }
-        const remainingOutputTokens = strategy.maxOutputTokens - consumedOutputTokens;
-        const output = await modelRuntime.generate({
-          history: prepared.history,
-          instructions: withDatabaseContext(
-            withKnowledgeContext(prepared.instructions, knowledgeHits),
-            selectedDatabaseRows,
-          ),
-          maxOutputTokens: remainingOutputTokens,
-          model: selectedModel,
-          prompt: prepared.inputText,
-          temperature: strategy.temperature,
+        if (
+          strategy.schemaVersion === 'product-agent-strategy/3' &&
+          productStore.recordRunIteration === undefined
+        ) {
+          throw new Error('model_iteration_recorder_unavailable');
+        }
+        const groundedInstructions = withDatabaseContext(
+          withKnowledgeContext(prepared.instructions, knowledgeHits),
+          selectedDatabaseRows,
+        );
+        let generationInputTokens = 0;
+        let generationOutputTokens = 0;
+        let previousOutput: string | null = null;
+        let output: Awaited<ReturnType<ProductModelRuntime['generate']>> | null = null;
+        for (let iteration = 1; iteration <= strategy.maxIterations; iteration += 1) {
+          if (consumedInputTokens >= strategy.maxInputTokens) {
+            throw new Error('model_input_budget_exhausted');
+          }
+          if (consumedOutputTokens >= strategy.maxOutputTokens) {
+            throw new Error('model_output_budget_exhausted');
+          }
+          const isRefinement = previousOutput !== null;
+          const iterationHistory =
+            previousOutput === null
+              ? prepared.history
+              : [...prepared.history, { assistant: previousOutput, user: prepared.inputText }];
+          output = await modelRuntime.generate({
+            history: iterationHistory,
+            instructions: isRefinement
+              ? `${groundedInstructions}\n\nITERATION_REFINEMENT\n复核上一版回答的事实依据、遗漏和表达；仅输出修订后的最终回答。\nEND_ITERATION_REFINEMENT`
+              : groundedInstructions,
+            maxOutputTokens: strategy.maxOutputTokens - consumedOutputTokens,
+            model: selectedModel,
+            prompt: isRefinement ? '请复核并改进上一版回答。' : prepared.inputText,
+            temperature: strategy.temperature,
+          });
+          consumedInputTokens += output.inputTokens;
+          consumedOutputTokens += output.outputTokens;
+          generationInputTokens += output.inputTokens;
+          generationOutputTokens += output.outputTokens;
+          if (consumedInputTokens > strategy.maxInputTokens) {
+            throw new Error('model_input_budget_exhausted');
+          }
+          if (consumedOutputTokens > strategy.maxOutputTokens) {
+            throw new Error('model_output_budget_exhausted');
+          }
+          if (strategy.schemaVersion === 'product-agent-strategy/3') {
+            await productStore.recordRunIteration?.(workspaceId, actorId, prepared.runId, {
+              inputTokens: output.inputTokens,
+              iteration,
+              model: selectedModel,
+              outputText: output.outputText,
+              outputTokens: output.outputTokens,
+              providerRequestId: output.providerRequestId,
+            });
+          }
+          previousOutput = output.outputText;
+        }
+        if (output === null) throw new Error('model_iteration_missing');
+        const run = await productStore.completeRun(workspaceId, actorId, prepared.runId, {
+          ...output,
+          inputTokens: generationInputTokens,
+          outputTokens: generationOutputTokens,
         });
-        const run = await productStore.completeRun(workspaceId, actorId, prepared.runId, output);
         sendJson(request, response, 201, { run });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'model_provider_failed';

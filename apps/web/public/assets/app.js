@@ -130,7 +130,7 @@ function readStrategyProfile() {
   return {
     forced_capability: form.elements.forced_capability.value,
     max_input_tokens: Number(form.elements.max_input_tokens.value),
-    max_iterations: 1,
+    max_iterations: Number(form.elements.max_iterations.value),
     max_output_tokens: Number(form.elements.max_output_tokens.value),
     max_tool_calls: Number(form.elements.max_tool_calls.value),
     parameter_defaults: {
@@ -140,7 +140,7 @@ function readStrategyProfile() {
     parameter_extraction: form.elements.parameter_extraction.checked,
     routes,
     routing_mode: form.elements.routing_mode.value,
-    schema_version: 'product-agent-strategy/2',
+    schema_version: 'product-agent-strategy/3',
     temperature: Number(form.elements.temperature.value),
   };
 }
@@ -149,6 +149,7 @@ function populateStrategyProfile(profile = null, model = 'gpt-5.6-sol', version 
   const strategy = profile || {
     forcedCapability: 'none',
     maxInputTokens: 32000,
+    maxIterations: 1,
     maxOutputTokens: 2000,
     maxToolCalls: 2,
     parameterDefaults: { databaseContains: '', knowledgeQuery: '' },
@@ -160,6 +161,7 @@ function populateStrategyProfile(profile = null, model = 'gpt-5.6-sol', version 
   form.elements.routing_mode.value = strategy.routingMode;
   form.elements.forced_capability.value = strategy.forcedCapability;
   form.elements.max_input_tokens.value = String(strategy.maxInputTokens);
+  form.elements.max_iterations.value = String(strategy.maxIterations || 1);
   form.elements.max_output_tokens.value = String(strategy.maxOutputTokens);
   form.elements.max_tool_calls.value = String(strategy.maxToolCalls);
   form.elements.knowledge_query_default.value = strategy.parameterDefaults?.knowledgeQuery || '';
@@ -679,7 +681,7 @@ function renderRuns() {
   list.innerHTML = state.runs
     .map(
       (run) =>
-        `<article class="run-row"><span>${String(run.sequence).padStart(2, '0')}</span><div><b>${escapeHtml(run.inputText)}</b><small>${escapeHtml(run.outputText || run.errorCode || '运行中')}</small></div><em class="is-${run.status}">${run.status.toUpperCase()}</em><time>${new Date(run.createdAt).toLocaleString('zh-CN')}</time></article>`,
+        `<article class="run-row"><span>${String(run.sequence).padStart(2, '0')}</span><div><b>${escapeHtml(run.inputText)}</b><small>${escapeHtml(run.outputText || run.errorCode || '运行中')} · ${Number(run.iterationCount || 0)} ITER</small></div><em class="is-${run.status}">${run.status.toUpperCase()}</em><time>${new Date(run.createdAt).toLocaleString('zh-CN')}</time></article>`,
     )
     .join('');
 }

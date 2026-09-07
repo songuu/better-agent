@@ -69,6 +69,31 @@ describe('product Agent input', () => {
     expect(strategy.routes).toHaveLength(2);
     expect(Object.isFrozen(strategy.routes)).toBe(true);
     expect(Object.isFrozen(strategy.parameterDefaults)).toBe(true);
+    expect(
+      parseAgentStrategyProfile({
+        forced_capability: 'none',
+        max_input_tokens: 32000,
+        max_iterations: 3,
+        max_output_tokens: 2000,
+        max_tool_calls: 2,
+        parameter_defaults: { database_contains: '', knowledge_query: '' },
+        parameter_extraction: false,
+        routes: [{ description: '迭代模型', model: 'gpt-5.6-sol' }],
+        routing_mode: 'fixed',
+        schema_version: 'product-agent-strategy/3',
+        temperature: 0.2,
+      }),
+    ).toMatchObject({ maxIterations: 3, schemaVersion: 'product-agent-strategy/3' });
+    expect(() => parseAgentStrategyProfile({ ...strategy, maxIterations: 2 })).toThrow(
+      'Agent strategy v2 supports exactly one model iteration',
+    );
+    expect(() =>
+      parseAgentStrategyProfile({
+        ...strategy,
+        maxIterations: 5,
+        schemaVersion: 'product-agent-strategy/3',
+      }),
+    ).toThrow('Agent strategy v3 supports 1–4 model iterations');
   });
 
   it('reads immutable v1 strategy releases with empty parameter defaults', () => {

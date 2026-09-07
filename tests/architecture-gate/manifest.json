@@ -107,7 +107,9 @@
     "030_product_agent_parameter_extraction.down.sql",
     "030_product_agent_parameter_extraction.up.sql",
     "031_product_agent_parameter_defaults.down.sql",
-    "031_product_agent_parameter_defaults.up.sql"
+    "031_product_agent_parameter_defaults.up.sql",
+    "032_product_agent_iteration_trace.down.sql",
+    "032_product_agent_iteration_trace.up.sql"
   ],
   "postgresSuites": [
     {
@@ -267,7 +269,7 @@
     {
       "id": "product-agent-strategy-profile",
       "file": "infra/test/postgres/run-product-agent-strategy-profile-integration.mjs",
-      "sha256": "5fe7211caecb46be11920bc93b0cb24bbf0238536d338a524c34c6db95e3c148",
+      "sha256": "0782a34661cb5275ce7e34fbacdc0fc1bfbb3997186ac87acb99004855491a90",
       "mode": "real",
       "successMarker": "architecture-gate-suite/1 product-agent-strategy-profile pass"
     },
@@ -351,8 +353,8 @@
     {
       "packageName": "@better-agent/db",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 184,
-      "successMarker": "@better-agent/db:test:       Tests  184 passed (184)"
+      "testCount": 186,
+      "successMarker": "@better-agent/db:test:       Tests  186 passed (186)"
     },
     {
       "packageName": "@better-agent/domain-contracts",
@@ -427,7 +429,7 @@
         "@better-agent/auth:test:       Tests  54 passed (54)",
         "@better-agent/billing-core:test:       Tests  43 passed (43)",
         "@better-agent/database-capability:test:       Tests  8 passed (8)",
-        "@better-agent/db:test:       Tests  184 passed (184)",
+        "@better-agent/db:test:       Tests  186 passed (186)",
         "@better-agent/domain-contracts:test:       Tests  193 passed (193)",
         "@better-agent/instruction-skill:test:       Tests  8 passed (8)",
         "@better-agent/knowledge-core:test:       Tests  7 passed (7)",

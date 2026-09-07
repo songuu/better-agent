@@ -22,14 +22,17 @@ export interface ProductAgentParameters {
 export interface ProductAgentStrategyProfile {
   readonly forcedCapability: ProductAgentForcedCapability;
   readonly maxInputTokens: number;
-  readonly maxIterations: 1;
+  readonly maxIterations: 1 | 2 | 3 | 4;
   readonly maxOutputTokens: number;
   readonly maxToolCalls: number;
   readonly parameterDefaults: ProductAgentParameters;
   readonly parameterExtraction: boolean;
   readonly routes: readonly ProductAgentModelRoute[];
   readonly routingMode: ProductAgentRoutingMode;
-  readonly schemaVersion: 'product-agent-strategy/1' | 'product-agent-strategy/2';
+  readonly schemaVersion:
+    | 'product-agent-strategy/1'
+    | 'product-agent-strategy/2'
+    | 'product-agent-strategy/3';
   readonly temperature: number;
 }
 export const PRODUCT_AGENT_ROLE_THEMES = [
@@ -102,12 +105,23 @@ export interface ProductRun {
   readonly id: string;
   readonly inputText: string;
   readonly inputTokens: number;
+  readonly iterationCount: number;
+  readonly iterationTrace: readonly ProductRunIteration[];
   readonly model: ProductModel;
   readonly outputText: string | null;
   readonly outputTokens: number;
   readonly providerRequestId: string | null;
   readonly sequence: number;
   readonly status: 'pending' | 'completed' | 'failed';
+}
+
+export interface ProductRunIteration {
+  readonly inputTokens: number;
+  readonly iteration: number;
+  readonly model: ProductModel;
+  readonly outputText: string;
+  readonly outputTokens: number;
+  readonly providerRequestId: string;
 }
 
 export interface PreparedProductRun {
@@ -360,6 +374,19 @@ export interface ProductStore {
       readonly providerRequestId: string | null;
     },
   ): Promise<ProductAgentParameters>;
+  recordRunIteration?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    iteration: {
+      readonly inputTokens: number;
+      readonly iteration: number;
+      readonly model: ProductModel;
+      readonly outputText: string;
+      readonly outputTokens: number;
+      readonly providerRequestId: string;
+    },
+  ): Promise<void>;
   searchAgentKnowledge(
     workspaceId: string,
     conversationId: string,
@@ -484,6 +511,8 @@ interface ProductRunRow {
   readonly id: string;
   readonly input_text: string;
   readonly input_tokens: string | number;
+  readonly iteration_count: string | number;
+  readonly iteration_trace: unknown;
   readonly model: string;
   readonly output_text: string | null;
   readonly output_tokens: string | number;
@@ -603,13 +632,18 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
   const maxInputTokens = strategyValue(profile, 'maxInputTokens', 'max_input_tokens');
   const maxOutputTokens = strategyValue(profile, 'maxOutputTokens', 'max_output_tokens');
   const routesValue = profile.routes;
-  if (schemaVersion !== 'product-agent-strategy/1' && schemaVersion !== 'product-agent-strategy/2')
+  if (
+    schemaVersion !== 'product-agent-strategy/1' &&
+    schemaVersion !== 'product-agent-strategy/2' &&
+    schemaVersion !== 'product-agent-strategy/3'
+  )
     throw new Error('Agent strategy schema is unsupported');
   if (schemaVersion === 'product-agent-strategy/1' && parameterDefaultsValue !== undefined) {
     throw new Error('Agent strategy v1 cannot contain parameter defaults');
   }
   if (
-    schemaVersion === 'product-agent-strategy/2' &&
+    (schemaVersion === 'product-agent-strategy/2' ||
+      schemaVersion === 'product-agent-strategy/3') &&
     (typeof parameterDefaultsValue !== 'object' ||
       parameterDefaultsValue === null ||
       Array.isArray(parameterDefaultsValue))
@@ -620,7 +654,10 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
     databaseContains: '',
     knowledgeQuery: '',
   });
-  if (schemaVersion === 'product-agent-strategy/2') {
+  if (
+    schemaVersion === 'product-agent-strategy/2' ||
+    schemaVersion === 'product-agent-strategy/3'
+  ) {
     const defaults = parameterDefaultsValue as Record<string, unknown>;
     const expectedKeys = hasCamelKeys
       ? ['databaseContains', 'knowledgeQuery']
@@ -649,8 +686,19 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
     throw new Error('Agent forced capability is invalid');
   if (typeof parameterExtraction !== 'boolean')
     throw new Error('Agent parameter extraction flag is invalid');
-  if (maxIterations !== 1)
-    throw new Error('Agent strategy v1 supports exactly one model iteration');
+  if (
+    (schemaVersion === 'product-agent-strategy/1' ||
+      schemaVersion === 'product-agent-strategy/2') &&
+    maxIterations !== 1
+  )
+    throw new Error(
+      `Agent strategy ${schemaVersion.endsWith('/1') ? 'v1' : 'v2'} supports exactly one model iteration`,
+    );
+  if (
+    schemaVersion === 'product-agent-strategy/3' &&
+    (!Number.isSafeInteger(maxIterations) || Number(maxIterations) < 1 || Number(maxIterations) > 4)
+  )
+    throw new Error('Agent strategy v3 supports 1–4 model iterations');
   if (!Number.isSafeInteger(maxToolCalls) || Number(maxToolCalls) < 0 || Number(maxToolCalls) > 2)
     throw new Error('Agent tool call budget must be 0–2');
   if (forcedCapability !== 'none' && Number(maxToolCalls) < 1)
@@ -706,7 +754,7 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
   return Object.freeze({
     forcedCapability: forcedCapability as ProductAgentForcedCapability,
     maxInputTokens: Number(maxInputTokens),
-    maxIterations: 1,
+    maxIterations: Number(maxIterations) as 1 | 2 | 3 | 4,
     maxOutputTokens: Number(maxOutputTokens),
     maxToolCalls: Number(maxToolCalls),
     parameterDefaults,
@@ -725,7 +773,8 @@ function strategyProfileToStorage(profile: ProductAgentStrategyProfile): string 
     max_iterations: profile.maxIterations,
     max_output_tokens: profile.maxOutputTokens,
     max_tool_calls: profile.maxToolCalls,
-    ...(profile.schemaVersion === 'product-agent-strategy/2'
+    ...(profile.schemaVersion === 'product-agent-strategy/2' ||
+    profile.schemaVersion === 'product-agent-strategy/3'
       ? {
           parameter_defaults: {
             database_contains: profile.parameterDefaults.databaseContains,
@@ -881,6 +930,43 @@ function toRun(row: ProductRunRow): ProductRun {
   if (row.status !== 'pending' && row.status !== 'completed' && row.status !== 'failed') {
     throw new Error('product store returned an unknown Run status');
   }
+  if (!Array.isArray(row.iteration_trace)) {
+    throw new Error('product store returned an invalid Run iteration trace');
+  }
+  const iterationTrace = row.iteration_trace.map((value, index): ProductRunIteration => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new Error('product store returned an invalid Run iteration');
+    }
+    const item = value as Record<string, unknown>;
+    if (
+      Object.keys(item).sort().join(',') !==
+        'input_tokens,iteration,model,output_text,output_tokens,provider_request_id' ||
+      item.iteration !== index + 1 ||
+      !PRODUCT_MODELS.includes(item.model as ProductModel) ||
+      typeof item.output_text !== 'string' ||
+      typeof item.provider_request_id !== 'string'
+    ) {
+      throw new Error('product store returned an invalid Run iteration');
+    }
+    return Object.freeze({
+      inputTokens: nonnegativeInteger(
+        item.input_tokens as string | number,
+        'iteration input token count',
+      ),
+      iteration: positiveInteger(item.iteration as string | number, 'iteration ordinal'),
+      model: item.model as ProductModel,
+      outputText: item.output_text,
+      outputTokens: nonnegativeInteger(
+        item.output_tokens as string | number,
+        'iteration output token count',
+      ),
+      providerRequestId: item.provider_request_id,
+    });
+  });
+  const iterationCount = nonnegativeInteger(row.iteration_count, 'iteration count');
+  if (iterationTrace.length !== iterationCount) {
+    throw new Error('product store returned inconsistent Run iteration evidence');
+  }
   return Object.freeze({
     completedAt: row.completed_at === null ? null : asIso(row.completed_at),
     conversationId: row.conversation_id,
@@ -889,6 +975,8 @@ function toRun(row: ProductRunRow): ProductRun {
     id: row.id,
     inputText: row.input_text,
     inputTokens: nonnegativeInteger(row.input_tokens, 'input token count'),
+    iterationCount,
+    iterationTrace: Object.freeze(iterationTrace),
     model: row.model as ProductModel,
     outputText: row.output_text,
     outputTokens: nonnegativeInteger(row.output_tokens, 'output token count'),
@@ -1515,6 +1603,35 @@ export class PostgresProductStore implements ProductStore {
       databaseContains: row.database_contains,
       knowledgeQuery: row.knowledge_query,
     });
+  }
+
+  async recordRunIteration(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    iteration: {
+      readonly inputTokens: number;
+      readonly iteration: number;
+      readonly model: ProductModel;
+      readonly outputText: string;
+      readonly outputTokens: number;
+      readonly providerRequestId: string;
+    },
+  ): Promise<void> {
+    await this.#pool.query(
+      'SELECT app.record_agent_product_run_iteration($1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::text, $6::text, $7::text, $8::bigint, $9::bigint)',
+      [
+        workspaceId,
+        runId,
+        actorId,
+        iteration.iteration,
+        iteration.model,
+        iteration.outputText,
+        iteration.providerRequestId,
+        iteration.inputTokens,
+        iteration.outputTokens,
+      ],
+    );
   }
 
   async completeRun(
