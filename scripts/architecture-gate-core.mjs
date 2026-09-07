@@ -154,7 +154,7 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
   Object.freeze({
     id: 'product-release-evaluation',
     file: 'infra/test/postgres/run-product-release-evaluation-overview-integration.mjs',
-    sha256: '42238cf418c7f236e16bdd11d4bb04fece67dbe98707347faa070ea36d8f57a1',
+    sha256: '111e64462dd0f2b1aa12bac7c39761aeb58f29a2057c87a9800492f09f9d3aed',
     successMarker: 'architecture-gate-suite/1 product-release-evaluation pass',
   }),
   Object.freeze({

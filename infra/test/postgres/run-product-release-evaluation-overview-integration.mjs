@@ -44,6 +44,12 @@ async function main() {
   );
   await harness.psql(
     'ba_runtime_test',
+    `SELECT app.resolve_agent_product_run_parameters('${workspaceId}','${runId}','${actorId}',
+      '{"database_contains":"","knowledge_query":"verify release one"}'::jsonb,
+      NULL,NULL,0,0);`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
     `SELECT app.complete_agent_product_run('${workspaceId}','${runId}','${actorId}',
       'release one verified','provider-request-1',12,4);`,
   );
