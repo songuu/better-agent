@@ -130,7 +130,7 @@ DECLARE
   v_input_total bigint;
   v_output_total bigint;
 BEGIN
-  SELECT run, release.strategy_profile INTO v_run, v_strategy
+  SELECT run.* INTO v_run
   FROM public.agent_product_runs run
   JOIN public.agent_product_conversations conversation
     ON conversation.workspace_id = run.workspace_id AND conversation.id = run.conversation_id
@@ -148,6 +148,14 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'product Run iteration or aggregate budget conflict' USING ERRCODE = '40001';
   END IF;
+  SELECT release.strategy_profile INTO v_strategy
+  FROM public.agent_product_conversations conversation
+  JOIN public.agent_product_releases release
+    ON release.workspace_id = conversation.workspace_id
+   AND release.agent_id = conversation.agent_id
+   AND release.version = conversation.release_version
+  WHERE conversation.workspace_id = p_workspace_id
+    AND conversation.id = v_run.conversation_id;
   IF p_iteration IS DISTINCT FROM jsonb_array_length(v_run.iteration_trace) + 1
     OR p_iteration > (v_strategy ->> 'max_iterations')::bigint
     OR p_model IS DISTINCT FROM v_run.model
@@ -197,7 +205,7 @@ DECLARE
   v_input_total bigint;
   v_output_total bigint;
 BEGIN
-  SELECT run, release.strategy_profile INTO v_run, v_strategy
+  SELECT run.* INTO v_run
   FROM public.agent_product_runs run
   JOIN public.agent_product_conversations conversation
     ON conversation.workspace_id = run.workspace_id AND conversation.id = run.conversation_id
@@ -214,6 +222,14 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'product Run terminal, iteration or aggregate budget conflict' USING ERRCODE = '40001';
   END IF;
+  SELECT release.strategy_profile INTO v_strategy
+  FROM public.agent_product_conversations conversation
+  JOIN public.agent_product_releases release
+    ON release.workspace_id = conversation.workspace_id
+   AND release.agent_id = conversation.agent_id
+   AND release.version = conversation.release_version
+  WHERE conversation.workspace_id = p_workspace_id
+    AND conversation.id = v_run.conversation_id;
   IF p_output_text IS NULL OR length(btrim(p_output_text)) NOT BETWEEN 1 AND 50000
     OR p_provider_request_id IS NULL OR length(p_provider_request_id) NOT BETWEEN 1 AND 200
     OR p_input_tokens IS NULL OR p_input_tokens NOT BETWEEN 0 AND 1000000000
