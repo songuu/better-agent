@@ -20,6 +20,144 @@ const graph = {
 };
 
 describe('product Flow runtime', () => {
+  it('executes a connected versioned builtin plugin operation', () => {
+    const pluginGraph = {
+      edges: [
+        { id: 'edge_input_plugin', source: 'input', target: 'plugin' },
+        { id: 'edge_plugin_output', source: 'plugin', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        {
+          config: {
+            operation: 'character_count',
+            plugin: 'builtin.text.v1',
+            source: 'input',
+          },
+          id: 'plugin',
+          label: '文本工具',
+          type: 'plugin',
+        },
+        { config: { source: 'plugin' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+
+    expect(executeProductFlow(pluginGraph, { input: '你好 Agent' }).output).toBe('8');
+  });
+
+  it('rejects unknown plugin identities, operations and disconnected plugin inputs', () => {
+    const pluginNode = {
+      config: {
+        operation: 'character_count',
+        plugin: 'builtin.text.v1',
+        source: 'input',
+      },
+      id: 'plugin',
+      label: '文本工具',
+      type: 'plugin',
+    };
+    const pluginGraph = {
+      edges: [
+        { id: 'edge_input_plugin', source: 'input', target: 'plugin' },
+        { id: 'edge_plugin_output', source: 'plugin', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        pluginNode,
+        { config: { source: 'plugin' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+
+    expect(() =>
+      validateProductFlowGraph({
+        ...pluginGraph,
+        nodes: pluginGraph.nodes.map((node) =>
+          node.id === 'plugin'
+            ? { ...node, config: { ...pluginNode.config, plugin: 'custom.network' } }
+            : node,
+        ),
+      }),
+    ).toThrow('Plugin identity');
+    expect(() =>
+      validateProductFlowGraph({
+        ...pluginGraph,
+        nodes: pluginGraph.nodes.map((node) =>
+          node.id === 'plugin'
+            ? { ...node, config: { ...pluginNode.config, operation: 'eval' } }
+            : node,
+        ),
+      }),
+    ).toThrow('Plugin operation');
+    expect(() =>
+      validateProductFlowGraph({
+        ...pluginGraph,
+        edges: pluginGraph.edges.filter((edge) => edge.target !== 'plugin'),
+      }),
+    ).toThrow('source must be connected');
+  });
+
+  it('executes transform, plugin and condition nodes in one connected pipeline', () => {
+    const combinedGraph = {
+      edges: [
+        { id: 'input_prompt', source: 'input', target: 'prompt' },
+        { id: 'prompt_transform', source: 'prompt', target: 'transform' },
+        { id: 'transform_plugin', source: 'transform', target: 'plugin' },
+        { id: 'plugin_condition', source: 'plugin', target: 'condition' },
+        { id: 'condition_output', source: 'condition', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        {
+          config: { template: '{{message}}' },
+          id: 'prompt',
+          label: '模板',
+          type: 'template',
+        },
+        {
+          config: { operation: 'uppercase', source: 'prompt' },
+          id: 'transform',
+          label: '变换',
+          type: 'transform',
+        },
+        {
+          config: {
+            operation: 'character_count',
+            plugin: 'builtin.text.v1',
+            source: 'transform',
+          },
+          id: 'plugin',
+          label: '文本插件',
+          type: 'plugin',
+        },
+        {
+          config: {
+            operand: '5',
+            operator: 'equals',
+            source: 'plugin',
+            whenFalse: '长度异常：{{value}}',
+            whenTrue: '长度正确：{{value}}',
+          },
+          id: 'condition',
+          label: '条件',
+          type: 'condition',
+        },
+        { config: { source: 'condition' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+
+    expect(executeProductFlow(combinedGraph, { input: 'Agent' })).toEqual({
+      logs: [
+        { nodeId: 'input', outputPreview: 'Agent', status: 'completed' },
+        { nodeId: 'prompt', outputPreview: 'Agent', status: 'completed' },
+        { nodeId: 'transform', outputPreview: 'AGENT', status: 'completed' },
+        { nodeId: 'plugin', outputPreview: '5', status: 'completed' },
+        { nodeId: 'condition', outputPreview: '长度正确：5', status: 'completed' },
+        { nodeId: 'output', outputPreview: '长度正确：5', status: 'completed' },
+      ],
+      output: '长度正确：5',
+    });
+  });
+
   it('executes a connected allowlisted transform without evaluating code', () => {
     const transformGraph = {
       edges: [

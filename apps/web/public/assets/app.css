@@ -1730,8 +1730,16 @@ body::before {
 .flow-canvas.has-transform {
   min-height: 650px;
 }
-.flow-canvas.has-condition.has-transform {
+.flow-canvas.has-plugin {
+  min-height: 650px;
+}
+.flow-canvas.has-condition.has-transform,
+.flow-canvas.has-condition.has-plugin,
+.flow-canvas.has-transform.has-plugin {
   min-height: 850px;
+}
+.flow-canvas.has-condition.has-transform.has-plugin {
+  min-height: 1050px;
 }
 .flow-canvas > legend {
   position: absolute;
@@ -1817,8 +1825,23 @@ body::before {
 .node-code small {
   color: #69a9ff;
 }
-.flow-canvas.has-transform .node-condition {
+.node-plugin {
+  left: 50%;
+  top: 350px;
+  width: min(360px, calc(100% - 48px));
+  transform: translateX(-50%);
+  border-color: #9d62c7;
+}
+.node-plugin small {
+  color: #d99cff;
+}
+.flow-canvas.has-transform .node-plugin,
+.flow-canvas.has-transform .node-condition,
+.flow-canvas.has-plugin .node-condition {
   top: 550px;
+}
+.flow-canvas.has-transform.has-plugin .node-condition {
+  top: 750px;
 }
 .node-condition small {
   color: #ffd166;
@@ -2040,6 +2063,7 @@ body::before {
   .node-template,
   .node-condition,
   .node-code,
+  .node-plugin,
   .node-output {
     left: 50%;
     right: auto;
@@ -2061,20 +2085,46 @@ body::before {
   .flow-canvas.has-transform {
     min-height: 820px;
   }
-  .flow-canvas.has-condition.has-transform {
+  .flow-canvas.has-plugin {
+    min-height: 820px;
+  }
+  .flow-canvas.has-condition.has-transform,
+  .flow-canvas.has-condition.has-plugin {
     min-height: 1120px;
   }
-  .flow-canvas.has-transform .node-output {
+  .flow-canvas.has-transform.has-plugin {
+    min-height: 1040px;
+  }
+  .flow-canvas.has-condition.has-transform.has-plugin {
+    min-height: 1340px;
+  }
+  .flow-canvas.has-transform .node-output,
+  .flow-canvas.has-plugin .node-output {
     top: 690px;
   }
-  .flow-canvas.has-condition.has-transform .node-output {
+  .flow-canvas.has-transform.has-plugin .node-output {
+    top: 910px;
+  }
+  .flow-canvas.has-condition.has-transform .node-output,
+  .flow-canvas.has-condition.has-plugin .node-output {
     top: 980px;
+  }
+  .flow-canvas.has-condition.has-transform.has-plugin .node-output {
+    top: 1200px;
   }
   .node-code {
     top: 470px;
   }
-  .flow-canvas.has-transform .node-condition {
+  .node-plugin {
+    top: 470px;
+  }
+  .flow-canvas.has-transform .node-plugin,
+  .flow-canvas.has-transform .node-condition,
+  .flow-canvas.has-plugin .node-condition {
     top: 690px;
+  }
+  .flow-canvas.has-transform.has-plugin .node-condition {
+    top: 910px;
   }
   .flow-canvas.has-condition .node-output {
     top: 760px;

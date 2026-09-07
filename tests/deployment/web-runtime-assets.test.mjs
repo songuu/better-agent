@@ -125,6 +125,8 @@ test('ships the Flow editor, environment deployment and durable debug controls',
     'id="flow-environment"',
     'id="flow-condition-enabled"',
     'id="flow-condition-node"',
+    'id="flow-plugin-enabled"',
+    'id="flow-plugin-node"',
   ]) {
     assert.ok(publicHtml.includes(marker), `missing Flow Studio control: ${marker}`);
   }
@@ -132,11 +134,13 @@ test('ships the Flow editor, environment deployment and durable debug controls',
     assert.ok(publicJavaScript.includes(route), `missing Flow Studio API route: ${route}`);
   }
   assert.ok(publicHtml.includes('value="starts_with"'), 'missing Flow condition operator control');
-  for (const marker of ["type: 'condition'", 'condition_output']) {
-    assert.ok(
-      publicJavaScript.includes(marker),
-      `missing executable Flow condition marker: ${marker}`,
-    );
+  for (const marker of [
+    "type: 'condition'",
+    "type: 'plugin'",
+    "plugin: 'builtin.text.v1'",
+    'pipeline.slice(1).map',
+  ]) {
+    assert.ok(publicJavaScript.includes(marker), `missing executable Flow node marker: ${marker}`);
   }
   assert.doesNotMatch(publicJavaScript, /localStorage|sessionStorage/u);
 });

@@ -33,6 +33,16 @@ export type ProductFlowNode =
       readonly type: 'transform';
     }
   | {
+      readonly config: {
+        readonly operation: ProductFlowBuiltinTextPluginOperation;
+        readonly plugin: 'builtin.text.v1';
+        readonly source: string;
+      };
+      readonly id: string;
+      readonly label: string;
+      readonly type: 'plugin';
+    }
+  | {
       readonly config: { readonly source: string };
       readonly id: string;
       readonly label: string;
@@ -68,6 +78,19 @@ export const PRODUCT_FLOW_CONDITION_OPERATORS = [
 export type ProductFlowConditionOperator = (typeof PRODUCT_FLOW_CONDITION_OPERATORS)[number];
 export const PRODUCT_FLOW_TRANSFORM_OPERATIONS = ['trim', 'uppercase', 'lowercase'] as const;
 export type ProductFlowTransformOperation = (typeof PRODUCT_FLOW_TRANSFORM_OPERATIONS)[number];
+export const PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_OPERATIONS = [
+  'character_count',
+  'word_count',
+] as const;
+export type ProductFlowBuiltinTextPluginOperation =
+  (typeof PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_OPERATIONS)[number];
+
+const PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS: Readonly<
+  Record<ProductFlowBuiltinTextPluginOperation, (input: string) => string>
+> = Object.freeze({
+  character_count: (input) => String([...input].length),
+  word_count: (input) => String(input.trim() === '' ? 0 : input.trim().split(/\s+/u).length),
+});
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]{0,39}$/u;
 const TEMPLATE_REFERENCE = /\{\{\s*([a-z][a-z0-9_-]{0,39})\s*\}\}/gu;
@@ -162,6 +185,33 @@ function validateNode(value: unknown): ProductFlowNode {
       id,
       label,
       type: 'transform',
+    });
+  }
+  if (node.type === 'plugin') {
+    const config = closedObject(
+      node.config,
+      ['source', 'plugin', 'operation'],
+      'Plugin node config',
+    );
+    const source = boundedText(config.source, 1, 40, 'Plugin source');
+    if (!IDENTIFIER.test(source)) throw new Error('Plugin source is invalid');
+    if (config.plugin !== 'builtin.text.v1') throw new Error('Plugin identity is unsupported');
+    if (
+      !PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_OPERATIONS.includes(
+        config.operation as ProductFlowBuiltinTextPluginOperation,
+      )
+    ) {
+      throw new Error('Plugin operation is unsupported');
+    }
+    return Object.freeze({
+      config: Object.freeze({
+        operation: config.operation as ProductFlowBuiltinTextPluginOperation,
+        plugin: 'builtin.text.v1' as const,
+        source,
+      }),
+      id,
+      label,
+      type: 'plugin',
     });
   }
   if (node.type === 'output') {
@@ -269,6 +319,10 @@ export function validateProductFlowGraph(value: unknown): ProductFlowGraph {
       if (!incomingByTarget.get(node.id)?.has(node.config.source)) {
         throw new Error('Transform source must be connected to the transform node');
       }
+    } else if (node.type === 'plugin') {
+      if (!incomingByTarget.get(node.id)?.has(node.config.source)) {
+        throw new Error('Plugin source must be connected to the plugin node');
+      }
     }
   }
   const reachable = new Set([inputNode.id]);
@@ -329,6 +383,10 @@ export function executeProductFlow(
           : node.config.operation === 'uppercase'
             ? sourceValue.toLocaleUpperCase()
             : sourceValue.toLocaleLowerCase();
+    } else if (node.type === 'plugin') {
+      const sourceValue = values.get(node.config.source);
+      if (sourceValue === undefined) throw new Error('Flow plugin source is unavailable');
+      output = PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS[node.config.operation](sourceValue);
     } else {
       const value = values.get(node.config.source);
       if (value === undefined) throw new Error('Flow output source is unavailable');
