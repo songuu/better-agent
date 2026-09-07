@@ -330,18 +330,50 @@ function renderAgents() {
   });
 }
 
-function flowGraph(template) {
+function flowGraph(template, condition) {
+  const nodes = [
+    { config: { key: 'message' }, id: 'input', label: '消息输入', type: 'input' },
+    { config: { template }, id: 'prompt', label: '模板映射', type: 'template' },
+  ];
+  if (condition.enabled) {
+    nodes.push({
+      config: {
+        operand: condition.operand,
+        operator: condition.operator,
+        source: 'prompt',
+        whenFalse: condition.whenFalse,
+        whenTrue: condition.whenTrue,
+      },
+      id: 'condition',
+      label: '条件判断',
+      type: 'condition',
+    });
+  }
+  const outputSource = condition.enabled ? 'condition' : 'prompt';
+  nodes.push({ config: { source: outputSource }, id: 'output', label: '结果输出', type: 'output' });
   return {
     edges: [
       { id: 'input_prompt', source: 'input', target: 'prompt' },
-      { id: 'prompt_output', source: 'prompt', target: 'output' },
+      {
+        id: condition.enabled ? 'prompt_condition' : 'prompt_output',
+        source: 'prompt',
+        target: condition.enabled ? 'condition' : 'output',
+      },
+      ...(condition.enabled
+        ? [{ id: 'condition_output', source: 'condition', target: 'output' }]
+        : []),
     ],
-    nodes: [
-      { config: { key: 'message' }, id: 'input', label: '消息输入', type: 'input' },
-      { config: { template }, id: 'prompt', label: '模板映射', type: 'template' },
-      { config: { source: 'prompt' }, id: 'output', label: '结果输出', type: 'output' },
-    ],
+    nodes,
   };
+}
+
+function syncFlowConditionEditor() {
+  const enabled = flowForm.elements.conditionEnabled.checked;
+  byId('flow-condition-node').hidden = !enabled;
+  byId('flow-canvas').classList.toggle('has-condition', enabled);
+  byId('flow-canvas').querySelector('.node-output code').textContent = enabled
+    ? 'condition → output'
+    : 'prompt → output';
 }
 
 function renderFlows() {
@@ -383,7 +415,14 @@ function showFlowEditor(flow = null) {
   flowForm.elements.name.value = flow?.name || '';
   flowForm.elements.description.value = flow?.description || '';
   const templateNode = flow?.graph.nodes.find((node) => node.type === 'template');
+  const conditionNode = flow?.graph.nodes.find((node) => node.type === 'condition');
   flowForm.elements.template.value = templateNode?.config.template || '已处理：{{message}}';
+  flowForm.elements.conditionEnabled.checked = Boolean(conditionNode);
+  flowForm.elements.conditionOperator.value = conditionNode?.config.operator || 'contains';
+  flowForm.elements.conditionOperand.value = conditionNode?.config.operand || '紧急';
+  flowForm.elements.conditionTrue.value = conditionNode?.config.whenTrue || '紧急队列：{{value}}';
+  flowForm.elements.conditionFalse.value = conditionNode?.config.whenFalse || '普通队列：{{value}}';
+  syncFlowConditionEditor();
   byId('flow-editor-title').textContent = flow?.name || '未命名 Flow';
   byId('flow-kicker').textContent = flow
     ? `${flow.status.toUpperCase()} · REV ${flow.revision}`
@@ -875,6 +914,8 @@ flowForm.elements.name.addEventListener('input', () => {
   byId('flow-editor-title').textContent = flowForm.elements.name.value.trim() || '未命名 Flow';
 });
 
+flowForm.elements.conditionEnabled.addEventListener('change', syncFlowConditionEditor);
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(form));
@@ -927,7 +968,13 @@ flowForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const input = {
     description: flowForm.elements.description.value,
-    graph: flowGraph(flowForm.elements.template.value),
+    graph: flowGraph(flowForm.elements.template.value, {
+      enabled: flowForm.elements.conditionEnabled.checked,
+      operand: flowForm.elements.conditionOperand.value,
+      operator: flowForm.elements.conditionOperator.value,
+      whenFalse: flowForm.elements.conditionFalse.value,
+      whenTrue: flowForm.elements.conditionTrue.value,
+    }),
     name: flowForm.elements.name.value,
   };
   try {

@@ -1701,6 +1701,17 @@ body::before {
 .flow-inspector textarea:focus {
   border-color: #45f2ac;
 }
+.flow-condition-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 4px 0 12px;
+  color: #9eb2a8;
+  font-size: 9px;
+}
+.flow-condition-toggle input {
+  accent-color: #45f2ac;
+}
 .flow-canvas {
   position: relative;
   min-height: 360px;
@@ -1712,6 +1723,9 @@ body::before {
     linear-gradient(rgba(69, 242, 172, 0.045) 1px, transparent 1px),
     linear-gradient(90deg, rgba(69, 242, 172, 0.045) 1px, transparent 1px);
   background-size: 24px 24px;
+}
+.flow-canvas.has-condition {
+  min-height: 650px;
 }
 .flow-canvas > legend {
   position: absolute;
@@ -1779,6 +1793,29 @@ body::before {
 .node-output {
   right: 5%;
   top: 126px;
+}
+.node-condition {
+  left: 50%;
+  top: 350px;
+  width: min(520px, calc(100% - 48px));
+  transform: translateX(-50%);
+  border-color: #88713d;
+}
+.node-condition small {
+  color: #ffd166;
+}
+.condition-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.condition-grid label {
+  display: grid;
+  gap: 5px;
+}
+.condition-grid textarea {
+  min-height: 58px;
+  resize: vertical;
 }
 .flow-wire {
   position: absolute;
@@ -1930,6 +1967,7 @@ body::before {
   .flow-node,
   .node-input,
   .node-template,
+  .node-condition,
   .node-output {
     left: 50%;
     right: auto;
@@ -1944,6 +1982,18 @@ body::before {
   }
   .node-output {
     top: 470px;
+  }
+  .flow-canvas.has-condition {
+    min-height: 900px;
+  }
+  .flow-canvas.has-condition .node-output {
+    top: 760px;
+  }
+  .node-condition {
+    top: 470px;
+  }
+  .condition-grid {
+    grid-template-columns: 1fr;
   }
   .flow-wire {
     display: none;

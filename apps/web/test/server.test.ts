@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { executeProductFlow } from '../src/flow-runtime.js';
 import {
   type BetterAgentWebOptions,
   createBetterAgentWebServer,
@@ -388,18 +389,15 @@ function productFixture(): {
       const flow = flows.find((item) => item.id === flowId);
       if (flow === undefined || flow.revision !== expectedRevision)
         throw new Error('Flow draft revision conflict');
+      const result = executeProductFlow(flow.graph, { input: inputText });
       const debug: ProductFlowDebugRun = {
         createdAt: timestamp,
         draftRevision: expectedRevision,
         flowId,
         id: '77777777-7777-4777-8777-777777777777',
         inputText,
-        logs: flow.graph.nodes.map((node) => ({
-          nodeId: node.id,
-          outputPreview: `完成 ${node.label}`,
-          status: 'completed' as const,
-        })),
-        outputText: `已处理：${inputText}`,
+        logs: result.logs,
+        outputText: result.output,
         status: 'completed',
       };
       flowDebugRuns.push(debug);
@@ -831,7 +829,8 @@ describe('Better Agent web runtime', () => {
     const graph = {
       edges: [
         { id: 'input_prompt', source: 'input', target: 'prompt' },
-        { id: 'prompt_output', source: 'prompt', target: 'output' },
+        { id: 'prompt_condition', source: 'prompt', target: 'condition' },
+        { id: 'condition_output', source: 'condition', target: 'output' },
       ],
       nodes: [
         { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
@@ -841,12 +840,24 @@ describe('Better Agent web runtime', () => {
           label: '模板',
           type: 'template',
         },
-        { config: { source: 'prompt' }, id: 'output', label: '输出', type: 'output' },
+        {
+          config: {
+            operand: '紧急',
+            operator: 'contains',
+            source: 'prompt',
+            whenFalse: '普通：{{value}}',
+            whenTrue: '紧急：{{value}}',
+          },
+          id: 'condition',
+          label: '条件',
+          type: 'condition',
+        },
+        { config: { source: 'condition' }, id: 'output', label: '输出', type: 'output' },
       ],
     };
 
     const created = await localRequest(origin, '/better-agent/api/product/flows', {
-      body: JSON.stringify({ description: '三节点映射', graph, name: '响应管线' }),
+      body: JSON.stringify({ description: '条件节点映射', graph, name: '响应管线' }),
       headers,
       method: 'POST',
     });
@@ -858,7 +869,7 @@ describe('Better Agent web runtime', () => {
       origin,
       `/better-agent/api/product/flows/${flow.id}/debug`,
       {
-        body: JSON.stringify({ expected_revision: 1, input: '验证变量映射' }),
+        body: JSON.stringify({ expected_revision: 1, input: '紧急变量映射' }),
         headers,
         method: 'POST',
       },
@@ -866,8 +877,8 @@ describe('Better Agent web runtime', () => {
     expect(debugResponse.status).toBe(201);
     expect(((await debugResponse.json()) as { debug: ProductFlowDebugRun }).debug).toMatchObject({
       draftRevision: 1,
-      inputText: '验证变量映射',
-      outputText: '已处理：验证变量映射',
+      inputText: '紧急变量映射',
+      outputText: '紧急：已处理：紧急变量映射',
       status: 'completed',
     });
 

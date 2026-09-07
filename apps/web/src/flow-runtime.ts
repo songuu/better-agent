@@ -12,6 +12,18 @@ export type ProductFlowNode =
       readonly type: 'template';
     }
   | {
+      readonly config: {
+        readonly operand: string;
+        readonly operator: ProductFlowConditionOperator;
+        readonly source: string;
+        readonly whenFalse: string;
+        readonly whenTrue: string;
+      };
+      readonly id: string;
+      readonly label: string;
+      readonly type: 'condition';
+    }
+  | {
       readonly config: { readonly source: string };
       readonly id: string;
       readonly label: string;
@@ -38,8 +50,17 @@ export interface ProductFlowDebugResult {
   readonly output: string;
 }
 
+export const PRODUCT_FLOW_CONDITION_OPERATORS = [
+  'equals',
+  'contains',
+  'starts_with',
+  'ends_with',
+] as const;
+export type ProductFlowConditionOperator = (typeof PRODUCT_FLOW_CONDITION_OPERATORS)[number];
+
 const IDENTIFIER = /^[a-z][a-z0-9_-]{0,39}$/u;
 const TEMPLATE_REFERENCE = /\{\{\s*([a-z][a-z0-9_-]{0,39})\s*\}\}/gu;
+const CONDITION_VALUE_REFERENCE = /\{\{\s*value\s*\}\}/gu;
 
 function closedObject(
   value: unknown,
@@ -83,6 +104,35 @@ function validateNode(value: unknown): ProductFlowNode {
     const config = closedObject(node.config, ['template'], 'Template node config');
     const template = boundedText(config.template, 1, 8_000, 'Template');
     return Object.freeze({ config: Object.freeze({ template }), id, label, type: 'template' });
+  }
+  if (node.type === 'condition') {
+    const config = closedObject(
+      node.config,
+      ['source', 'operator', 'operand', 'whenTrue', 'whenFalse'],
+      'Condition node config',
+    );
+    const source = boundedText(config.source, 1, 40, 'Condition source');
+    if (!IDENTIFIER.test(source)) throw new Error('Condition source is invalid');
+    if (
+      !PRODUCT_FLOW_CONDITION_OPERATORS.includes(config.operator as ProductFlowConditionOperator)
+    ) {
+      throw new Error('Condition operator is unsupported');
+    }
+    const operand = boundedText(config.operand, 1, 1_000, 'Condition operand');
+    const whenTrue = boundedText(config.whenTrue, 1, 8_000, 'Condition true output');
+    const whenFalse = boundedText(config.whenFalse, 1, 8_000, 'Condition false output');
+    return Object.freeze({
+      config: Object.freeze({
+        operand,
+        operator: config.operator as ProductFlowConditionOperator,
+        source,
+        whenFalse,
+        whenTrue,
+      }),
+      id,
+      label,
+      type: 'condition',
+    });
   }
   if (node.type === 'output') {
     const config = closedObject(node.config, ['source'], 'Output node config');
@@ -170,15 +220,20 @@ export function validateProductFlowGraph(value: unknown): ProductFlowGraph {
     throw new Error('Output source must be connected to the output node');
   }
   for (const node of nodes) {
-    if (node.type !== 'template') continue;
-    const references = [...node.config.template.matchAll(TEMPLATE_REFERENCE)].map(
-      (match) => match[1] as string,
-    );
-    if (references.length === 0) throw new Error('Template must reference an input variable');
-    const incoming = incomingByTarget.get(node.id) ?? new Set<string>();
-    for (const reference of references) {
-      if (reference !== inputNode.config.key && !incoming.has(reference)) {
-        throw new Error(`Template references an unavailable variable: ${reference}`);
+    if (node.type === 'template') {
+      const references = [...node.config.template.matchAll(TEMPLATE_REFERENCE)].map(
+        (match) => match[1] as string,
+      );
+      if (references.length === 0) throw new Error('Template must reference an input variable');
+      const incoming = incomingByTarget.get(node.id) ?? new Set<string>();
+      for (const reference of references) {
+        if (reference !== inputNode.config.key && !incoming.has(reference)) {
+          throw new Error(`Template references an unavailable variable: ${reference}`);
+        }
+      }
+    } else if (node.type === 'condition') {
+      if (!incomingByTarget.get(node.id)?.has(node.config.source)) {
+        throw new Error('Condition source must be connected to the condition node');
       }
     }
   }
@@ -218,6 +273,19 @@ export function executeProductFlow(
         if (value === undefined) throw new Error(`Flow variable is unavailable: ${reference}`);
         return value;
       });
+    } else if (node.type === 'condition') {
+      const sourceValue = values.get(node.config.source);
+      if (sourceValue === undefined) throw new Error('Flow condition source is unavailable');
+      const matches =
+        node.config.operator === 'equals'
+          ? sourceValue === node.config.operand
+          : node.config.operator === 'contains'
+            ? sourceValue.includes(node.config.operand)
+            : node.config.operator === 'starts_with'
+              ? sourceValue.startsWith(node.config.operand)
+              : sourceValue.endsWith(node.config.operand);
+      const selected = matches ? node.config.whenTrue : node.config.whenFalse;
+      output = selected.replace(CONDITION_VALUE_REFERENCE, () => sourceValue);
     } else {
       const value = values.get(node.config.source);
       if (value === undefined) throw new Error('Flow output source is unavailable');

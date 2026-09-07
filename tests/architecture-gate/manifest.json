@@ -224,7 +224,7 @@
     {
       "id": "product-flow-studio",
       "file": "infra/test/postgres/run-product-flow-studio-integration.mjs",
-      "sha256": "0e7921407f5e5a830e58090b8496fc93d778a36a0206882e0c7a99879ed1e549",
+      "sha256": "080fabf608e7b7566fe25ae5641bf4add2d3b62e7156ee89886bf20b467d3ac2",
       "mode": "real",
       "successMarker": "architecture-gate-suite/1 product-flow-studio pass"
     },
@@ -399,8 +399,8 @@
     {
       "packageName": "@better-agent/web",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 104,
-      "successMarker": "@better-agent/web:test:       Tests  104 passed (104)"
+      "testCount": 106,
+      "successMarker": "@better-agent/web:test:       Tests  106 passed (106)"
     }
   ],
   "scripts": {
@@ -440,7 +440,7 @@
         "@better-agent/release-core:test:       Tests  1118 passed (1118)",
         "@better-agent/run-core:test:       Tests  146 passed (146)",
         "@better-agent/test-support:test:       Tests  23 passed (23)",
-        "@better-agent/web:test:       Tests  104 passed (104)"
+        "@better-agent/web:test:       Tests  106 passed (106)"
       ],
       "forbidSkippedOutput": true,
       "timeoutMs": 300000

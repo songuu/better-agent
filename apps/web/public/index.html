@@ -117,10 +117,12 @@
                 <label><span>名称</span><input name="name" maxlength="80" required placeholder="例如：输入整理管线" /></label>
                 <label><span>说明</span><input name="description" maxlength="500" placeholder="这个 Flow 完成什么？" /></label>
               </div>
-              <fieldset class="flow-canvas"><legend>Flow 节点画布</legend>
+              <label class="flow-condition-toggle"><input id="flow-condition-enabled" name="conditionEnabled" type="checkbox" /><span>启用条件逻辑节点</span></label>
+              <fieldset id="flow-canvas" class="flow-canvas"><legend>Flow 节点画布</legend>
                 <div class="flow-wire wire-one"></div><div class="flow-wire wire-two"></div>
                 <article class="flow-node node-input"><small>INPUT</small><b>消息输入</b><code>message</code></article>
                 <article class="flow-node node-template"><small>TRANSFORM</small><b>模板映射</b><label><span>TEMPLATE</span><textarea name="template" maxlength="8000" required>已处理：{{message}}</textarea></label></article>
+                <article id="flow-condition-node" class="flow-node node-condition" hidden><small>LOGIC</small><b>条件判断</b><div class="condition-grid"><label><span>运算符</span><select name="conditionOperator"><option value="contains">包含</option><option value="equals">等于</option><option value="starts_with">开头为</option><option value="ends_with">结尾为</option></select></label><label><span>比较值</span><input name="conditionOperand" maxlength="1000" value="紧急" /></label><label><span>为真时</span><textarea name="conditionTrue" maxlength="8000">紧急队列：{{value}}</textarea></label><label><span>为假时</span><textarea name="conditionFalse" maxlength="8000">普通队列：{{value}}</textarea></label></div></article>
                 <article class="flow-node node-output"><small>OUTPUT</small><b>结果输出</b><code>prompt → output</code></article>
               </fieldset>
               <footer><button type="button" id="debug-flow" class="button button-ghost" disabled>调试 Flow</button><label class="environment-field"><span>部署环境</span><select id="flow-environment"><option value="development">Development</option><option value="staging">Staging</option><option value="production">Production</option></select></label><button type="button" id="publish-flow" class="button button-ghost" disabled>发布并部署</button><button type="submit" class="button button-primary">保存 Draft</button></footer>

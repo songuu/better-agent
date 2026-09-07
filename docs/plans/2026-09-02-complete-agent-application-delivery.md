@@ -53,4 +53,4 @@ tags: [plan, product, agent, frontend, backend, deployment]
 
 迁移 029～034 已实现 Agent Strategy 的版本化 Draft/Release 快照、说明书驱动的模型路由、强制能力、参数抽取、Token/工具调用上限、闭合参数默认值，以及 Strategy v3/v4/v5 的 1～4 次有界执行。v4 允许模型在每轮从不可变 Release 已绑定的 Knowledge/Database 能力与最终回答中做闭合选择；v5 增加一层有界 SubAgent 委派，父 Release 固定精确子 Agent Release，子模型输出以非指令证据回灌，子模型 token 和 provider 证据纳入父 Run 的 PostgreSQL 复核与留存。递归 SubAgent、并行/异步委派仍未完成。
 
-Flow Studio 仍需扩展代码/API/逻辑/插件等节点、历史版本回滚和 Agent 组合能力。尚未完成的产品面包括完整 Database Operation、Plugin/MCP/Skill Pack、递归或异步 SubAgent 编排、异步任务、Deployment/API/Webhook、成员权限以及完整运营治理。现有 G1 内核和门禁是这些能力的安全基础，不能替代最终产品验收。
+Flow Studio 已在既有 Draft/Release/Deployment/调试闭环上增加首个可执行条件逻辑节点：支持闭合的 equals/contains/starts_with/ends_with 运算符、连接上游值校验、真假结果模板和持久化四步调试证据，并保持旧三节点 Flow 兼容。仍需扩展代码/API/插件等节点、历史版本回滚和 Agent 组合能力。尚未完成的产品面包括完整 Database Operation、Plugin/MCP/Skill Pack、递归或异步 SubAgent 编排、异步任务、Deployment/API/Webhook、成员权限以及完整运营治理。现有 G1 内核和门禁是这些能力的安全基础，不能替代最终产品验收。
