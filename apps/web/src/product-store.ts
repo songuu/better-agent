@@ -10,7 +10,7 @@ import { splitKnowledgeText } from './knowledge-runtime.js';
 export const PRODUCT_MODELS = ['gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-sol'] as const;
 export type ProductModel = (typeof PRODUCT_MODELS)[number];
 export type ProductAgentRoutingMode = 'autonomous' | 'fixed';
-export type ProductAgentForcedCapability = 'database' | 'knowledge' | 'none';
+export type ProductAgentForcedCapability = 'database' | 'knowledge' | 'none' | 'subagent';
 export type ProductAgentToolCapability = Exclude<ProductAgentForcedCapability, 'none'>;
 export interface ProductAgentModelRoute {
   readonly description: string;
@@ -34,7 +34,8 @@ export interface ProductAgentStrategyProfile {
     | 'product-agent-strategy/1'
     | 'product-agent-strategy/2'
     | 'product-agent-strategy/3'
-    | 'product-agent-strategy/4';
+    | 'product-agent-strategy/4'
+    | 'product-agent-strategy/5';
   readonly temperature: number;
 }
 export const PRODUCT_AGENT_ROLE_THEMES = [
@@ -58,6 +59,7 @@ export type ProductAgentRoleProfile = Readonly<
 const PRODUCT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export interface AgentDraft {
+  readonly childAgentId?: string | null;
   readonly createdAt: string;
   readonly databaseTableId: string | null;
   readonly description: string;
@@ -76,6 +78,7 @@ export interface AgentDraft {
 }
 
 export interface AgentDraftInput {
+  readonly childAgentId: string | null;
   readonly databaseTableId: string | null;
   readonly description: string;
   readonly instructions: string;
@@ -140,11 +143,27 @@ export type ProductRunIteration =
       readonly outputText: null;
       readonly toolInput: string;
       readonly toolOutput: string;
+      readonly toolInputTokens?: number;
+      readonly toolOutputTokens?: number;
+      readonly toolProviderRequestId?: string | null;
+      readonly targetAgentId?: string | null;
+      readonly targetReleaseVersion?: number | null;
     });
 
 export interface ProductRunCapabilities {
   readonly database: boolean;
   readonly knowledge: boolean;
+  readonly subagent: boolean;
+}
+
+export interface ProductRunSubagent {
+  readonly agentId: string;
+  readonly instructions: string;
+  readonly maxOutputTokens: number;
+  readonly model: ProductModel;
+  readonly name: string;
+  readonly releaseVersion: number;
+  readonly temperature: number;
 }
 
 export interface PreparedProductRun {
@@ -299,6 +318,7 @@ export interface ProductStore {
     actorId: string,
     runId: string,
   ): Promise<ProductRunCapabilities>;
+  getRunSubagent?(workspaceId: string, actorId: string, runId: string): Promise<ProductRunSubagent>;
   completeRun(
     workspaceId: string,
     actorId: string,
@@ -439,6 +459,35 @@ export interface ProductStore {
           readonly providerRequestId: string;
           readonly toolInput: string;
           readonly toolOutput: string;
+        },
+  ): Promise<void>;
+  recordRunDecisionV5?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    decision:
+      | {
+          readonly action: 'final';
+          readonly inputTokens: number;
+          readonly iteration: number;
+          readonly model: ProductModel;
+          readonly outputText: string;
+          readonly outputTokens: number;
+          readonly providerRequestId: string;
+        }
+      | {
+          readonly action: 'tool';
+          readonly capability: ProductAgentToolCapability;
+          readonly inputTokens: number;
+          readonly iteration: number;
+          readonly model: ProductModel;
+          readonly outputTokens: number;
+          readonly providerRequestId: string;
+          readonly toolInput: string;
+          readonly toolInputTokens: number;
+          readonly toolOutput: string;
+          readonly toolOutputTokens: number;
+          readonly toolProviderRequestId: string | null;
         },
   ): Promise<void>;
   searchAgentKnowledge(
@@ -602,6 +651,7 @@ interface PreparedRunRow {
 }
 
 interface AgentRow {
+  readonly child_agent_id: string | null;
   readonly created_at: Date | string;
   readonly description: string;
   readonly database_table_id: string | null;
@@ -690,7 +740,8 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
     schemaVersion !== 'product-agent-strategy/1' &&
     schemaVersion !== 'product-agent-strategy/2' &&
     schemaVersion !== 'product-agent-strategy/3' &&
-    schemaVersion !== 'product-agent-strategy/4'
+    schemaVersion !== 'product-agent-strategy/4' &&
+    schemaVersion !== 'product-agent-strategy/5'
   )
     throw new Error('Agent strategy schema is unsupported');
   if (schemaVersion === 'product-agent-strategy/1' && parameterDefaultsValue !== undefined) {
@@ -699,7 +750,8 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
   if (
     (schemaVersion === 'product-agent-strategy/2' ||
       schemaVersion === 'product-agent-strategy/3' ||
-      schemaVersion === 'product-agent-strategy/4') &&
+      schemaVersion === 'product-agent-strategy/4' ||
+      schemaVersion === 'product-agent-strategy/5') &&
     (typeof parameterDefaultsValue !== 'object' ||
       parameterDefaultsValue === null ||
       Array.isArray(parameterDefaultsValue))
@@ -713,7 +765,8 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
   if (
     schemaVersion === 'product-agent-strategy/2' ||
     schemaVersion === 'product-agent-strategy/3' ||
-    schemaVersion === 'product-agent-strategy/4'
+    schemaVersion === 'product-agent-strategy/4' ||
+    schemaVersion === 'product-agent-strategy/5'
   ) {
     const defaults = parameterDefaultsValue as Record<string, unknown>;
     const expectedKeys = hasCamelKeys
@@ -739,8 +792,10 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
   }
   if (routingMode !== 'fixed' && routingMode !== 'autonomous')
     throw new Error('Agent routing mode is invalid');
-  if (!['none', 'knowledge', 'database'].includes(String(forcedCapability)))
+  if (!['none', 'knowledge', 'database', 'subagent'].includes(String(forcedCapability)))
     throw new Error('Agent forced capability is invalid');
+  if (forcedCapability === 'subagent' && schemaVersion !== 'product-agent-strategy/5')
+    throw new Error('SubAgent capability requires Agent strategy v5');
   if (typeof parameterExtraction !== 'boolean')
     throw new Error('Agent parameter extraction flag is invalid');
   if (
@@ -753,12 +808,11 @@ export function parseAgentStrategyProfile(value: unknown): ProductAgentStrategyP
     );
   if (
     (schemaVersion === 'product-agent-strategy/3' ||
-      schemaVersion === 'product-agent-strategy/4') &&
+      schemaVersion === 'product-agent-strategy/4' ||
+      schemaVersion === 'product-agent-strategy/5') &&
     (!Number.isSafeInteger(maxIterations) || Number(maxIterations) < 1 || Number(maxIterations) > 4)
   )
-    throw new Error(
-      `Agent strategy ${schemaVersion.endsWith('/3') ? 'v3' : 'v4'} supports 1–4 model iterations`,
-    );
+    throw new Error(`Agent strategy v${schemaVersion.slice(-1)} supports 1–4 model iterations`);
   if (!Number.isSafeInteger(maxToolCalls) || Number(maxToolCalls) < 0 || Number(maxToolCalls) > 2)
     throw new Error('Agent tool call budget must be 0–2');
   if (forcedCapability !== 'none' && Number(maxToolCalls) < 1)
@@ -835,7 +889,8 @@ function strategyProfileToStorage(profile: ProductAgentStrategyProfile): string 
     max_tool_calls: profile.maxToolCalls,
     ...(profile.schemaVersion === 'product-agent-strategy/2' ||
     profile.schemaVersion === 'product-agent-strategy/3' ||
-    profile.schemaVersion === 'product-agent-strategy/4'
+    profile.schemaVersion === 'product-agent-strategy/4' ||
+    profile.schemaVersion === 'product-agent-strategy/5'
       ? {
           parameter_defaults: {
             database_contains: profile.parameterDefaults.databaseContains,
@@ -940,6 +995,7 @@ function toDraft(row: AgentRow): AgentDraft {
   const strategyProfile = parseAgentStrategyProfile(row.strategy_profile);
   const strategyVersion = positiveInteger(row.strategy_version, 'Agent strategy version');
   return Object.freeze({
+    childAgentId: row.child_agent_id,
     createdAt: asIso(row.created_at),
     databaseTableId: row.database_table_id,
     description: row.description,
@@ -1028,10 +1084,13 @@ function toRun(row: ProductRunRow): ProductRun {
     ) {
       return Object.freeze({ ...base, outputText: item.output_text });
     }
-    if (
-      keys !==
-      'action,capability,input_tokens,iteration,model,output_text,output_tokens,provider_request_id,tool_input,tool_output'
-    ) {
+    const isV4 =
+      keys ===
+      'action,capability,input_tokens,iteration,model,output_text,output_tokens,provider_request_id,tool_input,tool_output';
+    const isV5 =
+      keys ===
+      'action,capability,input_tokens,iteration,model,output_text,output_tokens,provider_request_id,target_agent_id,target_release_version,tool_input,tool_input_tokens,tool_output,tool_output_tokens,tool_provider_request_id';
+    if (!isV4 && !isV5) {
       throw new Error('product store returned an invalid Run iteration');
     }
     if (
@@ -1048,11 +1107,22 @@ function toRun(row: ProductRunRow): ProductRun {
         outputText: item.output_text,
         toolInput: null,
         toolOutput: null,
+        ...(isV5
+          ? {
+              targetAgentId: null,
+              targetReleaseVersion: null,
+              toolInputTokens: 0,
+              toolOutputTokens: 0,
+              toolProviderRequestId: null,
+            }
+          : {}),
       });
     }
     if (
       item.action === 'tool' &&
-      (item.capability === 'knowledge' || item.capability === 'database') &&
+      (item.capability === 'knowledge' ||
+        item.capability === 'database' ||
+        (isV5 && item.capability === 'subagent')) &&
       item.output_text === null &&
       typeof item.tool_input === 'string' &&
       typeof item.tool_output === 'string'
@@ -1064,6 +1134,27 @@ function toRun(row: ProductRunRow): ProductRun {
         outputText: null,
         toolInput: item.tool_input,
         toolOutput: item.tool_output,
+        ...(isV5
+          ? {
+              targetAgentId: item.target_agent_id as string | null,
+              targetReleaseVersion:
+                item.target_release_version === null
+                  ? null
+                  : positiveInteger(
+                      item.target_release_version as string | number,
+                      'target release version',
+                    ),
+              toolInputTokens: nonnegativeInteger(
+                item.tool_input_tokens as string | number,
+                'tool input token count',
+              ),
+              toolOutputTokens: nonnegativeInteger(
+                item.tool_output_tokens as string | number,
+                'tool output token count',
+              ),
+              toolProviderRequestId: item.tool_provider_request_id as string | null,
+            }
+          : {}),
       });
     }
     throw new Error('product store returned an invalid Run iteration');
@@ -1640,6 +1731,7 @@ export class PostgresProductStore implements ProductStore {
     const result = await this.#pool.query<{
       readonly database: boolean;
       readonly knowledge: boolean;
+      readonly subagent: boolean;
     }>('SELECT * FROM app.read_agent_product_run_capabilities($1::uuid, $2::uuid, $3::uuid)', [
       workspaceId,
       runId,
@@ -1649,11 +1741,49 @@ export class PostgresProductStore implements ProductStore {
     if (
       row === undefined ||
       typeof row.database !== 'boolean' ||
-      typeof row.knowledge !== 'boolean'
+      typeof row.knowledge !== 'boolean' ||
+      typeof row.subagent !== 'boolean'
     ) {
       throw new Error('product store did not return Run capabilities');
     }
-    return Object.freeze({ database: row.database, knowledge: row.knowledge });
+    return Object.freeze({
+      database: row.database,
+      knowledge: row.knowledge,
+      subagent: row.subagent,
+    });
+  }
+
+  async getRunSubagent(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+  ): Promise<ProductRunSubagent> {
+    const result = await this.#pool.query<{
+      readonly agent_id: string;
+      readonly instructions: string;
+      readonly max_output_tokens: string | number;
+      readonly model: string;
+      readonly name: string;
+      readonly release_version: string | number;
+      readonly temperature: string | number;
+    }>('SELECT * FROM app.read_agent_product_run_subagent($1::uuid, $2::uuid, $3::uuid)', [
+      workspaceId,
+      runId,
+      actorId,
+    ]);
+    const row = result.rows[0];
+    if (row === undefined || !PRODUCT_MODELS.includes(row.model as ProductModel)) {
+      throw new Error('product store did not return the pinned child Agent');
+    }
+    return Object.freeze({
+      agentId: row.agent_id,
+      instructions: row.instructions,
+      maxOutputTokens: positiveInteger(row.max_output_tokens, 'child output token limit'),
+      model: row.model as ProductModel,
+      name: row.name,
+      releaseVersion: positiveInteger(row.release_version, 'child release version'),
+      temperature: Number(row.temperature),
+    });
   }
 
   async routeRun(
@@ -1809,6 +1939,35 @@ export class PostgresProductStore implements ProductStore {
     );
   }
 
+  async recordRunDecisionV5(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    decision: Parameters<NonNullable<ProductStore['recordRunDecisionV5']>>[3],
+  ): Promise<void> {
+    await this.#pool.query(
+      'SELECT app.record_agent_product_run_decision_v5($1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::text, $6::text, $7::text, $8::text, $9::text, $10::text, $11::text, $12::bigint, $13::bigint, $14::bigint, $15::bigint, $16::text)',
+      [
+        workspaceId,
+        runId,
+        actorId,
+        decision.iteration,
+        decision.model,
+        decision.action,
+        decision.action === 'tool' ? decision.capability : null,
+        decision.action === 'tool' ? decision.toolInput : null,
+        decision.action === 'tool' ? decision.toolOutput : null,
+        decision.action === 'final' ? decision.outputText : null,
+        decision.providerRequestId,
+        decision.inputTokens,
+        decision.outputTokens,
+        decision.action === 'tool' ? decision.toolInputTokens : 0,
+        decision.action === 'tool' ? decision.toolOutputTokens : 0,
+        decision.action === 'tool' ? decision.toolProviderRequestId : null,
+      ],
+    );
+  }
+
   async completeRun(
     workspaceId: string,
     actorId: string,
@@ -1884,7 +2043,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     const result = await this.#pool.query<{ readonly id: string }>(
-      'SELECT (app.create_agent_draft_with_strategy_capabilities($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb)).id AS id',
+      'SELECT (app.create_agent_draft_with_strategy_capabilities_v5($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid)).id AS id',
       [
         workspaceId,
         actorId,
@@ -1897,6 +2056,7 @@ export class PostgresProductStore implements ProductStore {
         input.roleMode,
         input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
         strategyProfileToStorage(input.strategyProfile),
+        input.childAgentId,
       ],
     );
     const id = result.rows[0]?.id;
@@ -1911,7 +2071,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     await this.#pool.query(
-      'SELECT app.update_agent_draft_with_strategy_capabilities($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb)',
+      'SELECT app.update_agent_draft_with_strategy_capabilities_v5($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid)',
       [
         workspaceId,
         agentId,
@@ -1925,6 +2085,7 @@ export class PostgresProductStore implements ProductStore {
         input.roleMode,
         input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
         strategyProfileToStorage(input.strategyProfile),
+        input.childAgentId,
       ],
     );
     return await this.#getAgent(workspaceId, agentId);
@@ -1979,6 +2140,7 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
           'role_mode',
           'role_profile',
           'strategy_profile',
+          'child_agent_id',
         ].includes(key),
     )
   ) {
@@ -2033,7 +2195,17 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
     throw new Error('A forced Knowledge call requires a bound Knowledge base');
   if (strategyProfile.forcedCapability === 'database' && databaseTableId === null)
     throw new Error('A forced Database call requires a bound Database table');
+  const childAgentId = input.child_agent_id ?? null;
+  if (
+    childAgentId !== null &&
+    (typeof childAgentId !== 'string' || !PRODUCT_UUID.test(childAgentId))
+  ) {
+    throw new Error('Agent child Agent id must be a UUID or null');
+  }
+  if (strategyProfile.forcedCapability === 'subagent' && childAgentId === null)
+    throw new Error('A forced SubAgent call requires a bound child Agent');
   return Object.freeze({
+    childAgentId,
     databaseTableId,
     description,
     instructions,

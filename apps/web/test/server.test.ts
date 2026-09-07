@@ -1358,7 +1358,7 @@ describe('Better Agent web runtime', () => {
       updatedAt: '2026-09-03T00:00:00.000Z',
     });
     const recorded: unknown[] = [];
-    store.getRunCapabilities = async () => ({ database: false, knowledge: true });
+    store.getRunCapabilities = async () => ({ database: false, knowledge: true, subagent: false });
     store.recordRunDecision = async (_workspaceId, _actorId, _runId, decision) => {
       recorded.push(decision);
     };
@@ -1476,6 +1476,147 @@ describe('Better Agent web runtime', () => {
     );
     expect(limited.status).toBe(502);
     expect(await limited.json()).toEqual({ error: 'model_iteration_limit_reached' });
+  });
+
+  it('runs a v5 decision through the pinned child Agent and charges child model usage', async () => {
+    const { agents, store } = productFixture();
+    const parentAgentId = '11111111-1111-4111-8111-111111111111';
+    const childAgentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    agents.push({
+      childAgentId,
+      createdAt: '2026-09-03T00:00:00.000Z',
+      databaseTableId: null,
+      description: '父 Agent',
+      id: parentAgentId,
+      instructions: '将专项核验委派给已绑定子 Agent。',
+      knowledgeBaseId: null,
+      model: 'gpt-5.6-sol',
+      name: '总控 Agent',
+      revision: 2,
+      roleMode: 'text',
+      roleProfile: null,
+      status: 'published',
+      strategyProfile: {
+        ...createDefaultAgentStrategyProfile('gpt-5.6-sol'),
+        forcedCapability: 'subagent',
+        maxIterations: 2,
+        maxToolCalls: 1,
+        schemaVersion: 'product-agent-strategy/5',
+      },
+      strategyVersion: 1,
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    });
+    store.getRunCapabilities = async () => ({ database: false, knowledge: false, subagent: true });
+    store.getRunSubagent = async () => ({
+      agentId: childAgentId,
+      instructions: '只返回已核验的依赖状态。',
+      maxOutputTokens: 400,
+      model: 'gpt-5.4-mini',
+      name: '依赖核验员',
+      releaseVersion: 3,
+      temperature: 0.1,
+    });
+    const recorded: unknown[] = [];
+    store.recordRunDecisionV5 = async (_workspaceId, _actorId, _runId, decision) => {
+      recorded.push(decision);
+    };
+    let action = 0;
+    const generationInputs: unknown[] = [];
+    const modelRuntime: ProductModelRuntime = {
+      async decideAction() {
+        action += 1;
+        return action === 1
+          ? {
+              action: 'tool',
+              capability: 'subagent',
+              inputTokens: 9,
+              outputText: '{"action":"tool","capability":"subagent","input":"核验支付依赖"}',
+              outputTokens: 4,
+              providerRequestId: 'resp_parent_tool',
+              toolInput: '核验支付依赖',
+            }
+          : {
+              action: 'final',
+              finalOutput: '支付依赖健康。',
+              inputTokens: 11,
+              outputText: '{"action":"final","output":"支付依赖健康。"}',
+              outputTokens: 5,
+              providerRequestId: 'resp_parent_final',
+            };
+      },
+      async generate(input) {
+        generationInputs.push(input);
+        return {
+          inputTokens: 7,
+          outputText: '支付依赖健康，探针为 200。',
+          outputTokens: 6,
+          providerRequestId: 'resp_child',
+        };
+      },
+    };
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      modelRuntime,
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const headers = {
+      ...mutationHeaders,
+      Cookie: login.headers.get('set-cookie')?.split(';', 1)[0] ?? '',
+    };
+    const conversationResponse = await localRequest(
+      origin,
+      `/better-agent/api/product/agents/${parentAgentId}/conversations`,
+      { body: '{}', headers, method: 'POST' },
+    );
+    const conversation = (await conversationResponse.json()) as {
+      conversation: ProductConversation;
+    };
+    const response = await localRequest(
+      origin,
+      `/better-agent/api/product/conversations/${conversation.conversation.id}/runs`,
+      { body: JSON.stringify({ message: '支付依赖正常吗？' }), headers, method: 'POST' },
+    );
+
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(201);
+    expect(((await response.json()) as { run: ProductRun }).run).toMatchObject({
+      inputTokens: 27,
+      outputText: '支付依赖健康。',
+      outputTokens: 15,
+      providerRequestId: 'resp_parent_final',
+    });
+    expect(generationInputs).toEqual([
+      expect.objectContaining({
+        history: [],
+        instructions: '只返回已核验的依赖状态。',
+        maxOutputTokens: 400,
+        model: 'gpt-5.4-mini',
+        prompt: '核验支付依赖',
+        temperature: 0.1,
+      }),
+    ]);
+    expect(recorded).toEqual([
+      expect.objectContaining({
+        action: 'tool',
+        capability: 'subagent',
+        toolInputTokens: 7,
+        toolOutput: expect.stringContaining('支付依赖健康，探针为 200。'),
+        toolOutputTokens: 6,
+        toolProviderRequestId: 'resp_child',
+      }),
+      expect.objectContaining({ action: 'final', outputText: '支付依赖健康。' }),
+    ]);
   });
 
   it('resolves published defaults without invoking the parameter extraction model', async () => {

@@ -260,7 +260,12 @@ export class OpenAiResponsesRuntime implements ProductModelRuntime {
     },
   ): Promise<ModelActionDecisionResult> {
     const available = [...new Set(input.availableCapabilities)];
-    if (available.some((capability) => capability !== 'knowledge' && capability !== 'database')) {
+    if (
+      available.some(
+        (capability) =>
+          capability !== 'knowledge' && capability !== 'database' && capability !== 'subagent',
+      )
+    ) {
       throw new Error('model_action_capabilities_invalid');
     }
     const result = await this.generate({
@@ -274,7 +279,7 @@ export class OpenAiResponsesRuntime implements ProductModelRuntime {
         ...(available.length === 0
           ? ['当前没有可调用能力。']
           : [
-              '调用能力：{"action":"tool","capability":"knowledge|database","input":"1–500 字符"}',
+              '调用能力：{"action":"tool","capability":"knowledge|database|subagent","input":"1–500 字符"}',
               `可调用能力：${available.join(',')}`,
             ]),
         'END_AGENT_ACTION_PROTOCOL_V1',

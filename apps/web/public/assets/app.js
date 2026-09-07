@@ -113,6 +113,7 @@ function currentCapabilityKinds() {
   return [
     ...(form.elements.knowledge_base_id.value ? ['knowledge'] : []),
     ...(form.elements.database_table_id.value ? ['database'] : []),
+    ...(form.elements.child_agent_id.value ? ['subagent'] : []),
   ];
 }
 
@@ -140,7 +141,7 @@ function readStrategyProfile() {
     parameter_extraction: form.elements.parameter_extraction.checked,
     routes,
     routing_mode: form.elements.routing_mode.value,
-    schema_version: 'product-agent-strategy/4',
+    schema_version: 'product-agent-strategy/5',
     temperature: Number(form.elements.temperature.value),
   };
 }
@@ -460,6 +461,18 @@ function renderAgentDatabaseOptions() {
   select.value = selected;
 }
 
+function renderAgentChildOptions() {
+  const select = byId('agent-child-agent');
+  const selected = state.current?.childAgentId || '';
+  select.innerHTML = [
+    '<option value="">不绑定子 Agent</option>',
+    ...state.agents
+      .filter((agent) => agent.status === 'published' && agent.id !== state.current?.id)
+      .map((agent) => `<option value="${agent.id}">${escapeHtml(agent.name)} · LIVE</option>`),
+  ].join('');
+  select.value = selected;
+}
+
 function renderKnowledgeDocuments() {
   const list = byId('knowledge-documents');
   if (state.knowledgeDocuments.length === 0) {
@@ -561,6 +574,7 @@ async function loadDatabaseTables() {
   state.databaseTables = payload.database_tables;
   renderDatabaseTables();
   renderAgentDatabaseOptions();
+  renderAgentChildOptions();
   if (state.currentDatabase) {
     const id = state.currentDatabase.id;
     state.currentDatabase = state.databaseTables.find((item) => item.id === id) || null;
@@ -865,6 +879,7 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(form));
   const input = {
+    child_agent_id: values.child_agent_id || null,
     database_table_id: values.database_table_id || null,
     description: values.description,
     instructions: values.instructions,

@@ -99,6 +99,40 @@ describe('product Agent input', () => {
         temperature: 0.2,
       }),
     ).toMatchObject({ maxIterations: 4, schemaVersion: 'product-agent-strategy/4' });
+    expect(
+      parseAgentStrategyProfile({
+        forced_capability: 'subagent',
+        max_input_tokens: 32000,
+        max_iterations: 3,
+        max_output_tokens: 2000,
+        max_tool_calls: 2,
+        parameter_defaults: { database_contains: '', knowledge_query: '' },
+        parameter_extraction: false,
+        routes: [{ description: '父 Agent 决策模型', model: 'gpt-5.6-sol' }],
+        routing_mode: 'fixed',
+        schema_version: 'product-agent-strategy/5',
+        temperature: 0.2,
+      }),
+    ).toMatchObject({
+      forcedCapability: 'subagent',
+      maxIterations: 3,
+      schemaVersion: 'product-agent-strategy/5',
+    });
+    expect(() =>
+      parseAgentStrategyProfile({
+        forced_capability: 'subagent',
+        max_input_tokens: 32000,
+        max_iterations: 3,
+        max_output_tokens: 2000,
+        max_tool_calls: 2,
+        parameter_defaults: { database_contains: '', knowledge_query: '' },
+        parameter_extraction: false,
+        routes: [{ description: '非法旧版子 Agent', model: 'gpt-5.6-sol' }],
+        routing_mode: 'fixed',
+        schema_version: 'product-agent-strategy/4',
+        temperature: 0.2,
+      }),
+    ).toThrow('SubAgent capability requires Agent strategy v5');
     expect(() => parseAgentStrategyProfile({ ...strategy, maxIterations: 2 })).toThrow(
       'Agent strategy v2 supports exactly one model iteration',
     );
@@ -208,6 +242,7 @@ describe('product Agent input', () => {
     });
 
     expect(input).toEqual({
+      childAgentId: null,
       databaseTableId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       description: '面向运维团队的助手',
       instructions: '只根据已核验的运行事实回答。',
@@ -219,6 +254,42 @@ describe('product Agent input', () => {
       strategyProfile: createDefaultAgentStrategyProfile('gpt-5.6-sol'),
     });
     expect(Object.isFrozen(input)).toBe(true);
+  });
+
+  it('requires a bound published-child selector for a forced SubAgent strategy', () => {
+    const childAgentId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const input = validateAgentInput({
+      child_agent_id: childAgentId,
+      description: '将专项任务委派给固定子 Agent',
+      instructions: '必要时调用已发布子 Agent。',
+      model: 'gpt-5.6-sol',
+      name: '父 Agent',
+      strategy_profile: {
+        forced_capability: 'subagent',
+        max_input_tokens: 32000,
+        max_iterations: 2,
+        max_output_tokens: 2000,
+        max_tool_calls: 1,
+        parameter_defaults: { database_contains: '', knowledge_query: '' },
+        parameter_extraction: false,
+        routes: [{ description: '父 Agent', model: 'gpt-5.6-sol' }],
+        routing_mode: 'fixed',
+        schema_version: 'product-agent-strategy/5',
+        temperature: 0.2,
+      },
+    });
+
+    expect(input.childAgentId).toBe(childAgentId);
+    expect(() =>
+      validateAgentInput({
+        child_agent_id: null,
+        description: '将专项任务委派给固定子 Agent',
+        instructions: '必要时调用已发布子 Agent。',
+        model: 'gpt-5.6-sol',
+        name: '父 Agent',
+        strategy_profile: input.strategyProfile,
+      }),
+    ).toThrow('A forced SubAgent call requires a bound child Agent');
   });
 
   it.each([

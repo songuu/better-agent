@@ -118,6 +118,7 @@ describe('OpenAI-compatible product model runtime', () => {
     const outputs = [
       JSON.stringify({ action: 'tool', capability: 'knowledge', input: '生产健康检查' }),
       JSON.stringify({ action: 'final', output: '服务当前健康。' }),
+      JSON.stringify({ action: 'tool', capability: 'subagent', input: '核验依赖状态' }),
       JSON.stringify({ action: 'tool', capability: 'database', input: 'secret' }),
     ];
     const runtime = new OpenAiResponsesRuntime({
@@ -158,6 +159,19 @@ describe('OpenAI-compatible product model runtime', () => {
         prompt: '继续',
       }),
     ).resolves.toMatchObject({ action: 'final', finalOutput: '服务当前健康。' });
+    await expect(
+      runtime.decideAction({
+        availableCapabilities: ['subagent'],
+        history: [],
+        instructions: '把专项核验委派给子 Agent。',
+        model: 'gpt-5.6-sol',
+        prompt: '继续',
+      }),
+    ).resolves.toMatchObject({
+      action: 'tool',
+      capability: 'subagent',
+      toolInput: '核验依赖状态',
+    });
     await expect(
       runtime.decideAction({
         availableCapabilities: ['knowledge'],

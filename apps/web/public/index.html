@@ -71,7 +71,7 @@
                 <header><div><p>EXECUTION STRATEGY</p><h3 id="strategy-heading">策略与路由</h3></div><output id="strategy-version">STRATEGY V1</output></header>
                 <div class="strategy-grid">
                   <label><span>路由模式</span><select name="routing_mode" id="agent-routing-mode"><option value="fixed">固定模型</option><option value="autonomous">模型自主选择</option></select></label>
-                  <label><span>强制能力调用</span><select name="forced_capability" id="agent-forced-capability"><option value="none">自动</option><option value="knowledge">必须检索知识库</option><option value="database">必须读取数据表</option></select></label>
+                  <label><span>强制能力调用</span><select name="forced_capability" id="agent-forced-capability"><option value="none">自动</option><option value="knowledge">必须检索知识库</option><option value="database">必须读取数据表</option><option value="subagent">必须调用子 Agent</option></select></label>
                   <label><span>输入 Token 上限</span><input name="max_input_tokens" type="number" min="256" max="128000" step="256" value="32000" /></label>
                   <label><span>输出 Token 上限</span><input name="max_output_tokens" type="number" min="64" max="32000" step="64" value="2000" /></label>
                   <label><span>能力调用上限</span><select name="max_tool_calls"><option value="0">0 · 禁用</option><option value="1">1 · 单能力</option><option value="2" selected>2 · 知识 + 数据</option></select></label>
@@ -85,6 +85,7 @@
               </section>
               <label><span>发布知识快照</span><select name="knowledge_base_id" id="agent-knowledge-base"><option value="">不绑定知识库</option></select></label>
               <label><span>发布数据库快照</span><select name="database_table_id" id="agent-database-table"><option value="">不绑定数据表</option></select></label>
+              <label><span>发布子 Agent 快照</span><select name="child_agent_id" id="agent-child-agent"><option value="">不绑定子 Agent</option></select></label>
               <footer><button type="button" id="test-agent" class="button button-ghost" disabled>试运行</button><button type="button" id="publish-agent" class="button button-ghost" disabled>发布版本</button><button type="submit" class="button button-primary">保存 Draft</button></footer>
             </form>
           </section>

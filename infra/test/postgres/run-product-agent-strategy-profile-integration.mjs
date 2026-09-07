@@ -53,6 +53,19 @@ const actionStrategy = JSON.stringify({
   schema_version: 'product-agent-strategy/4',
   temperature: 0,
 });
+const subagentStrategy = JSON.stringify({
+  forced_capability: 'subagent',
+  max_input_tokens: 500,
+  max_iterations: 2,
+  max_output_tokens: 100,
+  max_tool_calls: 1,
+  parameter_defaults: { database_contains: '', knowledge_query: 'delegate' },
+  parameter_extraction: false,
+  routes: [{ model: 'gpt-5.6-sol', description: 'parent' }],
+  routing_mode: 'fixed',
+  schema_version: 'product-agent-strategy/5',
+  temperature: 0,
+});
 
 async function main() {
   await harness.start();
@@ -337,6 +350,113 @@ async function main() {
     `SELECT app.complete_agent_product_run('${workspaceId}','${actionRun}','${actorId}',
       'healthy via healthz','resp-final',50,20);`,
   );
+  const childId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${actorId}',
+      'Verifier','','verify dependencies','gpt-5.6-sol',NULL,NULL,'text',NULL,'${fixed}'::jsonb,NULL)).id;`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_agent_draft('${workspaceId}','${childId}',1,'${actorId}');`,
+  );
+  const parentId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${actorId}',
+      'Coordinator','','delegate exactly once','gpt-5.6-sol',NULL,NULL,'text',NULL,
+      '${subagentStrategy}'::jsonb,'${childId}')).id;`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_agent_draft('${workspaceId}','${parentId}',1,'${actorId}');`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.update_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${childId}',2,
+      'Verifier v2','','verify dependencies v2','gpt-5.6-sol',NULL,NULL,'text',NULL,'${fixed}'::jsonb,NULL);
+     SELECT app.publish_agent_draft('${workspaceId}','${childId}',3,'${actorId}');`,
+  );
+  const parentConversation = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_product_conversation('${workspaceId}','${parentId}','${actorId}')).id;`,
+  );
+  const parentRun = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT run_id FROM app.begin_agent_product_run('${workspaceId}','${parentConversation}','${actorId}','check payment');`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT * FROM app.resolve_agent_product_run_parameters('${workspaceId}','${parentRun}','${actorId}',
+      '{"database_contains":"","knowledge_query":"delegate"}'::jsonb,NULL,NULL,0,0);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT knowledge||':'||database||':'||subagent FROM app.read_agent_product_run_capabilities('${workspaceId}','${parentRun}','${actorId}');`,
+    ),
+    'false:false:true',
+    'v5 pinned SubAgent capability',
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT agent_id||':'||release_version||':'||name FROM app.read_agent_product_run_subagent('${workspaceId}','${parentRun}','${actorId}');`,
+    ),
+    `${childId}:1:Verifier`,
+    'parent release keeps exact child release v1 after child v2 publication',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.update_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${parentId}',2,
+        'Coordinator','','delegate exactly once','gpt-5.6-sol',NULL,NULL,'text',NULL,
+        '${subagentStrategy}'::jsonb,'${parentId}');`,
+      { allowFailure: true },
+    ),
+    /child binding|22023/u,
+    'self SubAgent binding',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${parentRun}','${actorId}',1,
+      'gpt-5.6-sol','tool','subagent','check payment','SUBAGENT_CONTEXT verified',NULL,
+      'resp-parent-tool',9,4,7,6,'resp-child');
+     SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${parentRun}','${actorId}',2,
+      'gpt-5.6-sol','final',NULL,NULL,NULL,'healthy','resp-parent-final',11,5,0,0,NULL);
+     `,
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.complete_agent_product_run('${workspaceId}','${parentRun}','${actorId}',
+        'healthy','resp-parent-final',20,9);`,
+      { allowFailure: true },
+    ),
+    /aggregate budget conflict|40001/u,
+    'forged child usage aggregate',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.complete_agent_product_run('${workspaceId}','${parentRun}','${actorId}',
+      'healthy','resp-parent-final',27,15);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT input_tokens||':'||output_tokens||':'||(iteration_trace->0->>'target_release_version')
+       FROM app.list_agent_product_runs('${workspaceId}') WHERE id='${parentRun}';`,
+    ),
+    '27:15:1',
+    'v5 child model usage and exact release evidence',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      'SELECT * FROM public.agent_product_release_subagent_bindings;',
+      { allowFailure: true },
+    ),
+    /permission denied|42501/u,
+    'runtime direct SubAgent binding read',
+  );
   assertRejected(
     await harness.psql(
       'ba_runtime_test',
@@ -373,7 +493,7 @@ async function main() {
     'immutable strategy release',
   );
   process.stdout.write(
-    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2/v3/v4 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback, ordered iteration/action traces, release-bound model tool decisions and aggregate token budgets.\n`,
+    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2/v3/v4/v5 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback, ordered iteration/action traces, release-bound model tool decisions, exact child release pinning and aggregate token budgets.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-agent-strategy-profile pass\n');
 }
