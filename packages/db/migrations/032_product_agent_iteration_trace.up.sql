@@ -105,7 +105,7 @@ AS $function$
 $function$;
 
 ALTER TABLE public.agent_drafts ALTER COLUMN strategy_profile SET DEFAULT
-  '{"schema_version":"product-agent-strategy/3","routing_mode":"fixed","routes":[{"model":"gpt-5.6-sol","description":"default model"}],"parameter_defaults":{"database_contains":"","knowledge_query":""},"parameter_extraction":false,"forced_capability":"none","max_iterations":1,"max_tool_calls":2,"max_input_tokens":32000,"max_output_tokens":2000,"temperature":0.2}'::jsonb;
+  '{"schema_version":"product-agent-strategy/2","routing_mode":"fixed","routes":[{"model":"gpt-5.6-sol","description":"default model"}],"parameter_defaults":{"database_contains":"","knowledge_query":""},"parameter_extraction":false,"forced_capability":"none","max_iterations":1,"max_tool_calls":2,"max_input_tokens":32000,"max_output_tokens":2000,"temperature":0.2}'::jsonb;
 
 ALTER TABLE public.agent_product_runs
   ADD COLUMN iteration_count bigint NOT NULL DEFAULT 0 CHECK (iteration_count BETWEEN 0 AND 4),
