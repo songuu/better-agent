@@ -2382,6 +2382,71 @@ body::before {
   overflow: auto;
 }
 
+.plugin-center {
+  display: grid;
+  gap: 24px;
+  padding: 28px;
+}
+
+.plugin-center[hidden] {
+  display: none;
+}
+
+.plugin-catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+}
+
+.plugin-card {
+  display: grid;
+  gap: 18px;
+  min-height: 250px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.plugin-card header,
+.plugin-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.plugin-card h3,
+.plugin-card p {
+  margin: 0;
+}
+
+.plugin-card small,
+.plugin-card em,
+.plugin-card footer span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-style: normal;
+  letter-spacing: 0.08em;
+}
+
+.plugin-card h3 {
+  margin-top: 6px;
+  font-size: 24px;
+}
+
+.plugin-operations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.plugin-operations code {
+  padding: 7px 10px;
+  border: 1px solid var(--line-bright);
+  color: var(--accent);
+}
+
 .evaluation-hero {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);

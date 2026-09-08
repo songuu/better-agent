@@ -30,6 +30,7 @@ import type {
   ProductKnowledgeBase,
   ProductKnowledgeDocument,
   ProductKnowledgeHit,
+  ProductPluginCatalogItem,
   ProductReleaseEvaluationTarget,
   ProductRun,
   ProductStore,
@@ -224,6 +225,7 @@ function productFixture(): {
   readonly flows: ProductFlowDraft[];
   readonly knowledgeBases: ProductKnowledgeBase[];
   readonly knowledgeDocuments: ProductKnowledgeDocument[];
+  readonly plugins: ProductPluginCatalogItem[];
   readonly runs: ProductRun[];
   readonly store: ProductStore;
 } {
@@ -237,9 +239,39 @@ function productFixture(): {
   const flowRollbacks: ProductFlowRollback[] = [];
   const knowledgeBases: ProductKnowledgeBase[] = [];
   const knowledgeDocuments: ProductKnowledgeDocument[] = [];
+  const plugins: ProductPluginCatalogItem[] = [
+    {
+      description: 'Unicode 码点与空白分隔词数统计。',
+      identity: 'builtin.text.v1',
+      installationId: null,
+      installedAt: null,
+      name: '文本分析',
+      operations: ['character_count', 'word_count'],
+      pluginId: 'builtin.text',
+      releaseVersion: 1,
+      runtime: 'deterministic',
+    },
+  ];
   const runs: ProductRun[] = [];
   const timestamp = '2026-09-03T00:00:00.000Z';
   const store: ProductStore = {
+    async listPluginCatalog() {
+      return plugins;
+    },
+    async installPlugin(_workspaceId, _actorId, pluginId, releaseVersion) {
+      const index = plugins.findIndex(
+        (plugin) => plugin.pluginId === pluginId && plugin.releaseVersion === releaseVersion,
+      );
+      const current = plugins[index];
+      if (current === undefined) throw new Error('Plugin release not found');
+      const installed = {
+        ...current,
+        installationId: '12121212-1212-4121-8121-121212121212',
+        installedAt: timestamp,
+      };
+      plugins[index] = installed;
+      return installed;
+    },
     async createDatabaseTable(_workspaceId, _actorId, input) {
       const table: ProductDatabaseTable = {
         ...input,
@@ -623,6 +655,7 @@ function productFixture(): {
     databaseTables,
     knowledgeBases,
     knowledgeDocuments,
+    plugins,
     runs,
     store,
   };
@@ -1213,6 +1246,56 @@ describe('Better Agent web runtime', () => {
     expect(
       ((await listed.json()) as { database_tables: ProductDatabaseTable[] }).database_tables[0],
     ).toMatchObject({ columns: ['customer_id', 'status'], rowCount: 2 });
+  });
+
+  it('lists and installs an exact versioned Plugin release for the workspace', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const before = await localRequest(origin, '/better-agent/api/product/plugins', {
+      headers: { Cookie: cookie },
+    });
+    expect(before.status).toBe(200);
+    expect(
+      ((await before.json()) as { plugins: ProductPluginCatalogItem[] }).plugins[0],
+    ).toMatchObject({ identity: 'builtin.text.v1', installationId: null });
+
+    const installed = await localRequest(origin, '/better-agent/api/product/plugins/install', {
+      body: JSON.stringify({ plugin_id: 'builtin.text', release_version: 1 }),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'POST',
+    });
+    expect(installed.status).toBe(200);
+    expect(((await installed.json()) as { plugin: ProductPluginCatalogItem }).plugin).toMatchObject(
+      {
+        identity: 'builtin.text.v1',
+        installationId: '12121212-1212-4121-8121-121212121212',
+        operations: ['character_count', 'word_count'],
+        runtime: 'deterministic',
+      },
+    );
+
+    const invalid = await localRequest(origin, '/better-agent/api/product/plugins/install', {
+      body: JSON.stringify({ plugin_id: 'https://example.com/open', release_version: 1 }),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'POST',
+    });
+    expect(invalid.status).toBe(400);
   });
 
   it('requires the product CSRF header before authenticating mutation routes', async () => {

@@ -230,6 +230,27 @@ test('ships the managed PostgreSQL Database Studio with parameterized read contr
   assert.doesNotMatch(publicJavaScript, /SELECT\s+\*\s+FROM|executeSql|rawSql/iu);
 });
 
+test('ships a workspace-scoped versioned Plugin catalog and installation control', () => {
+  for (const marker of [
+    'id="show-plugins"',
+    'id="plugin-view"',
+    'id="plugin-catalog"',
+    'data-install-plugin',
+    'builtin.text.v1',
+    'character_count',
+    'word_count',
+  ]) {
+    assert.ok(
+      publicHtml.includes(marker) || publicJavaScript.includes(marker),
+      `missing Plugin catalog control: ${marker}`,
+    );
+  }
+  for (const marker of ['/plugins', '/plugins/install', 'loadPluginCatalog']) {
+    assert.ok(publicJavaScript.includes(marker), `missing Plugin catalog behavior: ${marker}`);
+  }
+  assert.doesNotMatch(publicJavaScript, /eval\(|new Function|https?:\/\//u);
+});
+
 test('packages the PostgreSQL client dependency required by the product runtime', () => {
   assert.match(
     deploymentWorkflow,

@@ -21,8 +21,9 @@
           <button type="button" id="show-flows"><span>02</span>Flow 编排</button>
           <button type="button" id="show-knowledge"><span>03</span>知识与数据</button>
           <button type="button" id="show-database"><span>04</span>Database</button>
-          <button type="button" id="show-runs"><span>05</span>运行记录</button>
-          <button type="button" id="show-evaluation"><span>06</span>发布与评测</button>
+          <button type="button" id="show-plugins"><span>05</span>Plugins</button>
+          <button type="button" id="show-runs"><span>06</span>运行记录</button>
+          <button type="button" id="show-evaluation"><span>07</span>发布与评测</button>
         </nav>
         <div class="rail-status"><i></i><div><small>POSTGRES RUNTIME</small><b id="runtime-label">正在探测</b></div></div>
       </aside>
@@ -120,7 +121,7 @@
               </div>
               <label class="flow-condition-toggle"><input id="flow-condition-enabled" name="conditionEnabled" type="checkbox" /><span>启用条件逻辑节点</span></label>
               <label class="flow-condition-toggle"><input id="flow-transform-enabled" name="transformEnabled" type="checkbox" /><span>启用受控代码变换节点（不执行任意脚本）</span></label>
-              <label class="flow-condition-toggle"><input id="flow-plugin-enabled" name="pluginEnabled" type="checkbox" /><span>启用版本化内置插件节点</span></label>
+              <label class="flow-condition-toggle"><input id="flow-plugin-enabled" name="pluginEnabled" type="checkbox" disabled /><span>启用已安装的版本化插件节点</span></label>
               <fieldset id="flow-canvas" class="flow-canvas"><legend>Flow 节点画布</legend>
                 <div class="flow-wire wire-one"></div><div class="flow-wire wire-two"></div>
                 <article class="flow-node node-input"><small>INPUT</small><b>消息输入</b><code>message</code></article>
@@ -213,6 +214,14 @@
             <form id="database-query-form"><label><span>查询列</span><select name="column" id="database-query-column"></select></label><label><span>包含文本</span><textarea name="contains" maxlength="500" placeholder="留空可预览前 20 行"></textarea></label><button type="submit" class="button button-ghost">执行参数化查询</button></form>
             <div id="database-results" class="knowledge-hits"><span>选择数据表后执行查询。</span></div>
           </aside>
+        </section>
+
+        <section id="plugin-view" class="plugin-center" hidden>
+          <header class="evaluation-hero">
+            <div><p class="eyebrow">VERSIONED CAPABILITY CATALOG</p><h2>选择精确版本，<br />安装到当前工作区。</h2></div>
+            <p>插件目录由服务端发布不可变清单；安装只授予当前 Workspace 使用指定版本的权限。Flow 保存、调试与发布都会再次核验安装记录。</p>
+          </header>
+          <div id="plugin-catalog" class="plugin-catalog"><p class="empty-note">登录后加载插件目录。</p></div>
         </section>
 
         <section id="evaluation-view" class="evaluation-center" hidden>

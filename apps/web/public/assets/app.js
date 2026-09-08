@@ -12,6 +12,7 @@ const state = {
   flowRollbacks: [],
   knowledgeBases: [],
   knowledgeDocuments: [],
+  plugins: [],
   releaseTargets: [],
   runs: [],
   view: 'agents',
@@ -408,6 +409,38 @@ function syncFlowConditionEditor() {
     `${conditionEnabled ? 'condition' : pluginEnabled ? 'plugin' : transformEnabled ? 'transform' : 'prompt'} → output`;
 }
 
+function hasInstalledTextPlugin() {
+  return state.plugins.some(
+    (plugin) => plugin.identity === 'builtin.text.v1' && plugin.installationId,
+  );
+}
+
+function syncPluginAvailability() {
+  const available = hasInstalledTextPlugin();
+  flowForm.elements.pluginEnabled.disabled = !available;
+  if (!available) flowForm.elements.pluginEnabled.checked = false;
+  syncFlowConditionEditor();
+}
+
+function renderPluginCatalog() {
+  const catalog = byId('plugin-catalog');
+  catalog.innerHTML = state.plugins.length
+    ? state.plugins
+        .map(
+          (plugin) =>
+            `<article class="plugin-card"><header><div><small>${escapeHtml(plugin.runtime.toUpperCase())}</small><h3>${escapeHtml(plugin.name)}</h3></div><em>${escapeHtml(plugin.identity)}</em></header><p>${escapeHtml(plugin.description)}</p><div class="plugin-operations">${plugin.operations.map((operation) => `<code>${escapeHtml(operation)}</code>`).join('')}</div><footer><span>${plugin.installationId ? '已安装到当前工作区' : '尚未安装'}</span><button type="button" class="button ${plugin.installationId ? 'button-ghost' : 'button-primary'}" data-install-plugin="${escapeHtml(plugin.pluginId)}" data-plugin-version="${plugin.releaseVersion}" ${plugin.installationId ? 'disabled' : ''}>${plugin.installationId ? '已安装' : '安装此版本'}</button></footer></article>`,
+        )
+        .join('')
+    : '<p class="empty-note">当前没有可安装插件。</p>';
+  syncPluginAvailability();
+}
+
+async function loadPluginCatalog() {
+  const payload = await request('/plugins');
+  state.plugins = payload.plugins;
+  renderPluginCatalog();
+}
+
 function renderFlows() {
   byId('flow-count').textContent = String(state.flows.length).padStart(2, '0');
   const list = byId('flow-list');
@@ -760,17 +793,20 @@ function setStudioView(view) {
   const isFlow = view === 'flows';
   const isKnowledge = view === 'knowledge';
   const isDatabase = view === 'database';
+  const isPlugin = view === 'plugins';
   const isEvaluation = view === 'evaluation';
   const isAgent = view === 'agents';
   byId('agent-view').hidden = !isAgent;
   byId('flow-view').hidden = !isFlow;
   byId('knowledge-view').hidden = !isKnowledge;
   byId('database-view').hidden = !isDatabase;
+  byId('plugin-view').hidden = !isPlugin;
   byId('evaluation-view').hidden = !isEvaluation;
   byId('show-agents').classList.toggle('is-active', isAgent);
   byId('show-flows').classList.toggle('is-active', isFlow);
   byId('show-knowledge').classList.toggle('is-active', isKnowledge);
   byId('show-database').classList.toggle('is-active', isDatabase);
+  byId('show-plugins').classList.toggle('is-active', isPlugin);
   byId('show-evaluation').classList.toggle('is-active', isEvaluation);
   byId('new-agent').hidden = !isAgent;
   byId('new-flow').hidden = !isFlow;
@@ -778,22 +814,26 @@ function setStudioView(view) {
   byId('new-database').hidden = !isDatabase;
   byId('workspace-path').textContent = isEvaluation
     ? '独立工作区 / RELEASES'
-    : isDatabase
-      ? '独立工作区 / DATABASE'
-      : isKnowledge
-        ? '独立工作区 / KNOWLEDGE'
-        : isFlow
-          ? '独立工作区 / FLOWS'
-          : '独立工作区 / AGENTS';
+    : isPlugin
+      ? '独立工作区 / PLUGINS'
+      : isDatabase
+        ? '独立工作区 / DATABASE'
+        : isKnowledge
+          ? '独立工作区 / KNOWLEDGE'
+          : isFlow
+            ? '独立工作区 / FLOWS'
+            : '独立工作区 / AGENTS';
   byId('studio-title').textContent = isEvaluation
     ? 'Release & Evaluation'
-    : isDatabase
-      ? 'Database Studio'
-      : isKnowledge
-        ? 'Knowledge Center'
-        : isFlow
-          ? 'Flow Studio'
-          : 'Agent Studio';
+    : isPlugin
+      ? 'Plugin Catalog'
+      : isDatabase
+        ? 'Database Studio'
+        : isKnowledge
+          ? 'Knowledge Center'
+          : isFlow
+            ? 'Flow Studio'
+            : 'Agent Studio';
   if (isEvaluation) renderEvaluationCenter();
 }
 
@@ -949,6 +989,7 @@ async function bootstrap() {
       loadFlows(),
       loadKnowledgeBases(),
       loadDatabaseTables(),
+      loadPluginCatalog(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -977,6 +1018,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       loadFlows(),
       loadKnowledgeBases(),
       loadDatabaseTables(),
+      loadPluginCatalog(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -1002,6 +1044,7 @@ byId('show-agents').addEventListener('click', () => setStudioView('agents'));
 byId('show-flows').addEventListener('click', () => setStudioView('flows'));
 byId('show-knowledge').addEventListener('click', () => setStudioView('knowledge'));
 byId('show-database').addEventListener('click', () => setStudioView('database'));
+byId('show-plugins').addEventListener('click', () => setStudioView('plugins'));
 byId('show-evaluation').addEventListener('click', () => setStudioView('evaluation'));
 byId('new-agent').addEventListener('click', () => showEditor());
 byId('new-flow').addEventListener('click', () => showFlowEditor());
@@ -1051,6 +1094,26 @@ flowForm.elements.name.addEventListener('input', () => {
 flowForm.elements.conditionEnabled.addEventListener('change', syncFlowConditionEditor);
 flowForm.elements.transformEnabled.addEventListener('change', syncFlowConditionEditor);
 flowForm.elements.pluginEnabled.addEventListener('change', syncFlowConditionEditor);
+
+byId('plugin-catalog').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-install-plugin]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await request('/plugins/install', {
+      method: 'POST',
+      body: JSON.stringify({
+        plugin_id: button.dataset.installPlugin,
+        release_version: Number(button.dataset.pluginVersion),
+      }),
+    });
+    await loadPluginCatalog();
+    toast('插件精确版本已安装到当前工作区');
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message, true);
+  }
+});
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();

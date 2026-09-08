@@ -325,6 +325,18 @@ export interface ProductDatabaseQueryInput {
   readonly limit: number;
 }
 
+export interface ProductPluginCatalogItem {
+  readonly description: string;
+  readonly identity: string;
+  readonly installationId: string | null;
+  readonly installedAt: string | null;
+  readonly name: string;
+  readonly operations: readonly string[];
+  readonly pluginId: string;
+  readonly releaseVersion: number;
+  readonly runtime: 'deterministic';
+}
+
 export interface ProductReleaseEvaluationTarget {
   readonly environments: readonly string[];
   readonly failedEvidenceCount: number;
@@ -421,6 +433,7 @@ export interface ProductStore {
   listFlows(workspaceId: string): Promise<readonly ProductFlowDraft[]>;
   listKnowledgeBases(workspaceId: string): Promise<readonly ProductKnowledgeBase[]>;
   listDatabaseTables(workspaceId: string): Promise<readonly ProductDatabaseTable[]>;
+  listPluginCatalog(workspaceId: string): Promise<readonly ProductPluginCatalogItem[]>;
   readAgentDatabase(
     workspaceId: string,
     conversationId: string,
@@ -433,6 +446,12 @@ export interface ProductStore {
   listReleaseEvaluationTargets(
     workspaceId: string,
   ): Promise<readonly ProductReleaseEvaluationTarget[]>;
+  installPlugin(
+    workspaceId: string,
+    actorId: string,
+    pluginId: string,
+    releaseVersion: number,
+  ): Promise<ProductPluginCatalogItem>;
   publishAgent(
     workspaceId: string,
     actorId: string,
@@ -651,6 +670,17 @@ interface DatabaseRecordRow {
   readonly created_at: Date | string;
   readonly ordinal: string | number;
   readonly record: unknown;
+}
+
+interface PluginCatalogRow {
+  readonly description: string;
+  readonly identity: string;
+  readonly installation_id: string | null;
+  readonly installed_at: Date | string | null;
+  readonly manifest: unknown;
+  readonly name: string;
+  readonly plugin_id: string;
+  readonly release_version: string | number;
 }
 
 interface AgentDatabaseRecordRow {
@@ -1491,6 +1521,37 @@ function toDatabaseRow(row: DatabaseRecordRow): ProductDatabaseRow {
   });
 }
 
+function toPluginCatalogItem(row: PluginCatalogRow): ProductPluginCatalogItem {
+  if (typeof row.manifest !== 'object' || row.manifest === null || Array.isArray(row.manifest)) {
+    throw new Error('product store returned an invalid Plugin manifest');
+  }
+  const manifest = row.manifest as Record<string, unknown>;
+  if (
+    Object.keys(manifest).length !== 3 ||
+    manifest.identity !== row.identity ||
+    manifest.runtime !== 'deterministic' ||
+    !Array.isArray(manifest.operations) ||
+    manifest.operations.length < 1 ||
+    manifest.operations.length > 20 ||
+    manifest.operations.some(
+      (operation) => typeof operation !== 'string' || !/^[a-z][a-z0-9_]{0,39}$/u.test(operation),
+    )
+  ) {
+    throw new Error('product store returned an invalid Plugin manifest');
+  }
+  return Object.freeze({
+    description: row.description,
+    identity: row.identity,
+    installationId: row.installation_id,
+    installedAt: row.installed_at === null ? null : asIso(row.installed_at),
+    name: row.name,
+    operations: Object.freeze([...manifest.operations]) as readonly string[],
+    pluginId: row.plugin_id,
+    releaseVersion: positiveInteger(row.release_version, 'Plugin release version'),
+    runtime: 'deterministic',
+  });
+}
+
 function toAgentDatabaseRecord(row: AgentDatabaseRecordRow): ProductAgentDatabaseRecord {
   if (!Array.isArray(row.columns) || row.columns.some((column) => typeof column !== 'string')) {
     throw new Error('product store returned invalid Agent Database columns');
@@ -1729,6 +1790,40 @@ export class PostgresProductStore implements ProductStore {
       [workspaceId],
     );
     return Object.freeze(result.rows.map(toDatabaseTable));
+  }
+
+  async listPluginCatalog(workspaceId: string): Promise<readonly ProductPluginCatalogItem[]> {
+    const result = await this.#pool.query<PluginCatalogRow>(
+      'SELECT * FROM app.list_product_plugin_catalog($1::uuid)',
+      [workspaceId],
+    );
+    return Object.freeze(result.rows.map(toPluginCatalogItem));
+  }
+
+  async installPlugin(
+    workspaceId: string,
+    actorId: string,
+    pluginId: string,
+    releaseVersion: number,
+  ): Promise<ProductPluginCatalogItem> {
+    if (!/^[a-z][a-z0-9]*(\.[a-z0-9]+)*$/u.test(pluginId)) {
+      throw new Error('Plugin id is invalid');
+    }
+    if (!Number.isSafeInteger(releaseVersion) || releaseVersion < 1) {
+      throw new Error('Plugin release version is invalid');
+    }
+    await this.#pool.query(
+      'SELECT app.install_product_plugin($1::uuid, $2::uuid, $3::text, $4::integer)',
+      [workspaceId, actorId, pluginId, releaseVersion],
+    );
+    const catalog = await this.listPluginCatalog(workspaceId);
+    const installed = catalog.find(
+      (item) => item.pluginId === pluginId && item.releaseVersion === releaseVersion,
+    );
+    if (installed?.installationId === null || installed === undefined) {
+      throw new Error('product store did not install the Plugin release');
+    }
+    return installed;
   }
 
   async queryDatabaseTable(

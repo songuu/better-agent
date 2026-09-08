@@ -492,6 +492,36 @@ export async function createBetterAgentWebServer(
         return true;
       }
     }
+    if (path === `${WEB_BASE_PATH}api/product/plugins` && request.method === 'GET') {
+      sendJson(request, response, 200, {
+        plugins: await productStore.listPluginCatalog(workspaceId),
+      });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/plugins/install` && request.method === 'POST') {
+      const value = await readJsonBody(request);
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new Error('invalid_plugin_install_payload');
+      }
+      const payload = value as Record<string, unknown>;
+      if (
+        Object.keys(payload).length !== 2 ||
+        typeof payload.plugin_id !== 'string' ||
+        !/^[a-z][a-z0-9]*(\.[a-z0-9]+)*$/u.test(payload.plugin_id) ||
+        !Number.isSafeInteger(payload.release_version) ||
+        Number(payload.release_version) < 1
+      ) {
+        throw new Error('invalid_plugin_install_payload');
+      }
+      const plugin = await productStore.installPlugin(
+        workspaceId,
+        actorId,
+        payload.plugin_id,
+        Number(payload.release_version),
+      );
+      sendJson(request, response, 200, { plugin });
+      return true;
+    }
     if (path === `${WEB_BASE_PATH}api/product/knowledge-bases` && request.method === 'GET') {
       sendJson(request, response, 200, {
         knowledge_bases: await productStore.listKnowledgeBases(workspaceId),
