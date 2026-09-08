@@ -273,6 +273,25 @@ test('ships version-pinned Custom HTTPS API resources and Flow controls', () => 
   assert.doesNotMatch(publicJavaScript, /eval\(|new Function|https?:\/\//u);
 });
 
+test('ships versioned Skill Pack resources and exact Agent binding controls', () => {
+  for (const marker of [
+    'id="agent-skill-pack"',
+    'id="skill-pack-form"',
+    'id="skill-pack-list"',
+    'Skill Pack',
+  ]) {
+    assert.match(publicHtml, new RegExp(marker, 'u'));
+  }
+  for (const marker of [
+    '/skill-packs',
+    'skill_pack_id',
+    'skill_pack_release_version',
+    'loadSkillPacks',
+  ]) {
+    assert.match(publicJavaScript, new RegExp(marker, 'u'));
+  }
+});
+
 test('packages the PostgreSQL client dependency required by the product runtime', () => {
   assert.match(
     deploymentWorkflow,

@@ -16,6 +16,7 @@ import {
   validateKnowledgeDocumentInput,
   validateKnowledgeQuery,
   validateRunInput,
+  validateSkillPackInput,
 } from '../src/product-store.js';
 
 const structuredRole = {
@@ -254,6 +255,8 @@ describe('product Agent input', () => {
       name: '运行守望者',
       roleMode: 'text',
       roleProfile: null,
+      skillPackId: null,
+      skillPackReleaseVersion: null,
       strategyProfile: createDefaultAgentStrategyProfile('gpt-5.6-sol'),
     });
     expect(Object.isFrozen(input)).toBe(true);
@@ -339,6 +342,28 @@ describe('product Agent input', () => {
     ],
   ])('rejects an incomplete, open or mutable draft payload', (payload) => {
     expect(() => validateAgentInput(payload)).toThrow();
+  });
+});
+
+describe('product Skill Pack input', () => {
+  it('accepts a bounded instruction pack and rejects open or empty payloads', () => {
+    expect(
+      validateSkillPackInput({
+        description: '统一客服答复规范',
+        instructions: '回答前核对事实；不确定时明确说明。',
+        name: '客服规范',
+      }),
+    ).toEqual({
+      description: '统一客服答复规范',
+      instructions: '回答前核对事实；不确定时明确说明。',
+      name: '客服规范',
+    });
+    expect(() =>
+      validateSkillPackInput({ description: '', instructions: '', name: '空包' }),
+    ).toThrow('Skill Pack instructions');
+    expect(() =>
+      validateSkillPackInput({ description: '', extra: true, instructions: 'x', name: '开放对象' }),
+    ).toThrow('shape');
   });
 });
 

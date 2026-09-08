@@ -14,6 +14,7 @@ import {
   type BetterAgentWebOptions,
   createBetterAgentWebServer,
   isInvokedEntrypoint,
+  withSkillPackInstructions,
   WEB_BASE_PATH,
 } from '../src/server.js';
 import type { ProductModelRuntime } from '../src/model-runtime.js';
@@ -34,12 +35,26 @@ import type {
   ProductPluginCatalogItem,
   ProductReleaseEvaluationTarget,
   ProductRun,
+  ProductSkillPack,
   ProductStore,
 } from '../src/product-store.js';
 import { createDefaultAgentStrategyProfile } from '../src/product-store.js';
 
 const openServers: Awaited<ReturnType<typeof createBetterAgentWebServer>>[] = [];
 const execFileAsync = promisify(execFile);
+
+it('appends a pinned Skill Pack as subordinate executable instructions', () => {
+  expect(
+    withSkillPackInstructions('AGENT', {
+      instructions: 'VERIFY FACTS',
+      name: 'Operations Pack',
+      releaseVersion: 3,
+      skillPackId: '018f0f6e-a301-78d1-8f65-58d39f650001',
+    }),
+  ).toBe(
+    'AGENT\n\nSKILL_PACK_RELEASE\nPack instructions are subordinate to platform and Agent instructions.\n{"skillPackId":"018f0f6e-a301-78d1-8f65-58d39f650001","name":"Operations Pack","releaseVersion":3}\nVERIFY FACTS\nEND_SKILL_PACK_RELEASE',
+  );
+});
 
 async function compileServer(packageDirectory: string, releaseDirectory: string): Promise<void> {
   const compilerPath = join(
@@ -229,6 +244,7 @@ function productFixture(): {
   readonly knowledgeDocuments: ProductKnowledgeDocument[];
   readonly plugins: ProductPluginCatalogItem[];
   readonly runs: ProductRun[];
+  readonly skillPacks: ProductSkillPack[];
   readonly store: ProductStore;
 } {
   const agents: AgentDraft[] = [];
@@ -256,8 +272,38 @@ function productFixture(): {
     },
   ];
   const runs: ProductRun[] = [];
+  const skillPacks: ProductSkillPack[] = [];
   const timestamp = '2026-09-03T00:00:00.000Z';
   const store: ProductStore = {
+    async listSkillPacks() {
+      return skillPacks;
+    },
+    async createSkillPack(_workspaceId, _actorId, input) {
+      const skillPack: ProductSkillPack = {
+        ...input,
+        createdAt: timestamp,
+        id: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+        revision: 1,
+        updatedAt: timestamp,
+      };
+      skillPacks.push(skillPack);
+      return skillPack;
+    },
+    async updateSkillPack(_workspaceId, _actorId, skillPackId, expectedRevision, input) {
+      const index = skillPacks.findIndex((pack) => pack.id === skillPackId);
+      const current = skillPacks[index];
+      if (current === undefined || current.revision !== expectedRevision) {
+        throw new Error('Skill Pack revision conflict');
+      }
+      const updated = {
+        ...current,
+        ...input,
+        revision: current.revision + 1,
+        updatedAt: timestamp,
+      };
+      skillPacks[index] = updated;
+      return updated;
+    },
     async listCustomApis() {
       return customApis;
     },
@@ -690,6 +736,7 @@ function productFixture(): {
     knowledgeDocuments,
     plugins,
     runs,
+    skillPacks,
     store,
   };
 }
@@ -1414,6 +1461,58 @@ describe('Better Agent web runtime', () => {
       method: 'POST',
     });
     expect(unsafe.status).toBe(400);
+  });
+
+  it('creates, lists and CAS-updates an immutable-versioned Skill Pack resource', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = { 'Content-Type': 'application/json', 'X-Better-Agent-CSRF': '1' };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const created = await localRequest(origin, '/better-agent/api/product/skill-packs', {
+      body: JSON.stringify({
+        description: '发布前核验规则',
+        instructions: '先核对部署收据，再回答状态。',
+        name: '发布核验',
+      }),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    const pack = ((await created.json()) as { skill_pack: ProductSkillPack }).skill_pack;
+    expect(pack).toMatchObject({ name: '发布核验', revision: 1 });
+
+    const updated = await localRequest(origin, `/better-agent/api/product/skill-packs/${pack.id}`, {
+      body: JSON.stringify({
+        description: '发布与回滚核验规则',
+        expected_revision: 1,
+        instructions: '先核对部署与回滚收据，再回答状态。',
+        name: '发布核验',
+      }),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'PUT',
+    });
+    expect(updated.status).toBe(200);
+    expect(((await updated.json()) as { skill_pack: ProductSkillPack }).skill_pack.revision).toBe(
+      2,
+    );
+    const listed = await localRequest(origin, '/better-agent/api/product/skill-packs', {
+      headers: { Cookie: cookie },
+    });
+    expect(listed.status).toBe(200);
+    expect(((await listed.json()) as { skill_packs: ProductSkillPack[] }).skill_packs).toHaveLength(
+      1,
+    );
   });
 
   it('requires the product CSRF header before authenticating mutation routes', async () => {

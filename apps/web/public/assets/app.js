@@ -3,6 +3,7 @@ const state = {
   agents: [],
   conversationId: null,
   currentCustomApi: null,
+  currentSkillPack: null,
   current: null,
   currentFlow: null,
   currentKnowledge: null,
@@ -18,6 +19,7 @@ const state = {
   plugins: [],
   releaseTargets: [],
   runs: [],
+  skillPacks: [],
   view: 'agents',
 };
 const byId = (id) => document.getElementById(id);
@@ -28,6 +30,7 @@ const knowledgeDocumentForm = byId('knowledge-document-form');
 const databaseTableForm = byId('database-table-form');
 const databaseRowsForm = byId('database-rows-form');
 const customApiForm = byId('custom-api-form');
+const skillPackForm = byId('skill-pack-form');
 const loginDialog = byId('login-dialog');
 const roleThemes = [
   'identity',
@@ -122,6 +125,7 @@ function currentCapabilityKinds() {
     ...(form.elements.database_table_id.value ? ['database'] : []),
     ...(form.elements.child_agent_id.value ? ['subagent'] : []),
     ...(form.elements.flow_id.value ? ['flow'] : []),
+    ...(form.elements.skill_pack_binding.value ? ['skill_pack'] : []),
   ];
 }
 
@@ -542,6 +546,65 @@ async function loadCustomApis() {
   const payload = await request('/custom-apis');
   state.customApis = payload.custom_apis;
   renderCustomApis();
+}
+
+function resetSkillPackForm() {
+  state.currentSkillPack = null;
+  skillPackForm.reset();
+  skillPackForm.elements.skillPackId.value = '';
+  skillPackForm.elements.expectedRevision.value = '';
+}
+
+function editSkillPack(skillPackId) {
+  const pack = state.skillPacks.find((item) => item.id === skillPackId);
+  if (!pack) return;
+  state.currentSkillPack = pack;
+  skillPackForm.elements.skillPackId.value = pack.id;
+  skillPackForm.elements.expectedRevision.value = String(pack.revision);
+  skillPackForm.elements.name.value = pack.name;
+  skillPackForm.elements.description.value = pack.description;
+  skillPackForm.elements.instructions.value = pack.instructions;
+  skillPackForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderAgentSkillPackOptions() {
+  const select = byId('agent-skill-pack');
+  const selected = state.current?.skillPackId
+    ? `${state.current.skillPackId}:${state.current.skillPackReleaseVersion}`
+    : '';
+  const options = [
+    '<option value="">不绑定 Skill Pack</option>',
+    ...state.skillPacks.map(
+      (pack) =>
+        `<option value="${pack.id}:${pack.revision}">${escapeHtml(pack.name)} · V${pack.revision}</option>`,
+    ),
+  ];
+  if (selected && !state.skillPacks.some((pack) => `${pack.id}:${pack.revision}` === selected)) {
+    options.push(
+      `<option value="${selected}">已固定历史版本 · V${state.current.skillPackReleaseVersion}</option>`,
+    );
+  }
+  select.innerHTML = options.join('');
+  select.value = selected;
+}
+
+function renderSkillPacks() {
+  const list = byId('skill-pack-list');
+  list.innerHTML = state.skillPacks.length
+    ? state.skillPacks
+        .map(
+          (pack) =>
+            `<article class="custom-api-card"><header><div><small>INSTRUCTION PACK</small><h3>${escapeHtml(pack.name)}</h3></div><em>V${pack.revision}</em></header><p>${escapeHtml(pack.description || '未填写说明')}</p><code>${escapeHtml(pack.instructions.slice(0, 180))}${pack.instructions.length > 180 ? '…' : ''}</code><footer><span>IMMUTABLE RELEASE</span><button type="button" class="button button-ghost" data-edit-skill-pack="${pack.id}">编辑并发布新版本</button></footer></article>`,
+        )
+        .join('')
+    : '<p class="empty-note">还没有 Skill Pack。</p>';
+  renderAgentSkillPackOptions();
+}
+
+async function loadSkillPacks() {
+  const payload = await request('/skill-packs');
+  state.skillPacks = payload.skill_packs;
+  renderSkillPacks();
 }
 
 function renderFlows() {
@@ -1066,6 +1129,9 @@ function showEditor(agent = null) {
   setRoleMode(form.elements.role_mode.value);
   renderAgentKnowledgeOptions();
   renderAgentDatabaseOptions();
+  renderAgentChildOptions();
+  renderAgentFlowOptions();
+  renderAgentSkillPackOptions();
   byId('editor-title').textContent = agent?.name || '未命名 Agent';
   byId('agent-kicker').textContent = agent
     ? `${agent.status.toUpperCase()} · REV ${agent.revision}`
@@ -1107,6 +1173,7 @@ async function bootstrap() {
       loadDatabaseTables(),
       loadPluginCatalog(),
       loadCustomApis(),
+      loadSkillPacks(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -1137,6 +1204,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       loadDatabaseTables(),
       loadPluginCatalog(),
       loadCustomApis(),
+      loadSkillPacks(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -1272,9 +1340,48 @@ customApiForm.addEventListener('submit', async (event) => {
   }
 });
 
+byId('skill-pack-list').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-edit-skill-pack]');
+  if (button) editSkillPack(button.dataset.editSkillPack);
+});
+
+skillPackForm
+  .querySelector('[data-reset-skill-pack]')
+  .addEventListener('click', resetSkillPackForm);
+
+skillPackForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const current = state.currentSkillPack;
+  const input = {
+    description: skillPackForm.elements.description.value,
+    instructions: skillPackForm.elements.instructions.value,
+    name: skillPackForm.elements.name.value,
+  };
+  try {
+    const payload = current
+      ? await request(`/skill-packs/${current.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...input, expected_revision: current.revision }),
+        })
+      : await request('/skill-packs', { method: 'POST', body: JSON.stringify(input) });
+    const pack = payload.skill_pack;
+    const index = state.skillPacks.findIndex((item) => item.id === pack.id);
+    if (index === -1) state.skillPacks.unshift(pack);
+    else state.skillPacks[index] = pack;
+    resetSkillPackForm();
+    renderSkillPacks();
+    toast(`Skill Pack V${pack.revision} 已发布`);
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(form));
+  const [skillPackId = '', skillPackReleaseVersion = ''] = String(
+    values.skill_pack_binding || '',
+  ).split(':');
   const input = {
     child_agent_id: values.child_agent_id || null,
     database_table_id: values.database_table_id || null,
@@ -1286,6 +1393,8 @@ form.addEventListener('submit', async (event) => {
     name: values.name,
     role_mode: values.role_mode,
     role_profile: values.role_mode === 'structured' ? readRoleProfile() : null,
+    skill_pack_id: skillPackId || null,
+    skill_pack_release_version: skillPackReleaseVersion ? Number(skillPackReleaseVersion) : null,
     strategy_profile: readStrategyProfile(),
   };
   try {

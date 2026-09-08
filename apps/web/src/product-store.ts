@@ -77,6 +77,8 @@ export interface AgentDraft {
   readonly revision: number;
   readonly roleMode: ProductAgentRoleMode;
   readonly roleProfile: ProductAgentRoleProfile | null;
+  readonly skillPackId?: string | null;
+  readonly skillPackReleaseVersion?: number | null;
   readonly status: 'draft' | 'published';
   readonly strategyProfile: ProductAgentStrategyProfile;
   readonly strategyVersion: number;
@@ -94,6 +96,8 @@ export interface AgentDraftInput {
   readonly name: string;
   readonly roleMode: ProductAgentRoleMode;
   readonly roleProfile: ProductAgentRoleProfile | null;
+  readonly skillPackId?: string | null;
+  readonly skillPackReleaseVersion?: number | null;
   readonly strategyProfile: ProductAgentStrategyProfile;
 }
 
@@ -178,6 +182,26 @@ export interface ProductRunSubagent {
   readonly name: string;
   readonly releaseVersion: number;
   readonly temperature: number;
+}
+
+export interface ProductRunSkillPack {
+  readonly instructions: string;
+  readonly name: string;
+  readonly releaseVersion: number;
+  readonly skillPackId: string;
+}
+
+export interface ProductSkillPackInput {
+  readonly description: string;
+  readonly instructions: string;
+  readonly name: string;
+}
+
+export interface ProductSkillPack extends ProductSkillPackInput {
+  readonly createdAt: string;
+  readonly id: string;
+  readonly revision: number;
+  readonly updatedAt: string;
 }
 
 export interface PreparedProductRun {
@@ -391,6 +415,11 @@ export interface ProductStore {
     inputText: string,
   ): Promise<ProductRunFlowResult | null>;
   getRunSubagent?(workspaceId: string, actorId: string, runId: string): Promise<ProductRunSubagent>;
+  getRunSkillPack?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+  ): Promise<ProductRunSkillPack | null>;
   completeRun(
     workspaceId: string,
     actorId: string,
@@ -475,6 +504,12 @@ export interface ProductStore {
     releaseVersion: number,
   ): Promise<ProductPluginCatalogItem>;
   listCustomApis(workspaceId: string): Promise<readonly ProductCustomApi[]>;
+  listSkillPacks(workspaceId: string): Promise<readonly ProductSkillPack[]>;
+  createSkillPack(
+    workspaceId: string,
+    actorId: string,
+    input: ProductSkillPackInput,
+  ): Promise<ProductSkillPack>;
   createCustomApi(
     workspaceId: string,
     actorId: string,
@@ -487,6 +522,13 @@ export interface ProductStore {
     expectedRevision: number,
     input: ProductCustomApiInput,
   ): Promise<ProductCustomApi>;
+  updateSkillPack(
+    workspaceId: string,
+    actorId: string,
+    skillPackId: string,
+    expectedRevision: number,
+    input: ProductSkillPackInput,
+  ): Promise<ProductSkillPack>;
   publishAgent(
     workspaceId: string,
     actorId: string,
@@ -803,9 +845,21 @@ interface AgentRow {
   readonly revision: string | number;
   readonly role_mode: string;
   readonly role_profile: unknown;
+  readonly skill_pack_id: string | null;
+  readonly skill_pack_release_version: string | number | null;
   readonly status: string;
   readonly strategy_profile: unknown;
   readonly strategy_version: string | number;
+  readonly updated_at: Date | string;
+}
+
+interface SkillPackRow {
+  readonly created_at: Date | string;
+  readonly description: string;
+  readonly id: string;
+  readonly instructions: string;
+  readonly name: string;
+  readonly revision: string | number;
   readonly updated_at: Date | string;
 }
 
@@ -1148,9 +1202,26 @@ function toDraft(row: AgentRow): AgentDraft {
     revision,
     roleMode: row.role_mode,
     roleProfile,
+    skillPackId: row.skill_pack_id,
+    skillPackReleaseVersion:
+      row.skill_pack_release_version === null
+        ? null
+        : positiveInteger(row.skill_pack_release_version, 'Skill Pack release version'),
     status: row.status,
     strategyProfile,
     strategyVersion,
+    updatedAt: asIso(row.updated_at),
+  });
+}
+
+function toSkillPack(row: SkillPackRow): ProductSkillPack {
+  return Object.freeze({
+    createdAt: asIso(row.created_at),
+    description: row.description,
+    id: row.id,
+    instructions: row.instructions,
+    name: row.name,
+    revision: positiveInteger(row.revision, 'Skill Pack revision'),
     updatedAt: asIso(row.updated_at),
   });
 }
@@ -1988,6 +2059,63 @@ export class PostgresProductStore implements ProductStore {
     return updated;
   }
 
+  async listSkillPacks(workspaceId: string): Promise<readonly ProductSkillPack[]> {
+    const result = await this.#pool.query<SkillPackRow>(
+      'SELECT * FROM app.list_product_skill_packs($1::uuid)',
+      [workspaceId],
+    );
+    return Object.freeze(result.rows.map(toSkillPack));
+  }
+
+  async createSkillPack(
+    workspaceId: string,
+    actorId: string,
+    input: ProductSkillPackInput,
+  ): Promise<ProductSkillPack> {
+    const result = await this.#pool.query<{ readonly id: string }>(
+      'SELECT app.create_product_skill_pack($1::uuid, $2::uuid, $3::text, $4::text, $5::text) AS id',
+      [workspaceId, actorId, input.name, input.description, input.instructions],
+    );
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error('product store did not create Skill Pack');
+    const created = (await this.listSkillPacks(workspaceId)).find((pack) => pack.id === id);
+    if (created === undefined) throw new Error('product store did not return created Skill Pack');
+    return created;
+  }
+
+  async updateSkillPack(
+    workspaceId: string,
+    actorId: string,
+    skillPackId: string,
+    expectedRevision: number,
+    input: ProductSkillPackInput,
+  ): Promise<ProductSkillPack> {
+    if (
+      !PRODUCT_UUID.test(skillPackId) ||
+      !Number.isSafeInteger(expectedRevision) ||
+      expectedRevision < 1
+    ) {
+      throw new Error('Skill Pack update target is invalid');
+    }
+    await this.#pool.query(
+      'SELECT app.update_product_skill_pack($1::uuid, $2::uuid, $3::bigint, $4::uuid, $5::text, $6::text, $7::text)',
+      [
+        workspaceId,
+        skillPackId,
+        expectedRevision,
+        actorId,
+        input.name,
+        input.description,
+        input.instructions,
+      ],
+    );
+    const updated = (await this.listSkillPacks(workspaceId)).find(
+      (pack) => pack.id === skillPackId,
+    );
+    if (updated === undefined) throw new Error('product store did not return updated Skill Pack');
+    return updated;
+  }
+
   async queryDatabaseTable(
     workspaceId: string,
     tableId: string,
@@ -2205,6 +2333,31 @@ export class PostgresProductStore implements ProductStore {
       name: row.name,
       releaseVersion: positiveInteger(row.release_version, 'child release version'),
       temperature: Number(row.temperature),
+    });
+  }
+
+  async getRunSkillPack(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+  ): Promise<ProductRunSkillPack | null> {
+    const result = await this.#pool.query<{
+      readonly instructions: string;
+      readonly name: string;
+      readonly release_version: string | number;
+      readonly skill_pack_id: string;
+    }>('SELECT * FROM app.read_agent_product_run_skill_pack($1::uuid, $2::uuid, $3::uuid)', [
+      workspaceId,
+      runId,
+      actorId,
+    ]);
+    const row = result.rows[0];
+    if (row === undefined) return null;
+    return Object.freeze({
+      instructions: row.instructions,
+      name: row.name,
+      releaseVersion: positiveInteger(row.release_version, 'Skill Pack release version'),
+      skillPackId: row.skill_pack_id,
     });
   }
 
@@ -2465,7 +2618,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     const result = await this.#pool.query<{ readonly id: string }>(
-      'SELECT (app.create_agent_draft_with_strategy_capabilities_v6($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid, $13::uuid)).id AS id',
+      'SELECT (app.create_agent_draft_with_strategy_capabilities_v7($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid, $13::uuid, $14::uuid, $15::bigint)).id AS id',
       [
         workspaceId,
         actorId,
@@ -2480,6 +2633,8 @@ export class PostgresProductStore implements ProductStore {
         strategyProfileToStorage(input.strategyProfile),
         input.childAgentId,
         input.flowId,
+        input.skillPackId ?? null,
+        input.skillPackReleaseVersion ?? null,
       ],
     );
     const id = result.rows[0]?.id;
@@ -2494,7 +2649,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     await this.#pool.query(
-      'SELECT app.update_agent_draft_with_strategy_capabilities_v6($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid, $14::uuid)',
+      'SELECT app.update_agent_draft_with_strategy_capabilities_v7($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid, $14::uuid, $15::uuid, $16::bigint)',
       [
         workspaceId,
         agentId,
@@ -2510,6 +2665,8 @@ export class PostgresProductStore implements ProductStore {
         strategyProfileToStorage(input.strategyProfile),
         input.childAgentId,
         input.flowId,
+        input.skillPackId ?? null,
+        input.skillPackReleaseVersion ?? null,
       ],
     );
     return await this.#getAgent(workspaceId, agentId);
@@ -2566,6 +2723,8 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
           'strategy_profile',
           'child_agent_id',
           'flow_id',
+          'skill_pack_id',
+          'skill_pack_release_version',
         ].includes(key),
     )
   ) {
@@ -2633,6 +2792,20 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   if (flowId !== null && (typeof flowId !== 'string' || !PRODUCT_UUID.test(flowId))) {
     throw new Error('Agent Flow id must be a UUID or null');
   }
+  const skillPackId = input.skill_pack_id ?? null;
+  const skillPackReleaseVersion = input.skill_pack_release_version ?? null;
+  if ((skillPackId === null) !== (skillPackReleaseVersion === null)) {
+    throw new Error('Agent Skill Pack binding must contain both id and release version');
+  }
+  if (
+    skillPackId !== null &&
+    (typeof skillPackId !== 'string' ||
+      !PRODUCT_UUID.test(skillPackId) ||
+      !Number.isSafeInteger(skillPackReleaseVersion) ||
+      Number(skillPackReleaseVersion) < 1)
+  ) {
+    throw new Error('Agent Skill Pack binding is invalid');
+  }
   return Object.freeze({
     childAgentId,
     databaseTableId,
@@ -2644,6 +2817,9 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
     name,
     roleMode,
     roleProfile,
+    skillPackId,
+    skillPackReleaseVersion:
+      skillPackReleaseVersion === null ? null : Number(skillPackReleaseVersion),
     strategyProfile,
   });
 }
@@ -2815,6 +2991,33 @@ export function validateCustomApiInput(value: unknown): ProductCustomApiInput {
     name: input.name,
     responsePath: input.response_path,
   });
+}
+
+export function validateSkillPackInput(value: unknown): ProductSkillPackInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Skill Pack payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 3 ||
+    typeof input.name !== 'string' ||
+    typeof input.description !== 'string' ||
+    typeof input.instructions !== 'string'
+  ) {
+    throw new Error('Skill Pack payload has an invalid shape');
+  }
+  const name = input.name.trim();
+  const instructions = input.instructions.trim();
+  if (name.length < 1 || name.length > 80) {
+    throw new Error('Skill Pack name must contain 1–80 characters');
+  }
+  if (input.description.length > 500) {
+    throw new Error('Skill Pack description must not exceed 500 characters');
+  }
+  if (instructions.length < 1 || instructions.length > 20_000) {
+    throw new Error('Skill Pack instructions must contain 1–20,000 characters');
+  }
+  return Object.freeze({ description: input.description, instructions, name });
 }
 
 const DATABASE_COLUMN = /^[A-Za-z][A-Za-z0-9_]{0,39}$/u;

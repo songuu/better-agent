@@ -88,6 +88,7 @@
               <label><span>发布数据库快照</span><select name="database_table_id" id="agent-database-table"><option value="">不绑定数据表</option></select></label>
               <label><span>发布子 Agent 快照</span><select name="child_agent_id" id="agent-child-agent"><option value="">不绑定子 Agent</option></select></label>
               <label><span>发布 Flow 快照</span><select name="flow_id" id="agent-flow"><option value="">不绑定 Flow</option></select><small>发布 Agent 时固定当前 Flow Release，后续 Flow 更新不会改变该 Agent 版本。</small></label>
+              <label><span>发布 Skill Pack 快照</span><select name="skill_pack_binding" id="agent-skill-pack"><option value="">不绑定 Skill Pack</option></select><small>绑定精确的不可变 Pack 版本；资源后续修改不会改变已保存 Draft 或已发布 Agent。</small></label>
               <footer><button type="button" id="test-agent" class="button button-ghost" disabled>试运行</button><button type="button" id="publish-agent" class="button button-ghost" disabled>发布版本</button><button type="submit" class="button button-primary">保存 Draft</button></footer>
             </form>
           </section>
@@ -237,6 +238,20 @@
                 <footer><button type="button" class="button button-ghost" data-reset-custom-api>新建配置</button><button type="submit" class="button button-primary">保存不可变版本</button></footer>
               </form>
               <div id="custom-api-list" class="custom-api-list"><p class="empty-note">还没有自定义 API。</p></div>
+            </div>
+          </section>
+          <section class="custom-api-center skill-pack-center">
+            <header><div><p class="eyebrow">VERSIONED INSTRUCTION CAPABILITIES</p><h2>Skill Pack 资源</h2></div><p>把可复用工作方法作为受控指令包发布；Agent Draft 固定精确版本，运行时优先级低于平台与 Agent 主指令。</p></header>
+            <div class="custom-api-layout">
+              <form id="skill-pack-form" class="custom-api-form">
+                <input name="skillPackId" type="hidden" />
+                <input name="expectedRevision" type="hidden" />
+                <label><span>名称</span><input name="name" maxlength="80" required placeholder="例如：生产发布核验" /></label>
+                <label><span>说明</span><input name="description" maxlength="500" placeholder="这个 Pack 提供什么工作方法？" /></label>
+                <label><span>Pack 指令</span><textarea name="instructions" maxlength="20000" required placeholder="按顺序描述可复用的执行规则、输出规范和失败边界"></textarea></label>
+                <footer><button type="button" class="button button-ghost" data-reset-skill-pack>新建 Pack</button><button type="submit" class="button button-primary">保存不可变版本</button></footer>
+              </form>
+              <div id="skill-pack-list" class="custom-api-list"><p class="empty-note">还没有 Skill Pack。</p></div>
             </div>
           </section>
         </section>
