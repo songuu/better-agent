@@ -430,9 +430,12 @@ ORDER BY attempt_number DESC LIMIT 1;`,
     plan_attestation_verifier: planVerifier,
   });
 
-  const issuedAt = new Date(Date.now() - 60_000).toISOString();
-  const createdAt = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 8 * 60_000).toISOString();
+  // One clock sample keeps the exact 540-second delegation window canonical.
+  // Separate Date.now() calls can exceed the ceiling by a few milliseconds on a loaded runner.
+  const delegationNow = Date.now();
+  const issuedAt = new Date(delegationNow - 60_000).toISOString();
+  const createdAt = new Date(delegationNow).toISOString();
+  const expiresAt = new Date(delegationNow + 8 * 60_000).toISOString();
   const admission = {
     schema_version: 'g1-join-child-admission/1',
     workspace_id: ids.workspace,

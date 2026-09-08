@@ -356,7 +356,7 @@
     },
     {
       "file": "infra/test/postgres/g1-vertical-extension.mjs",
-      "sha256": "cd1e0a50f97f3ee30bb934ee83874bef04c152f76fe9a304c66d1506cd9e1d66"
+      "sha256": "e4094653a2c18312b4f2555cfc9947a1e5dc42e38e07fca7dded38261d8b41c7"
     },
     {
       "file": "infra/test/postgres/g1-vertical-sources.mjs",
