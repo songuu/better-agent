@@ -1733,13 +1733,25 @@ body::before {
 .flow-canvas.has-plugin {
   min-height: 650px;
 }
+.flow-canvas.has-api {
+  min-height: 650px;
+}
 .flow-canvas.has-condition.has-transform,
 .flow-canvas.has-condition.has-plugin,
-.flow-canvas.has-transform.has-plugin {
+.flow-canvas.has-condition.has-api,
+.flow-canvas.has-transform.has-plugin,
+.flow-canvas.has-transform.has-api,
+.flow-canvas.has-plugin.has-api {
   min-height: 850px;
 }
-.flow-canvas.has-condition.has-transform.has-plugin {
+.flow-canvas.has-condition.has-transform.has-plugin,
+.flow-canvas.has-condition.has-transform.has-api,
+.flow-canvas.has-condition.has-plugin.has-api,
+.flow-canvas.has-transform.has-plugin.has-api {
   min-height: 1050px;
+}
+.flow-canvas.has-condition.has-transform.has-plugin.has-api {
+  min-height: 1250px;
 }
 .flow-canvas > legend {
   position: absolute;
@@ -1835,13 +1847,32 @@ body::before {
 .node-plugin small {
   color: #d99cff;
 }
+.node-api {
+  left: 50%;
+  top: 350px;
+  width: min(420px, calc(100% - 48px));
+  transform: translateX(-50%);
+  border-color: #39b7c9;
+}
+.node-api small {
+  color: #53dff2;
+}
 .flow-canvas.has-transform .node-plugin,
+.flow-canvas.has-transform .node-api,
+.flow-canvas.has-plugin .node-api,
 .flow-canvas.has-transform .node-condition,
-.flow-canvas.has-plugin .node-condition {
+.flow-canvas.has-plugin .node-condition,
+.flow-canvas.has-api .node-condition {
   top: 550px;
 }
-.flow-canvas.has-transform.has-plugin .node-condition {
+.flow-canvas.has-transform.has-plugin .node-api,
+.flow-canvas.has-transform.has-plugin .node-condition,
+.flow-canvas.has-transform.has-api .node-condition,
+.flow-canvas.has-plugin.has-api .node-condition {
   top: 750px;
+}
+.flow-canvas.has-transform.has-plugin.has-api .node-condition {
+  top: 950px;
 }
 .node-condition small {
   color: #ffd166;
@@ -2064,6 +2095,7 @@ body::before {
   .node-condition,
   .node-code,
   .node-plugin,
+  .node-api,
   .node-output {
     left: 50%;
     right: auto;
@@ -2088,29 +2120,51 @@ body::before {
   .flow-canvas.has-plugin {
     min-height: 820px;
   }
+  .flow-canvas.has-api {
+    min-height: 820px;
+  }
   .flow-canvas.has-condition.has-transform,
-  .flow-canvas.has-condition.has-plugin {
+  .flow-canvas.has-condition.has-plugin,
+  .flow-canvas.has-condition.has-api {
     min-height: 1120px;
   }
-  .flow-canvas.has-transform.has-plugin {
+  .flow-canvas.has-transform.has-plugin,
+  .flow-canvas.has-transform.has-api,
+  .flow-canvas.has-plugin.has-api {
     min-height: 1040px;
   }
-  .flow-canvas.has-condition.has-transform.has-plugin {
+  .flow-canvas.has-condition.has-transform.has-plugin,
+  .flow-canvas.has-condition.has-transform.has-api,
+  .flow-canvas.has-condition.has-plugin.has-api,
+  .flow-canvas.has-transform.has-plugin.has-api {
     min-height: 1340px;
   }
+  .flow-canvas.has-condition.has-transform.has-plugin.has-api {
+    min-height: 1560px;
+  }
   .flow-canvas.has-transform .node-output,
-  .flow-canvas.has-plugin .node-output {
+  .flow-canvas.has-plugin .node-output,
+  .flow-canvas.has-api .node-output {
     top: 690px;
   }
-  .flow-canvas.has-transform.has-plugin .node-output {
+  .flow-canvas.has-transform.has-plugin .node-output,
+  .flow-canvas.has-transform.has-api .node-output,
+  .flow-canvas.has-plugin.has-api .node-output {
     top: 910px;
   }
   .flow-canvas.has-condition.has-transform .node-output,
-  .flow-canvas.has-condition.has-plugin .node-output {
+  .flow-canvas.has-condition.has-plugin .node-output,
+  .flow-canvas.has-condition.has-api .node-output {
     top: 980px;
   }
-  .flow-canvas.has-condition.has-transform.has-plugin .node-output {
+  .flow-canvas.has-condition.has-transform.has-plugin .node-output,
+  .flow-canvas.has-condition.has-transform.has-api .node-output,
+  .flow-canvas.has-condition.has-plugin.has-api .node-output,
+  .flow-canvas.has-transform.has-plugin.has-api .node-output {
     top: 1200px;
+  }
+  .flow-canvas.has-condition.has-transform.has-plugin.has-api .node-output {
+    top: 1420px;
   }
   .node-code {
     top: 470px;
@@ -2118,13 +2172,25 @@ body::before {
   .node-plugin {
     top: 470px;
   }
+  .node-api {
+    top: 470px;
+  }
   .flow-canvas.has-transform .node-plugin,
+  .flow-canvas.has-transform .node-api,
+  .flow-canvas.has-plugin .node-api,
   .flow-canvas.has-transform .node-condition,
-  .flow-canvas.has-plugin .node-condition {
+  .flow-canvas.has-plugin .node-condition,
+  .flow-canvas.has-api .node-condition {
     top: 690px;
   }
-  .flow-canvas.has-transform.has-plugin .node-condition {
+  .flow-canvas.has-transform.has-plugin .node-api,
+  .flow-canvas.has-transform.has-plugin .node-condition,
+  .flow-canvas.has-transform.has-api .node-condition,
+  .flow-canvas.has-plugin.has-api .node-condition {
     top: 910px;
+  }
+  .flow-canvas.has-transform.has-plugin.has-api .node-condition {
+    top: 1130px;
   }
   .flow-canvas.has-condition .node-output {
     top: 760px;
@@ -2447,6 +2513,84 @@ body::before {
   color: var(--accent);
 }
 
+.custom-api-center {
+  display: grid;
+  gap: 20px;
+  padding: 28px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.custom-api-center > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.7fr);
+  gap: 32px;
+  align-items: end;
+}
+
+.custom-api-center h2,
+.custom-api-center p {
+  margin: 0;
+}
+
+.custom-api-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.75fr) minmax(0, 1.25fr);
+  gap: 20px;
+}
+
+.custom-api-form,
+.custom-api-list,
+.custom-api-card {
+  display: grid;
+  gap: 14px;
+}
+
+.custom-api-form {
+  align-content: start;
+  padding: 20px;
+  border: 1px solid var(--line);
+}
+
+.custom-api-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.custom-api-form footer,
+.custom-api-card header,
+.custom-api-card footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.custom-api-card {
+  padding: 20px;
+  border: 1px solid var(--line);
+  background: #08130f;
+}
+
+.custom-api-card h3,
+.custom-api-card p {
+  margin: 0;
+}
+
+.custom-api-card code {
+  overflow-wrap: anywhere;
+  color: var(--accent);
+}
+
+.custom-api-card small,
+.custom-api-card em,
+.custom-api-card footer span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-style: normal;
+}
+
 .evaluation-hero {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
@@ -2603,6 +2747,10 @@ body::before {
 }
 
 @media (max-width: 860px) {
+  .custom-api-center > header,
+  .custom-api-layout {
+    grid-template-columns: 1fr;
+  }
   .evaluation-center {
     padding: 18px;
   }

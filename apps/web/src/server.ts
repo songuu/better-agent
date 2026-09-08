@@ -10,6 +10,7 @@ import {
   type ProductKnowledgeHit,
   type ProductStore,
   validateAgentInput,
+  validateCustomApiInput,
   validateDatabaseQueryInput,
   validateDatabaseRowsInput,
   validateDatabaseTableInput,
@@ -520,6 +521,41 @@ export async function createBetterAgentWebServer(
         Number(payload.release_version),
       );
       sendJson(request, response, 200, { plugin });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/custom-apis` && request.method === 'GET') {
+      sendJson(request, response, 200, {
+        custom_apis: await productStore.listCustomApis(workspaceId),
+      });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/custom-apis` && request.method === 'POST') {
+      const customApi = await productStore.createCustomApi(
+        workspaceId,
+        actorId,
+        validateCustomApiInput(await readJsonBody(request)),
+      );
+      sendJson(request, response, 201, { custom_api: customApi });
+      return true;
+    }
+    const customApiMatch = path.match(
+      new RegExp(`^${WEB_BASE_PATH}api/product/custom-apis/([0-9a-f-]{36})$`, 'u'),
+    );
+    if (customApiMatch !== null && UUID.test(customApiMatch[1] ?? '') && request.method === 'PUT') {
+      const payload = (await readJsonBody(request)) as Record<string, unknown>;
+      const expectedRevision = payload.expected_revision;
+      if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) {
+        throw new Error('invalid_expected_revision');
+      }
+      const { expected_revision: _, ...customApiPayload } = payload;
+      const customApi = await productStore.updateCustomApi(
+        workspaceId,
+        actorId,
+        customApiMatch[1] as string,
+        Number(expectedRevision),
+        validateCustomApiInput(customApiPayload),
+      );
+      sendJson(request, response, 200, { custom_api: customApi });
       return true;
     }
     if (path === `${WEB_BASE_PATH}api/product/knowledge-bases` && request.method === 'GET') {
@@ -1130,14 +1166,16 @@ export async function createBetterAgentWebServer(
                 ? 404
                 : message.startsWith('model_')
                   ? 502
-                  : message.startsWith('invalid_') ||
-                      message.includes('payload') ||
-                      message.includes('request_body') ||
-                      /^(Agent|Database|Flow|Input|Knowledge|Output|Role|Run|Template) /u.test(
-                        message,
-                      )
-                    ? 400
-                    : 500;
+                  : message.startsWith('custom_api_')
+                    ? 502
+                    : message.startsWith('invalid_') ||
+                        message.includes('payload') ||
+                        message.includes('request_body') ||
+                        /^(Agent|Custom API|Database|Flow|Input|Knowledge|Output|Role|Run|Template) /u.test(
+                          message,
+                        )
+                      ? 400
+                      : 500;
           sendJson(request, response, status, {
             error: status === 500 ? 'product_operation_failed' : message,
           });

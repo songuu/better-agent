@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { executeProductFlow, validateProductFlowGraph } from '../src/flow-runtime.js';
+import {
+  executeProductFlow,
+  executeProductFlowWithApis,
+  validateProductFlowGraph,
+} from '../src/flow-runtime.js';
 
 const graph = {
   edges: [
@@ -20,6 +24,108 @@ const graph = {
 };
 
 describe('product Flow runtime', () => {
+  it('executes a pinned custom API node through the supplied secure executor', async () => {
+    const apiGraph = {
+      edges: [
+        { id: 'edge_input_api', source: 'input', target: 'api' },
+        { id: 'edge_api_output', source: 'api', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        {
+          config: {
+            apiId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            apiRevision: 3,
+            method: 'POST',
+            responsePath: 'data.answer',
+            source: 'input',
+            url: 'https://api.example.com/v1/answer',
+          },
+          id: 'api',
+          label: '业务 API',
+          type: 'api',
+        },
+        { config: { source: 'api' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+    const calls: unknown[] = [];
+
+    const result = await executeProductFlowWithApis(
+      apiGraph,
+      { input: '查询订单' },
+      async (request) => {
+        calls.push(request);
+        return '已受理';
+      },
+    );
+
+    expect(calls).toEqual([
+      {
+        input: '查询订单',
+        method: 'POST',
+        responsePath: 'data.answer',
+        url: 'https://api.example.com/v1/answer',
+      },
+    ]);
+    expect(result.output).toBe('已受理');
+    expect(result.logs.at(-2)).toEqual({
+      nodeId: 'api',
+      outputPreview: '已受理',
+      status: 'completed',
+    });
+  });
+
+  it('rejects unpinned, unsafe and disconnected custom API nodes', () => {
+    const apiNode = {
+      config: {
+        apiId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        apiRevision: 1,
+        method: 'GET',
+        responsePath: '',
+        source: 'input',
+        url: 'https://api.example.com/value',
+      },
+      id: 'api',
+      label: 'API',
+      type: 'api',
+    };
+    const apiGraph = {
+      edges: [
+        { id: 'edge_input_api', source: 'input', target: 'api' },
+        { id: 'edge_api_output', source: 'api', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        apiNode,
+        { config: { source: 'api' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+
+    for (const url of [
+      'http://api.example.com/value',
+      'https://localhost/value',
+      'https://127.0.0.1/value',
+      'https://user:secret@api.example.com/value',
+      'https://api.example.com:8443/value',
+      'https://api.example.com/value#fragment',
+    ]) {
+      expect(() =>
+        validateProductFlowGraph({
+          ...apiGraph,
+          nodes: apiGraph.nodes.map((node) =>
+            node.id === 'api' ? { ...node, config: { ...apiNode.config, url } } : node,
+          ),
+        }),
+      ).toThrow(/API|custom_api/u);
+    }
+    expect(() =>
+      validateProductFlowGraph({
+        ...apiGraph,
+        edges: apiGraph.edges.filter((edge) => edge.target !== 'api'),
+      }),
+    ).toThrow('source must be connected');
+  });
+
   it('executes a connected versioned builtin plugin operation', () => {
     const pluginGraph = {
       edges: [

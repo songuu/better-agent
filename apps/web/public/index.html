@@ -122,12 +122,14 @@
               <label class="flow-condition-toggle"><input id="flow-condition-enabled" name="conditionEnabled" type="checkbox" /><span>启用条件逻辑节点</span></label>
               <label class="flow-condition-toggle"><input id="flow-transform-enabled" name="transformEnabled" type="checkbox" /><span>启用受控代码变换节点（不执行任意脚本）</span></label>
               <label class="flow-condition-toggle"><input id="flow-plugin-enabled" name="pluginEnabled" type="checkbox" disabled /><span>启用已安装的版本化插件节点</span></label>
+              <label class="flow-condition-toggle"><input id="flow-api-enabled" name="apiEnabled" type="checkbox" disabled /><span>启用固定版本的自定义 HTTPS API 节点</span></label>
               <fieldset id="flow-canvas" class="flow-canvas"><legend>Flow 节点画布</legend>
                 <div class="flow-wire wire-one"></div><div class="flow-wire wire-two"></div>
                 <article class="flow-node node-input"><small>INPUT</small><b>消息输入</b><code>message</code></article>
                 <article class="flow-node node-template"><small>TRANSFORM</small><b>模板映射</b><label><span>TEMPLATE</span><textarea name="template" maxlength="8000" required>已处理：{{message}}</textarea></label></article>
                 <article id="flow-transform-node" class="flow-node node-code" hidden><small>SAFE CODE</small><b>文本变换</b><label><span>允许的操作</span><select name="transformOperation"><option value="trim">去除首尾空白</option><option value="uppercase">转换为大写</option><option value="lowercase">转换为小写</option></select></label><code>allowlist / no eval</code></article>
                 <article id="flow-plugin-node" class="flow-node node-plugin" hidden><small>BUILTIN PLUGIN</small><b>文本分析 v1</b><label><span>插件操作</span><select name="pluginOperation"><option value="character_count">Unicode 码点数</option><option value="word_count">空白分隔词数</option></select></label><code>builtin.text.v1</code></article>
+                <article id="flow-api-node" class="flow-node node-api" hidden><small>HTTPS API</small><b>自定义 API</b><label><span>固定资源版本</span><select id="flow-api-resource" name="apiResource"><option value="">先在 Plugin Center 创建 API</option></select></label><code>SSRF guard / 5s / 32 KiB</code></article>
                 <article id="flow-condition-node" class="flow-node node-condition" hidden><small>LOGIC</small><b>条件判断</b><div class="condition-grid"><label><span>运算符</span><select name="conditionOperator"><option value="contains">包含</option><option value="equals">等于</option><option value="starts_with">开头为</option><option value="ends_with">结尾为</option></select></label><label><span>比较值</span><input name="conditionOperand" maxlength="1000" value="紧急" /></label><label><span>为真时</span><textarea name="conditionTrue" maxlength="8000">紧急队列：{{value}}</textarea></label><label><span>为假时</span><textarea name="conditionFalse" maxlength="8000">普通队列：{{value}}</textarea></label></div></article>
                 <article class="flow-node node-output"><small>OUTPUT</small><b>结果输出</b><code>prompt → output</code></article>
               </fieldset>
@@ -222,6 +224,21 @@
             <p>插件目录由服务端发布不可变清单；安装只授予当前 Workspace 使用指定版本的权限。Flow 保存、调试与发布都会再次核验安装记录。</p>
           </header>
           <div id="plugin-catalog" class="plugin-catalog"><p class="empty-note">登录后加载插件目录。</p></div>
+          <section class="custom-api-center">
+            <header><div><p class="eyebrow">CUSTOM HTTPS CONNECTORS</p><h2>自定义 API 资源</h2></div><p>只允许公开 DNS、HTTPS 443、GET/POST；每次修改生成不可变版本，Flow 固定精确快照。</p></header>
+            <div class="custom-api-layout">
+              <form id="custom-api-form" class="custom-api-form">
+                <input name="apiId" type="hidden" />
+                <input name="expectedRevision" type="hidden" />
+                <label><span>名称</span><input name="name" maxlength="80" required placeholder="例如：订单状态查询" /></label>
+                <label><span>说明</span><input name="description" maxlength="500" placeholder="这个 API 返回什么数据？" /></label>
+                <div class="form-grid"><label><span>方法</span><select name="method"><option value="GET">GET · query input</option><option value="POST">POST · JSON input</option></select></label><label><span>JSON 响应路径</span><input name="responsePath" maxlength="200" placeholder="例如 data.answer；留空返回正文" /></label></div>
+                <label><span>HTTPS Endpoint</span><input name="endpointUrl" type="url" maxlength="2000" required placeholder="https://api.example.com/v1/run" /></label>
+                <footer><button type="button" class="button button-ghost" data-reset-custom-api>新建配置</button><button type="submit" class="button button-primary">保存不可变版本</button></footer>
+              </form>
+              <div id="custom-api-list" class="custom-api-list"><p class="empty-note">还没有自定义 API。</p></div>
+            </div>
+          </section>
         </section>
 
         <section id="evaluation-view" class="evaluation-center" hidden>

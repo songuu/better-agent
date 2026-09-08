@@ -1,3 +1,9 @@
+import {
+  type ProductApiExecutionRequest,
+  validateProductApiEndpoint,
+  validateProductApiResponsePath,
+} from './api-runtime.js';
+
 export type ProductFlowNode =
   | {
       readonly config: { readonly key: string };
@@ -43,6 +49,19 @@ export type ProductFlowNode =
       readonly type: 'plugin';
     }
   | {
+      readonly config: {
+        readonly apiId: string;
+        readonly apiRevision: number;
+        readonly method: 'GET' | 'POST';
+        readonly responsePath: string;
+        readonly source: string;
+        readonly url: string;
+      };
+      readonly id: string;
+      readonly label: string;
+      readonly type: 'api';
+    }
+  | {
       readonly config: { readonly source: string };
       readonly id: string;
       readonly label: string;
@@ -84,6 +103,7 @@ export const PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_OPERATIONS = [
 ] as const;
 export type ProductFlowBuiltinTextPluginOperation =
   (typeof PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_OPERATIONS)[number];
+export type ProductFlowApiExecutor = (request: ProductApiExecutionRequest) => Promise<string>;
 
 const PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS: Readonly<
   Record<ProductFlowBuiltinTextPluginOperation, (input: string) => string>
@@ -95,6 +115,7 @@ const PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS: Readonly<
 const IDENTIFIER = /^[a-z][a-z0-9_-]{0,39}$/u;
 const TEMPLATE_REFERENCE = /\{\{\s*([a-z][a-z0-9_-]{0,39})\s*\}\}/gu;
 const CONDITION_VALUE_REFERENCE = /\{\{\s*value\s*\}\}/gu;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 function closedObject(
   value: unknown,
@@ -214,6 +235,39 @@ function validateNode(value: unknown): ProductFlowNode {
       type: 'plugin',
     });
   }
+  if (node.type === 'api') {
+    const config = closedObject(
+      node.config,
+      ['source', 'apiId', 'apiRevision', 'method', 'url', 'responsePath'],
+      'API node config',
+    );
+    const source = boundedText(config.source, 1, 40, 'API source');
+    if (!IDENTIFIER.test(source)) throw new Error('API source is invalid');
+    if (typeof config.apiId !== 'string' || !UUID.test(config.apiId)) {
+      throw new Error('API resource id is invalid');
+    }
+    if (!Number.isSafeInteger(config.apiRevision) || (config.apiRevision as number) < 1) {
+      throw new Error('API resource revision is invalid');
+    }
+    if (config.method !== 'GET' && config.method !== 'POST') {
+      throw new Error('API method is unsupported');
+    }
+    const url = validateProductApiEndpoint(config.url as string).href;
+    const responsePath = validateProductApiResponsePath(config.responsePath as string);
+    return Object.freeze({
+      config: Object.freeze({
+        apiId: config.apiId,
+        apiRevision: config.apiRevision as number,
+        method: config.method,
+        responsePath,
+        source,
+        url,
+      }),
+      id,
+      label,
+      type: 'api',
+    });
+  }
   if (node.type === 'output') {
     const config = closedObject(node.config, ['source'], 'Output node config');
     const source = boundedText(config.source, 1, 40, 'Output source');
@@ -323,6 +377,10 @@ export function validateProductFlowGraph(value: unknown): ProductFlowGraph {
       if (!incomingByTarget.get(node.id)?.has(node.config.source)) {
         throw new Error('Plugin source must be connected to the plugin node');
       }
+    } else if (node.type === 'api') {
+      if (!incomingByTarget.get(node.id)?.has(node.config.source)) {
+        throw new Error('API source must be connected to the API node');
+      }
     }
   }
   const reachable = new Set([inputNode.id]);
@@ -338,70 +396,125 @@ export function validateProductFlowGraph(value: unknown): ProductFlowGraph {
   return graph;
 }
 
-export function executeProductFlow(
-  graphValue: unknown,
-  inputValue: unknown,
-): ProductFlowDebugResult {
+interface ProductFlowExecutionState {
+  readonly graph: ProductFlowGraph;
+  readonly inputNode: Extract<ProductFlowNode, { type: 'input' }>;
+  readonly inputText: string;
+  readonly logs: { nodeId: string; outputPreview: string; status: 'completed' }[];
+  readonly values: Map<string, string>;
+}
+
+function createExecutionState(graphValue: unknown, inputValue: unknown): ProductFlowExecutionState {
   const graph = validateProductFlowGraph(graphValue);
   const input = closedObject(inputValue, ['input'], 'Flow debug input');
   const inputText = boundedText(input.input, 1, 8_000, 'Flow debug input');
-  const values = new Map<string, string>();
-  const logs: { nodeId: string; outputPreview: string; status: 'completed' }[] = [];
-  const inputNode = graph.nodes.find((node) => node.type === 'input') as Extract<
-    ProductFlowNode,
-    { type: 'input' }
-  >;
-  for (const node of graphOrder(graph)) {
-    let output: string;
-    if (node.type === 'input') output = inputText;
-    else if (node.type === 'template') {
-      output = node.config.template.replace(TEMPLATE_REFERENCE, (_match, reference: string) => {
-        if (reference === inputNode.config.key) return inputText;
-        const value = values.get(reference);
-        if (value === undefined) throw new Error(`Flow variable is unavailable: ${reference}`);
-        return value;
-      });
-    } else if (node.type === 'condition') {
-      const sourceValue = values.get(node.config.source);
-      if (sourceValue === undefined) throw new Error('Flow condition source is unavailable');
-      const matches =
-        node.config.operator === 'equals'
-          ? sourceValue === node.config.operand
-          : node.config.operator === 'contains'
-            ? sourceValue.includes(node.config.operand)
-            : node.config.operator === 'starts_with'
-              ? sourceValue.startsWith(node.config.operand)
-              : sourceValue.endsWith(node.config.operand);
-      const selected = matches ? node.config.whenTrue : node.config.whenFalse;
-      output = selected.replace(CONDITION_VALUE_REFERENCE, () => sourceValue);
-    } else if (node.type === 'transform') {
-      const sourceValue = values.get(node.config.source);
-      if (sourceValue === undefined) throw new Error('Flow transform source is unavailable');
-      output =
-        node.config.operation === 'trim'
-          ? sourceValue.trim()
-          : node.config.operation === 'uppercase'
-            ? sourceValue.toLocaleUpperCase()
-            : sourceValue.toLocaleLowerCase();
-    } else if (node.type === 'plugin') {
-      const sourceValue = values.get(node.config.source);
-      if (sourceValue === undefined) throw new Error('Flow plugin source is unavailable');
-      output = PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS[node.config.operation](sourceValue);
-    } else {
-      const value = values.get(node.config.source);
-      if (value === undefined) throw new Error('Flow output source is unavailable');
-      output = value;
-    }
-    if (output.length > 20_000) throw new Error('Flow debug output exceeds 20,000 characters');
-    values.set(node.id, output);
-    logs.push({ nodeId: node.id, outputPreview: output.slice(0, 200), status: 'completed' });
+  return {
+    graph,
+    inputNode: graph.nodes.find((node) => node.type === 'input') as Extract<
+      ProductFlowNode,
+      { type: 'input' }
+    >,
+    inputText,
+    logs: [],
+    values: new Map<string, string>(),
+  };
+}
+
+function executeLocalNode(node: ProductFlowNode, state: ProductFlowExecutionState): string {
+  if (node.type === 'input') return state.inputText;
+  if (node.type === 'template') {
+    return node.config.template.replace(TEMPLATE_REFERENCE, (_match, reference: string) => {
+      if (reference === state.inputNode.config.key) return state.inputText;
+      const value = state.values.get(reference);
+      if (value === undefined) throw new Error(`Flow variable is unavailable: ${reference}`);
+      return value;
+    });
   }
-  const outputNode = graph.nodes.find((node) => node.type === 'output') as Extract<
+  if (node.type === 'condition') {
+    const sourceValue = state.values.get(node.config.source);
+    if (sourceValue === undefined) throw new Error('Flow condition source is unavailable');
+    const matches =
+      node.config.operator === 'equals'
+        ? sourceValue === node.config.operand
+        : node.config.operator === 'contains'
+          ? sourceValue.includes(node.config.operand)
+          : node.config.operator === 'starts_with'
+            ? sourceValue.startsWith(node.config.operand)
+            : sourceValue.endsWith(node.config.operand);
+    const selected = matches ? node.config.whenTrue : node.config.whenFalse;
+    return selected.replace(CONDITION_VALUE_REFERENCE, () => sourceValue);
+  }
+  if (node.type === 'transform') {
+    const sourceValue = state.values.get(node.config.source);
+    if (sourceValue === undefined) throw new Error('Flow transform source is unavailable');
+    return node.config.operation === 'trim'
+      ? sourceValue.trim()
+      : node.config.operation === 'uppercase'
+        ? sourceValue.toLocaleUpperCase()
+        : sourceValue.toLocaleLowerCase();
+  }
+  if (node.type === 'plugin') {
+    const sourceValue = state.values.get(node.config.source);
+    if (sourceValue === undefined) throw new Error('Flow plugin source is unavailable');
+    return PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS[node.config.operation](sourceValue);
+  }
+  if (node.type === 'api') throw new Error('Flow API node requires the secure API runtime');
+  const value = state.values.get(node.config.source);
+  if (value === undefined) throw new Error('Flow output source is unavailable');
+  return value;
+}
+
+function recordNodeOutput(
+  state: ProductFlowExecutionState,
+  node: ProductFlowNode,
+  output: string,
+): void {
+  if (output.length > 20_000) throw new Error('Flow debug output exceeds 20,000 characters');
+  state.values.set(node.id, output);
+  state.logs.push({ nodeId: node.id, outputPreview: output.slice(0, 200), status: 'completed' });
+}
+
+function completeExecution(state: ProductFlowExecutionState): ProductFlowDebugResult {
+  const outputNode = state.graph.nodes.find((node) => node.type === 'output') as Extract<
     ProductFlowNode,
     { type: 'output' }
   >;
   return Object.freeze({
-    logs: Object.freeze(logs.map((log) => Object.freeze(log))),
-    output: values.get(outputNode.id) as string,
+    logs: Object.freeze(state.logs.map((log) => Object.freeze(log))),
+    output: state.values.get(outputNode.id) as string,
   });
+}
+
+export function executeProductFlow(
+  graphValue: unknown,
+  inputValue: unknown,
+): ProductFlowDebugResult {
+  const state = createExecutionState(graphValue, inputValue);
+  for (const node of graphOrder(state.graph)) {
+    recordNodeOutput(state, node, executeLocalNode(node, state));
+  }
+  return completeExecution(state);
+}
+
+export async function executeProductFlowWithApis(
+  graphValue: unknown,
+  inputValue: unknown,
+  apiExecutor: ProductFlowApiExecutor,
+): Promise<ProductFlowDebugResult> {
+  const state = createExecutionState(graphValue, inputValue);
+  for (const node of graphOrder(state.graph)) {
+    let output: string;
+    if (node.type === 'api') {
+      const sourceValue = state.values.get(node.config.source);
+      if (sourceValue === undefined) throw new Error('Flow API source is unavailable');
+      output = await apiExecutor({
+        input: sourceValue,
+        method: node.config.method,
+        responsePath: node.config.responsePath,
+        url: node.config.url,
+      });
+    } else output = executeLocalNode(node, state);
+    recordNodeOutput(state, node, output);
+  }
+  return completeExecution(state);
 }

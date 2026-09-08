@@ -2,14 +2,17 @@ const apiRoot = '/better-agent/api/product';
 const state = {
   agents: [],
   conversationId: null,
+  currentCustomApi: null,
   current: null,
   currentFlow: null,
   currentKnowledge: null,
+  customApis: [],
   currentDatabase: null,
   databaseTables: [],
   flows: [],
   flowReleases: [],
   flowRollbacks: [],
+  flowApiPin: null,
   knowledgeBases: [],
   knowledgeDocuments: [],
   plugins: [],
@@ -24,6 +27,7 @@ const knowledgeBaseForm = byId('knowledge-base-form');
 const knowledgeDocumentForm = byId('knowledge-document-form');
 const databaseTableForm = byId('database-table-form');
 const databaseRowsForm = byId('database-rows-form');
+const customApiForm = byId('custom-api-form');
 const loginDialog = byId('login-dialog');
 const roleThemes = [
   'identity',
@@ -334,7 +338,7 @@ function renderAgents() {
   });
 }
 
-function flowGraph(template, transform, plugin, condition) {
+function flowGraph(template, transform, plugin, api, condition) {
   const nodes = [
     { config: { key: 'message' }, id: 'input', label: '消息输入', type: 'input' },
     { config: { template }, id: 'prompt', label: '模板映射', type: 'template' },
@@ -361,12 +365,29 @@ function flowGraph(template, transform, plugin, condition) {
     });
   }
   const pluginSource = plugin.enabled ? 'plugin' : transformSource;
+  if (api.enabled) {
+    if (!api.resource) throw new Error('请选择自定义 API 资源版本');
+    nodes.push({
+      config: {
+        apiId: api.resource.id,
+        apiRevision: api.resource.revision,
+        method: api.resource.method,
+        responsePath: api.resource.responsePath,
+        source: pluginSource,
+        url: api.resource.endpointUrl,
+      },
+      id: 'api',
+      label: api.resource.name,
+      type: 'api',
+    });
+  }
+  const apiSource = api.enabled ? 'api' : pluginSource;
   if (condition.enabled) {
     nodes.push({
       config: {
         operand: condition.operand,
         operator: condition.operator,
-        source: pluginSource,
+        source: apiSource,
         whenFalse: condition.whenFalse,
         whenTrue: condition.whenTrue,
       },
@@ -375,13 +396,14 @@ function flowGraph(template, transform, plugin, condition) {
       type: 'condition',
     });
   }
-  const outputSource = condition.enabled ? 'condition' : pluginSource;
+  const outputSource = condition.enabled ? 'condition' : apiSource;
   nodes.push({ config: { source: outputSource }, id: 'output', label: '结果输出', type: 'output' });
   const pipeline = [
     'input',
     'prompt',
     ...(transform.enabled ? ['transform'] : []),
     ...(plugin.enabled ? ['plugin'] : []),
+    ...(api.enabled ? ['api'] : []),
     ...(condition.enabled ? ['condition'] : []),
     'output',
   ];
@@ -399,14 +421,17 @@ function syncFlowConditionEditor() {
   const conditionEnabled = flowForm.elements.conditionEnabled.checked;
   const transformEnabled = flowForm.elements.transformEnabled.checked;
   const pluginEnabled = flowForm.elements.pluginEnabled.checked;
+  const apiEnabled = flowForm.elements.apiEnabled.checked;
   byId('flow-condition-node').hidden = !conditionEnabled;
   byId('flow-transform-node').hidden = !transformEnabled;
   byId('flow-plugin-node').hidden = !pluginEnabled;
+  byId('flow-api-node').hidden = !apiEnabled;
   byId('flow-canvas').classList.toggle('has-condition', conditionEnabled);
   byId('flow-canvas').classList.toggle('has-transform', transformEnabled);
   byId('flow-canvas').classList.toggle('has-plugin', pluginEnabled);
+  byId('flow-canvas').classList.toggle('has-api', apiEnabled);
   byId('flow-canvas').querySelector('.node-output code').textContent =
-    `${conditionEnabled ? 'condition' : pluginEnabled ? 'plugin' : transformEnabled ? 'transform' : 'prompt'} → output`;
+    `${conditionEnabled ? 'condition' : apiEnabled ? 'api' : pluginEnabled ? 'plugin' : transformEnabled ? 'transform' : 'prompt'} → output`;
 }
 
 function hasInstalledTextPlugin() {
@@ -439,6 +464,84 @@ async function loadPluginCatalog() {
   const payload = await request('/plugins');
   state.plugins = payload.plugins;
   renderPluginCatalog();
+}
+
+function customApiOptionValue(api) {
+  return `${api.id}:${api.revision}`;
+}
+
+function renderFlowApiOptions(pin = state.flowApiPin) {
+  const select = byId('flow-api-resource');
+  const options = state.customApis.map(
+    (api) =>
+      `<option value="${customApiOptionValue(api)}">${escapeHtml(api.name)} · R${api.revision} · ${escapeHtml(api.method)}</option>`,
+  );
+  if (
+    pin &&
+    !state.customApis.some((api) => customApiOptionValue(api) === customApiOptionValue(pin))
+  ) {
+    options.push(
+      `<option value="${customApiOptionValue(pin)}">${escapeHtml(pin.name)} · R${pin.revision} · 已固定历史版本</option>`,
+    );
+  }
+  select.innerHTML = options.length
+    ? options.join('')
+    : '<option value="">先在 Plugin Center 创建 API</option>';
+  if (pin) select.value = customApiOptionValue(pin);
+  else if (state.customApis[0]) select.value = customApiOptionValue(state.customApis[0]);
+  flowForm.elements.apiEnabled.disabled = options.length === 0;
+  if (options.length === 0) flowForm.elements.apiEnabled.checked = false;
+  syncFlowConditionEditor();
+}
+
+function selectedFlowApi() {
+  const selected = byId('flow-api-resource').value;
+  return (
+    state.customApis.find((api) => customApiOptionValue(api) === selected) ||
+    (state.flowApiPin && customApiOptionValue(state.flowApiPin) === selected
+      ? state.flowApiPin
+      : null)
+  );
+}
+
+function resetCustomApiForm() {
+  state.currentCustomApi = null;
+  customApiForm.reset();
+  customApiForm.elements.apiId.value = '';
+  customApiForm.elements.expectedRevision.value = '';
+}
+
+function editCustomApi(apiId) {
+  const api = state.customApis.find((item) => item.id === apiId);
+  if (!api) return;
+  state.currentCustomApi = api;
+  customApiForm.elements.apiId.value = api.id;
+  customApiForm.elements.expectedRevision.value = String(api.revision);
+  customApiForm.elements.name.value = api.name;
+  customApiForm.elements.description.value = api.description;
+  customApiForm.elements.method.value = api.method;
+  customApiForm.elements.endpointUrl.value = api.endpointUrl;
+  customApiForm.elements.responsePath.value = api.responsePath;
+  customApiForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderCustomApis() {
+  const list = byId('custom-api-list');
+  list.innerHTML = state.customApis.length
+    ? state.customApis
+        .map(
+          (api) =>
+            `<article class="custom-api-card"><header><div><small>${escapeHtml(api.method)}</small><h3>${escapeHtml(api.name)}</h3></div><em>R${api.revision}</em></header><p>${escapeHtml(api.description || '未填写说明')}</p><code>${escapeHtml(api.endpointUrl)}</code><footer><span>${api.responsePath ? `JSON · ${escapeHtml(api.responsePath)}` : 'TEXT BODY'}</span><button type="button" class="button button-ghost" data-edit-custom-api="${api.id}">编辑并发布新版本</button></footer></article>`,
+        )
+        .join('')
+    : '<p class="empty-note">还没有自定义 API。</p>';
+  renderFlowApiOptions();
+}
+
+async function loadCustomApis() {
+  const payload = await request('/custom-apis');
+  state.customApis = payload.custom_apis;
+  renderCustomApis();
 }
 
 function renderFlows() {
@@ -529,6 +632,7 @@ function showFlowEditor(flow = null) {
   const conditionNode = flow?.graph.nodes.find((node) => node.type === 'condition');
   const transformNode = flow?.graph.nodes.find((node) => node.type === 'transform');
   const pluginNode = flow?.graph.nodes.find((node) => node.type === 'plugin');
+  const apiNode = flow?.graph.nodes.find((node) => node.type === 'api');
   flowForm.elements.template.value = templateNode?.config.template || '已处理：{{message}}';
   flowForm.elements.conditionEnabled.checked = Boolean(conditionNode);
   flowForm.elements.conditionOperator.value = conditionNode?.config.operator || 'contains';
@@ -539,6 +643,18 @@ function showFlowEditor(flow = null) {
   flowForm.elements.transformOperation.value = transformNode?.config.operation || 'trim';
   flowForm.elements.pluginEnabled.checked = Boolean(pluginNode);
   flowForm.elements.pluginOperation.value = pluginNode?.config.operation || 'character_count';
+  state.flowApiPin = apiNode
+    ? {
+        endpointUrl: apiNode.config.url,
+        id: apiNode.config.apiId,
+        method: apiNode.config.method,
+        name: apiNode.label,
+        responsePath: apiNode.config.responsePath,
+        revision: apiNode.config.apiRevision,
+      }
+    : null;
+  flowForm.elements.apiEnabled.checked = Boolean(apiNode);
+  renderFlowApiOptions(state.flowApiPin);
   syncFlowConditionEditor();
   byId('flow-editor-title').textContent = flow?.name || '未命名 Flow';
   byId('flow-kicker').textContent = flow
@@ -990,6 +1106,7 @@ async function bootstrap() {
       loadKnowledgeBases(),
       loadDatabaseTables(),
       loadPluginCatalog(),
+      loadCustomApis(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -1019,6 +1136,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       loadKnowledgeBases(),
       loadDatabaseTables(),
       loadPluginCatalog(),
+      loadCustomApis(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -1094,6 +1212,7 @@ flowForm.elements.name.addEventListener('input', () => {
 flowForm.elements.conditionEnabled.addEventListener('change', syncFlowConditionEditor);
 flowForm.elements.transformEnabled.addEventListener('change', syncFlowConditionEditor);
 flowForm.elements.pluginEnabled.addEventListener('change', syncFlowConditionEditor);
+flowForm.elements.apiEnabled.addEventListener('change', syncFlowConditionEditor);
 
 byId('plugin-catalog').addEventListener('click', async (event) => {
   const button = event.target.closest('[data-install-plugin]');
@@ -1111,6 +1230,44 @@ byId('plugin-catalog').addEventListener('click', async (event) => {
     toast('插件精确版本已安装到当前工作区');
   } catch (error) {
     button.disabled = false;
+    toast(error.message, true);
+  }
+});
+
+byId('custom-api-list').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-edit-custom-api]');
+  if (button) editCustomApi(button.dataset.editCustomApi);
+});
+
+customApiForm
+  .querySelector('[data-reset-custom-api]')
+  .addEventListener('click', resetCustomApiForm);
+
+customApiForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const current = state.currentCustomApi;
+  const input = {
+    description: customApiForm.elements.description.value,
+    endpoint_url: customApiForm.elements.endpointUrl.value,
+    method: customApiForm.elements.method.value,
+    name: customApiForm.elements.name.value,
+    response_path: customApiForm.elements.responsePath.value,
+  };
+  try {
+    const payload = current
+      ? await request(`/custom-apis/${current.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...input, expected_revision: current.revision }),
+        })
+      : await request('/custom-apis', { method: 'POST', body: JSON.stringify(input) });
+    const api = payload.custom_api;
+    const index = state.customApis.findIndex((item) => item.id === api.id);
+    if (index === -1) state.customApis.unshift(api);
+    else state.customApis[index] = api;
+    resetCustomApiForm();
+    renderCustomApis();
+    toast(`自定义 API R${api.revision} 已发布`);
+  } catch (error) {
     toast(error.message, true);
   }
 });
@@ -1177,6 +1334,10 @@ flowForm.addEventListener('submit', async (event) => {
       {
         enabled: flowForm.elements.pluginEnabled.checked,
         operation: flowForm.elements.pluginOperation.value,
+      },
+      {
+        enabled: flowForm.elements.apiEnabled.checked,
+        resource: selectedFlowApi(),
       },
       {
         enabled: flowForm.elements.conditionEnabled.checked,

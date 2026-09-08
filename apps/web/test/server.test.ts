@@ -21,6 +21,7 @@ import type {
   AgentDraft,
   AgentDraftInput,
   ProductConversation,
+  ProductCustomApi,
   ProductDatabaseRow,
   ProductDatabaseTable,
   ProductFlowDebugRun,
@@ -219,6 +220,7 @@ async function localRequest(
 function productFixture(): {
   readonly agents: AgentDraft[];
   readonly conversations: ProductConversation[];
+  readonly customApis: ProductCustomApi[];
   readonly databaseRows: ProductDatabaseRow[];
   readonly databaseTables: ProductDatabaseTable[];
   readonly flowDebugRuns: ProductFlowDebugRun[];
@@ -231,6 +233,7 @@ function productFixture(): {
 } {
   const agents: AgentDraft[] = [];
   const conversations: ProductConversation[] = [];
+  const customApis: ProductCustomApi[] = [];
   const databaseRows: ProductDatabaseRow[] = [];
   const databaseTables: ProductDatabaseTable[] = [];
   const flows: ProductFlowDraft[] = [];
@@ -255,6 +258,35 @@ function productFixture(): {
   const runs: ProductRun[] = [];
   const timestamp = '2026-09-03T00:00:00.000Z';
   const store: ProductStore = {
+    async listCustomApis() {
+      return customApis;
+    },
+    async createCustomApi(_workspaceId, _actorId, input) {
+      const customApi: ProductCustomApi = {
+        ...input,
+        createdAt: timestamp,
+        id: 'abababab-abab-4bab-8bab-abababababab',
+        revision: 1,
+        updatedAt: timestamp,
+      };
+      customApis.push(customApi);
+      return customApi;
+    },
+    async updateCustomApi(_workspaceId, _actorId, apiId, expectedRevision, input) {
+      const index = customApis.findIndex((customApi) => customApi.id === apiId);
+      const current = customApis[index];
+      if (current === undefined || current.revision !== expectedRevision) {
+        throw new Error('Custom API revision conflict');
+      }
+      const customApi: ProductCustomApi = {
+        ...current,
+        ...input,
+        revision: current.revision + 1,
+        updatedAt: timestamp,
+      };
+      customApis[index] = customApi;
+      return customApi;
+    },
     async listPluginCatalog() {
       return plugins;
     },
@@ -649,6 +681,7 @@ function productFixture(): {
   return {
     agents,
     conversations,
+    customApis,
     flowDebugRuns,
     flows,
     databaseRows,
@@ -1296,6 +1329,91 @@ describe('Better Agent web runtime', () => {
       method: 'POST',
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it('creates and CAS-updates a versioned Custom API resource', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const created = await localRequest(origin, '/better-agent/api/product/custom-apis', {
+      body: JSON.stringify({
+        description: '订单只读查询',
+        endpoint_url: 'https://api.example.com/v1/orders',
+        method: 'POST',
+        name: '订单 API',
+        response_path: 'data.answer',
+      }),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    const customApi = ((await created.json()) as { custom_api: ProductCustomApi }).custom_api;
+    expect(customApi).toMatchObject({
+      endpointUrl: 'https://api.example.com/v1/orders',
+      id: 'abababab-abab-4bab-8bab-abababababab',
+      method: 'POST',
+      responsePath: 'data.answer',
+      revision: 1,
+    });
+
+    const updated = await localRequest(
+      origin,
+      `/better-agent/api/product/custom-apis/${customApi.id}`,
+      {
+        body: JSON.stringify({
+          description: '订单状态只读查询',
+          endpoint_url: 'https://api.example.com/v2/orders',
+          expected_revision: 1,
+          method: 'GET',
+          name: '订单 API',
+          response_path: 'data.status',
+        }),
+        headers: { ...mutationHeaders, Cookie: cookie },
+        method: 'PUT',
+      },
+    );
+    expect(updated.status).toBe(200);
+    expect(((await updated.json()) as { custom_api: ProductCustomApi }).custom_api).toMatchObject({
+      endpointUrl: 'https://api.example.com/v2/orders',
+      method: 'GET',
+      responsePath: 'data.status',
+      revision: 2,
+    });
+    const listed = await localRequest(origin, '/better-agent/api/product/custom-apis', {
+      headers: { Cookie: cookie },
+    });
+    expect(listed.status).toBe(200);
+    expect(((await listed.json()) as { custom_apis: ProductCustomApi[] }).custom_apis).toHaveLength(
+      1,
+    );
+
+    const unsafe = await localRequest(origin, '/better-agent/api/product/custom-apis', {
+      body: JSON.stringify({
+        description: '',
+        endpoint_url: 'http://127.0.0.1/admin',
+        method: 'GET',
+        name: '内网',
+        response_path: '',
+      }),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'POST',
+    });
+    expect(unsafe.status).toBe(400);
   });
 
   it('requires the product CSRF header before authenticating mutation routes', async () => {

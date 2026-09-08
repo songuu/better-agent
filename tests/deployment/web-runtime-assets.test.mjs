@@ -251,6 +251,28 @@ test('ships a workspace-scoped versioned Plugin catalog and installation control
   assert.doesNotMatch(publicJavaScript, /eval\(|new Function|https?:\/\//u);
 });
 
+test('ships version-pinned Custom HTTPS API resources and Flow controls', () => {
+  for (const marker of [
+    'id="flow-api-enabled"',
+    'id="flow-api-node"',
+    'id="custom-api-form"',
+    'id="custom-api-list"',
+    'SSRF guard / 5s / 32 KiB',
+  ]) {
+    assert.match(publicHtml, new RegExp(marker, 'u'));
+  }
+  for (const marker of [
+    '/custom-apis',
+    'apiRevision',
+    'responsePath',
+    "type: 'api'",
+    'loadCustomApis',
+  ]) {
+    assert.match(publicJavaScript, new RegExp(marker, 'u'));
+  }
+  assert.doesNotMatch(publicJavaScript, /eval\(|new Function|https?:\/\//u);
+});
+
 test('packages the PostgreSQL client dependency required by the product runtime', () => {
   assert.match(
     deploymentWorkflow,

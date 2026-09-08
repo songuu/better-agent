@@ -1,7 +1,12 @@
 import type { Pool } from 'pg';
 
 import {
-  executeProductFlow,
+  SecureProductApiRuntime,
+  validateProductApiEndpoint,
+  validateProductApiResponsePath,
+} from './api-runtime.js';
+import {
+  executeProductFlowWithApis,
   type ProductFlowGraph,
   validateProductFlowGraph,
 } from './flow-runtime.js';
@@ -337,6 +342,23 @@ export interface ProductPluginCatalogItem {
   readonly runtime: 'deterministic';
 }
 
+export type ProductCustomApiMethod = 'GET' | 'POST';
+
+export interface ProductCustomApiInput {
+  readonly description: string;
+  readonly endpointUrl: string;
+  readonly method: ProductCustomApiMethod;
+  readonly name: string;
+  readonly responsePath: string;
+}
+
+export interface ProductCustomApi extends ProductCustomApiInput {
+  readonly createdAt: string;
+  readonly id: string;
+  readonly revision: number;
+  readonly updatedAt: string;
+}
+
 export interface ProductReleaseEvaluationTarget {
   readonly environments: readonly string[];
   readonly failedEvidenceCount: number;
@@ -452,6 +474,19 @@ export interface ProductStore {
     pluginId: string,
     releaseVersion: number,
   ): Promise<ProductPluginCatalogItem>;
+  listCustomApis(workspaceId: string): Promise<readonly ProductCustomApi[]>;
+  createCustomApi(
+    workspaceId: string,
+    actorId: string,
+    input: ProductCustomApiInput,
+  ): Promise<ProductCustomApi>;
+  updateCustomApi(
+    workspaceId: string,
+    actorId: string,
+    apiId: string,
+    expectedRevision: number,
+    input: ProductCustomApiInput,
+  ): Promise<ProductCustomApi>;
   publishAgent(
     workspaceId: string,
     actorId: string,
@@ -681,6 +716,18 @@ interface PluginCatalogRow {
   readonly name: string;
   readonly plugin_id: string;
   readonly release_version: string | number;
+}
+
+interface CustomApiRow {
+  readonly created_at: Date | string;
+  readonly description: string;
+  readonly endpoint_url: string;
+  readonly id: string;
+  readonly method: string;
+  readonly name: string;
+  readonly response_path: string;
+  readonly revision: string | number;
+  readonly updated_at: Date | string;
 }
 
 interface AgentDatabaseRecordRow {
@@ -1552,6 +1599,47 @@ function toPluginCatalogItem(row: PluginCatalogRow): ProductPluginCatalogItem {
   });
 }
 
+function normalizeCustomApiInput(input: ProductCustomApiInput): ProductCustomApiInput {
+  const name = input.name.trim();
+  if (name.length < 1 || name.length > 80) throw new Error('Custom API name is invalid');
+  if (input.description.length > 500) throw new Error('Custom API description is invalid');
+  if (input.method !== 'GET' && input.method !== 'POST') {
+    throw new Error('Custom API method is invalid');
+  }
+  let endpointUrl: string;
+  let responsePath: string;
+  try {
+    endpointUrl = validateProductApiEndpoint(input.endpointUrl).href;
+    responsePath = validateProductApiResponsePath(input.responsePath);
+  } catch {
+    throw new Error('Custom API endpoint or response path is invalid');
+  }
+  return Object.freeze({
+    description: input.description,
+    endpointUrl,
+    method: input.method,
+    name,
+    responsePath,
+  });
+}
+
+function toCustomApi(row: CustomApiRow): ProductCustomApi {
+  const input = normalizeCustomApiInput({
+    description: row.description,
+    endpointUrl: row.endpoint_url,
+    method: row.method as ProductCustomApiMethod,
+    name: row.name,
+    responsePath: row.response_path,
+  });
+  return Object.freeze({
+    ...input,
+    createdAt: asIso(row.created_at),
+    id: row.id,
+    revision: positiveInteger(row.revision, 'Custom API revision'),
+    updatedAt: asIso(row.updated_at),
+  });
+}
+
 function toAgentDatabaseRecord(row: AgentDatabaseRecordRow): ProductAgentDatabaseRecord {
   if (!Array.isArray(row.columns) || row.columns.some((column) => typeof column !== 'string')) {
     throw new Error('product store returned invalid Agent Database columns');
@@ -1565,9 +1653,14 @@ function toAgentDatabaseRecord(row: AgentDatabaseRecordRow): ProductAgentDatabas
 }
 
 export class PostgresProductStore implements ProductStore {
+  readonly #apiRuntime: Pick<SecureProductApiRuntime, 'execute'>;
   readonly #pool: Pool;
 
-  constructor(pool: Pool) {
+  constructor(
+    pool: Pool,
+    apiRuntime: Pick<SecureProductApiRuntime, 'execute'> = new SecureProductApiRuntime(),
+  ) {
+    this.#apiRuntime = apiRuntime;
     this.#pool = pool;
   }
 
@@ -1673,9 +1766,11 @@ export class PostgresProductStore implements ProductStore {
     );
     const graph = prepared.rows[0]?.graph;
     if (graph === undefined) throw new Error('product store did not prepare Flow debug');
-    const result = executeProductFlow(graph, {
-      input: validateFlowDebugInput({ input: inputText }),
-    });
+    const result = await executeProductFlowWithApis(
+      graph,
+      { input: validateFlowDebugInput({ input: inputText }) },
+      async (request) => await this.#apiRuntime.execute(request),
+    );
     const recorded = await this.#pool.query<FlowDebugRow>(
       'SELECT * FROM app.record_product_flow_debug($1::uuid, $2::uuid, $3::bigint, $4::uuid, $5::text, $6::text, $7::jsonb)',
       [
@@ -1824,6 +1919,73 @@ export class PostgresProductStore implements ProductStore {
       throw new Error('product store did not install the Plugin release');
     }
     return installed;
+  }
+
+  async listCustomApis(workspaceId: string): Promise<readonly ProductCustomApi[]> {
+    const result = await this.#pool.query<CustomApiRow>(
+      'SELECT * FROM app.list_product_custom_apis($1::uuid)',
+      [workspaceId],
+    );
+    return Object.freeze(result.rows.map(toCustomApi));
+  }
+
+  async createCustomApi(
+    workspaceId: string,
+    actorId: string,
+    input: ProductCustomApiInput,
+  ): Promise<ProductCustomApi> {
+    const validated = normalizeCustomApiInput(input);
+    const result = await this.#pool.query<{ readonly id: string }>(
+      'SELECT app.create_product_custom_api($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::text) AS id',
+      [
+        workspaceId,
+        actorId,
+        validated.name,
+        validated.description,
+        validated.method,
+        validated.endpointUrl,
+        validated.responsePath,
+      ],
+    );
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error('product store did not create Custom API');
+    const created = (await this.listCustomApis(workspaceId)).find((api) => api.id === id);
+    if (created === undefined) throw new Error('product store did not return created Custom API');
+    return created;
+  }
+
+  async updateCustomApi(
+    workspaceId: string,
+    actorId: string,
+    apiId: string,
+    expectedRevision: number,
+    input: ProductCustomApiInput,
+  ): Promise<ProductCustomApi> {
+    if (
+      !PRODUCT_UUID.test(apiId) ||
+      !Number.isSafeInteger(expectedRevision) ||
+      expectedRevision < 1
+    ) {
+      throw new Error('Custom API update target is invalid');
+    }
+    const validated = normalizeCustomApiInput(input);
+    await this.#pool.query(
+      'SELECT app.update_product_custom_api($1::uuid, $2::uuid, $3::bigint, $4::uuid, $5::text, $6::text, $7::text, $8::text, $9::text)',
+      [
+        workspaceId,
+        apiId,
+        expectedRevision,
+        actorId,
+        validated.name,
+        validated.description,
+        validated.method,
+        validated.endpointUrl,
+        validated.responsePath,
+      ],
+    );
+    const updated = (await this.listCustomApis(workspaceId)).find((api) => api.id === apiId);
+    if (updated === undefined) throw new Error('product store did not return updated Custom API');
+    return updated;
   }
 
   async queryDatabaseTable(
@@ -2000,7 +2162,11 @@ export class PostgresProductStore implements ProductStore {
     const row = result.rows[0];
     if (row === undefined) return null;
     const graph = validateProductFlowGraph(row.graph);
-    const execution = executeProductFlow(graph, { input: inputText });
+    const execution = await executeProductFlowWithApis(
+      graph,
+      { input: inputText },
+      async (request) => await this.#apiRuntime.execute(request),
+    );
     return Object.freeze({
       flowId: row.flow_id,
       flowReleaseVersion: positiveInteger(row.flow_release_version, 'Flow release version'),
@@ -2625,6 +2791,30 @@ export function validateKnowledgeQuery(value: unknown): string {
     throw new Error('Knowledge query must contain 1–500 characters');
   }
   return query;
+}
+
+export function validateCustomApiInput(value: unknown): ProductCustomApiInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Custom API payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 5 ||
+    typeof input.name !== 'string' ||
+    typeof input.description !== 'string' ||
+    typeof input.method !== 'string' ||
+    typeof input.endpoint_url !== 'string' ||
+    typeof input.response_path !== 'string'
+  ) {
+    throw new Error('Custom API payload has an invalid shape');
+  }
+  return normalizeCustomApiInput({
+    description: input.description,
+    endpointUrl: input.endpoint_url,
+    method: input.method as ProductCustomApiMethod,
+    name: input.name,
+    responsePath: input.response_path,
+  });
 }
 
 const DATABASE_COLUMN = /^[A-Za-z][A-Za-z0-9_]{0,39}$/u;
