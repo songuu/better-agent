@@ -15,6 +15,7 @@ import {
   validateKnowledgeBaseInput,
   validateKnowledgeDocumentInput,
   validateKnowledgeQuery,
+  validateMcpServerInput,
   validateRunInput,
   validateSkillPackInput,
 } from '../src/product-store.js';
@@ -251,6 +252,8 @@ describe('product Agent input', () => {
       flowId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       instructions: '只根据已核验的运行事实回答。',
       knowledgeBaseId: '12345678-1234-4123-8123-123456789abc',
+      mcpServerId: null,
+      mcpServerReleaseVersion: null,
       model: 'gpt-5.6-sol',
       name: '运行守望者',
       roleMode: 'text',
@@ -364,6 +367,32 @@ describe('product Skill Pack input', () => {
     expect(() =>
       validateSkillPackInput({ description: '', extra: true, instructions: 'x', name: '开放对象' }),
     ).toThrow('shape');
+  });
+});
+
+describe('product MCP server input', () => {
+  it('accepts a closed public HTTPS tool binding and rejects unsafe endpoints', () => {
+    expect(
+      validateMcpServerInput({
+        description: '发布核验工具',
+        endpoint_url: 'https://mcp.example.com/mcp',
+        name: '发布 MCP',
+        tool_name: 'release_check',
+      }),
+    ).toEqual({
+      description: '发布核验工具',
+      endpointUrl: 'https://mcp.example.com/mcp',
+      name: '发布 MCP',
+      toolName: 'release_check',
+    });
+    expect(() =>
+      validateMcpServerInput({
+        description: '',
+        endpoint_url: 'http://127.0.0.1/mcp',
+        name: '不安全',
+        tool_name: 'lookup',
+      }),
+    ).toThrow('mcp_endpoint');
   });
 });
 

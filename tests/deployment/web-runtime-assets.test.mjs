@@ -292,6 +292,25 @@ test('ships versioned Skill Pack resources and exact Agent binding controls', ()
   }
 });
 
+test('ships versioned MCP Streamable HTTP services and exact Agent binding controls', () => {
+  for (const marker of [
+    'id="agent-mcp-server"',
+    'id="mcp-server-form"',
+    'id="mcp-server-list"',
+    'MODEL CONTEXT PROTOCOL',
+  ]) {
+    assert.match(publicHtml, new RegExp(marker, 'u'));
+  }
+  for (const marker of [
+    '/mcp-servers',
+    'mcp_server_id',
+    'mcp_server_release_version',
+    'loadMcpServers',
+  ]) {
+    assert.match(publicJavaScript, new RegExp(marker, 'u'));
+  }
+});
+
 test('packages the PostgreSQL client dependency required by the product runtime', () => {
   assert.match(
     deploymentWorkflow,

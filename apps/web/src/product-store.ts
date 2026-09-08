@@ -5,6 +5,7 @@ import {
   validateProductApiEndpoint,
   validateProductApiResponsePath,
 } from './api-runtime.js';
+import { validateMcpEndpoint } from './mcp-runtime.js';
 import {
   executeProductFlowWithApis,
   type ProductFlowGraph,
@@ -73,6 +74,8 @@ export interface AgentDraft {
   readonly instructions: string;
   readonly knowledgeBaseId: string | null;
   readonly model: ProductModel;
+  readonly mcpServerId?: string | null;
+  readonly mcpServerReleaseVersion?: number | null;
   readonly name: string;
   readonly revision: number;
   readonly roleMode: ProductAgentRoleMode;
@@ -94,6 +97,8 @@ export interface AgentDraftInput {
   readonly knowledgeBaseId: string | null;
   readonly model: ProductModel;
   readonly name: string;
+  readonly mcpServerId?: string | null;
+  readonly mcpServerReleaseVersion?: number | null;
   readonly roleMode: ProductAgentRoleMode;
   readonly roleProfile: ProductAgentRoleProfile | null;
   readonly skillPackId?: string | null;
@@ -189,6 +194,28 @@ export interface ProductRunSkillPack {
   readonly name: string;
   readonly releaseVersion: number;
   readonly skillPackId: string;
+}
+
+export interface ProductRunMcpServer {
+  readonly endpointUrl: string;
+  readonly mcpServerId: string;
+  readonly name: string;
+  readonly releaseVersion: number;
+  readonly toolName: string;
+}
+
+export interface ProductMcpServerInput {
+  readonly description: string;
+  readonly endpointUrl: string;
+  readonly name: string;
+  readonly toolName: string;
+}
+
+export interface ProductMcpServer extends ProductMcpServerInput {
+  readonly createdAt: string;
+  readonly id: string;
+  readonly revision: number;
+  readonly updatedAt: string;
 }
 
 export interface ProductSkillPackInput {
@@ -420,6 +447,11 @@ export interface ProductStore {
     actorId: string,
     runId: string,
   ): Promise<ProductRunSkillPack | null>;
+  getRunMcpServer?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+  ): Promise<ProductRunMcpServer | null>;
   completeRun(
     workspaceId: string,
     actorId: string,
@@ -504,12 +536,18 @@ export interface ProductStore {
     releaseVersion: number,
   ): Promise<ProductPluginCatalogItem>;
   listCustomApis(workspaceId: string): Promise<readonly ProductCustomApi[]>;
+  listMcpServers(workspaceId: string): Promise<readonly ProductMcpServer[]>;
   listSkillPacks(workspaceId: string): Promise<readonly ProductSkillPack[]>;
   createSkillPack(
     workspaceId: string,
     actorId: string,
     input: ProductSkillPackInput,
   ): Promise<ProductSkillPack>;
+  createMcpServer(
+    workspaceId: string,
+    actorId: string,
+    input: ProductMcpServerInput,
+  ): Promise<ProductMcpServer>;
   createCustomApi(
     workspaceId: string,
     actorId: string,
@@ -529,6 +567,13 @@ export interface ProductStore {
     expectedRevision: number,
     input: ProductSkillPackInput,
   ): Promise<ProductSkillPack>;
+  updateMcpServer(
+    workspaceId: string,
+    actorId: string,
+    mcpServerId: string,
+    expectedRevision: number,
+    input: ProductMcpServerInput,
+  ): Promise<ProductMcpServer>;
   publishAgent(
     workspaceId: string,
     actorId: string,
@@ -841,6 +886,8 @@ interface AgentRow {
   readonly instructions: string;
   readonly knowledge_base_id: string | null;
   readonly model: string;
+  readonly mcp_server_id: string | null;
+  readonly mcp_server_release_version: string | number | null;
   readonly name: string;
   readonly revision: string | number;
   readonly role_mode: string;
@@ -860,6 +907,17 @@ interface SkillPackRow {
   readonly instructions: string;
   readonly name: string;
   readonly revision: string | number;
+  readonly updated_at: Date | string;
+}
+
+interface McpServerRow {
+  readonly created_at: Date | string;
+  readonly description: string;
+  readonly endpoint_url: string;
+  readonly id: string;
+  readonly name: string;
+  readonly revision: string | number;
+  readonly tool_name: string;
   readonly updated_at: Date | string;
 }
 
@@ -1197,6 +1255,11 @@ function toDraft(row: AgentRow): AgentDraft {
     id: row.id,
     instructions: row.instructions,
     knowledgeBaseId: row.knowledge_base_id,
+    mcpServerId: row.mcp_server_id,
+    mcpServerReleaseVersion:
+      row.mcp_server_release_version === null
+        ? null
+        : positiveInteger(row.mcp_server_release_version, 'MCP server release version'),
     model: row.model as ProductModel,
     name: row.name,
     revision,
@@ -1222,6 +1285,19 @@ function toSkillPack(row: SkillPackRow): ProductSkillPack {
     instructions: row.instructions,
     name: row.name,
     revision: positiveInteger(row.revision, 'Skill Pack revision'),
+    updatedAt: asIso(row.updated_at),
+  });
+}
+
+function toMcpServer(row: McpServerRow): ProductMcpServer {
+  return Object.freeze({
+    createdAt: asIso(row.created_at),
+    description: row.description,
+    endpointUrl: row.endpoint_url,
+    id: row.id,
+    name: row.name,
+    revision: positiveInteger(row.revision, 'MCP server revision'),
+    toolName: row.tool_name,
     updatedAt: asIso(row.updated_at),
   });
 }
@@ -2067,6 +2143,64 @@ export class PostgresProductStore implements ProductStore {
     return Object.freeze(result.rows.map(toSkillPack));
   }
 
+  async listMcpServers(workspaceId: string): Promise<readonly ProductMcpServer[]> {
+    const result = await this.#pool.query<McpServerRow>(
+      'SELECT * FROM app.list_product_mcp_servers($1::uuid)',
+      [workspaceId],
+    );
+    return Object.freeze(result.rows.map(toMcpServer));
+  }
+
+  async createMcpServer(
+    workspaceId: string,
+    actorId: string,
+    input: ProductMcpServerInput,
+  ): Promise<ProductMcpServer> {
+    const result = await this.#pool.query<{ readonly id: string }>(
+      'SELECT app.create_product_mcp_server($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text) AS id',
+      [workspaceId, actorId, input.name, input.description, input.endpointUrl, input.toolName],
+    );
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error('product store did not create MCP server');
+    const created = (await this.listMcpServers(workspaceId)).find((server) => server.id === id);
+    if (created === undefined) throw new Error('product store did not return created MCP server');
+    return created;
+  }
+
+  async updateMcpServer(
+    workspaceId: string,
+    actorId: string,
+    mcpServerId: string,
+    expectedRevision: number,
+    input: ProductMcpServerInput,
+  ): Promise<ProductMcpServer> {
+    if (
+      !PRODUCT_UUID.test(mcpServerId) ||
+      !Number.isSafeInteger(expectedRevision) ||
+      expectedRevision < 1
+    ) {
+      throw new Error('MCP server update target is invalid');
+    }
+    await this.#pool.query(
+      'SELECT app.update_product_mcp_server($1::uuid, $2::uuid, $3::bigint, $4::uuid, $5::text, $6::text, $7::text, $8::text)',
+      [
+        workspaceId,
+        mcpServerId,
+        expectedRevision,
+        actorId,
+        input.name,
+        input.description,
+        input.endpointUrl,
+        input.toolName,
+      ],
+    );
+    const updated = (await this.listMcpServers(workspaceId)).find(
+      (server) => server.id === mcpServerId,
+    );
+    if (updated === undefined) throw new Error('product store did not return updated MCP server');
+    return updated;
+  }
+
   async createSkillPack(
     workspaceId: string,
     actorId: string,
@@ -2361,6 +2495,33 @@ export class PostgresProductStore implements ProductStore {
     });
   }
 
+  async getRunMcpServer(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+  ): Promise<ProductRunMcpServer | null> {
+    const result = await this.#pool.query<{
+      readonly endpoint_url: string;
+      readonly mcp_server_id: string;
+      readonly name: string;
+      readonly release_version: string | number;
+      readonly tool_name: string;
+    }>('SELECT * FROM app.read_agent_product_run_mcp_server($1::uuid, $2::uuid, $3::uuid)', [
+      workspaceId,
+      runId,
+      actorId,
+    ]);
+    const row = result.rows[0];
+    if (row === undefined) return null;
+    return Object.freeze({
+      endpointUrl: row.endpoint_url,
+      mcpServerId: row.mcp_server_id,
+      name: row.name,
+      releaseVersion: positiveInteger(row.release_version, 'MCP server release version'),
+      toolName: row.tool_name,
+    });
+  }
+
   async routeRun(
     workspaceId: string,
     actorId: string,
@@ -2618,7 +2779,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     const result = await this.#pool.query<{ readonly id: string }>(
-      'SELECT (app.create_agent_draft_with_strategy_capabilities_v7($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid, $13::uuid, $14::uuid, $15::bigint)).id AS id',
+      'SELECT (app.create_agent_draft_with_strategy_capabilities_v8($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid, $13::uuid, $14::uuid, $15::bigint, $16::uuid, $17::bigint)).id AS id',
       [
         workspaceId,
         actorId,
@@ -2635,6 +2796,8 @@ export class PostgresProductStore implements ProductStore {
         input.flowId,
         input.skillPackId ?? null,
         input.skillPackReleaseVersion ?? null,
+        input.mcpServerId ?? null,
+        input.mcpServerReleaseVersion ?? null,
       ],
     );
     const id = result.rows[0]?.id;
@@ -2649,7 +2812,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     await this.#pool.query(
-      'SELECT app.update_agent_draft_with_strategy_capabilities_v7($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid, $14::uuid, $15::uuid, $16::bigint)',
+      'SELECT app.update_agent_draft_with_strategy_capabilities_v8($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid, $14::uuid, $15::uuid, $16::bigint, $17::uuid, $18::bigint)',
       [
         workspaceId,
         agentId,
@@ -2667,6 +2830,8 @@ export class PostgresProductStore implements ProductStore {
         input.flowId,
         input.skillPackId ?? null,
         input.skillPackReleaseVersion ?? null,
+        input.mcpServerId ?? null,
+        input.mcpServerReleaseVersion ?? null,
       ],
     );
     return await this.#getAgent(workspaceId, agentId);
@@ -2725,6 +2890,8 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
           'flow_id',
           'skill_pack_id',
           'skill_pack_release_version',
+          'mcp_server_id',
+          'mcp_server_release_version',
         ].includes(key),
     )
   ) {
@@ -2806,6 +2973,20 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   ) {
     throw new Error('Agent Skill Pack binding is invalid');
   }
+  const mcpServerId = input.mcp_server_id ?? null;
+  const mcpServerReleaseVersion = input.mcp_server_release_version ?? null;
+  if ((mcpServerId === null) !== (mcpServerReleaseVersion === null)) {
+    throw new Error('Agent MCP server binding must contain both id and release version');
+  }
+  if (
+    mcpServerId !== null &&
+    (typeof mcpServerId !== 'string' ||
+      !PRODUCT_UUID.test(mcpServerId) ||
+      !Number.isSafeInteger(mcpServerReleaseVersion) ||
+      Number(mcpServerReleaseVersion) < 1)
+  ) {
+    throw new Error('Agent MCP server binding is invalid');
+  }
   return Object.freeze({
     childAgentId,
     databaseTableId,
@@ -2815,6 +2996,9 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
     knowledgeBaseId,
     model: input.model as ProductModel,
     name,
+    mcpServerId,
+    mcpServerReleaseVersion:
+      mcpServerReleaseVersion === null ? null : Number(mcpServerReleaseVersion),
     roleMode,
     roleProfile,
     skillPackId,
@@ -3018,6 +3202,36 @@ export function validateSkillPackInput(value: unknown): ProductSkillPackInput {
     throw new Error('Skill Pack instructions must contain 1–20,000 characters');
   }
   return Object.freeze({ description: input.description, instructions, name });
+}
+
+export function validateMcpServerInput(value: unknown): ProductMcpServerInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('MCP server payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 4 ||
+    typeof input.name !== 'string' ||
+    typeof input.description !== 'string' ||
+    typeof input.endpoint_url !== 'string' ||
+    typeof input.tool_name !== 'string'
+  ) {
+    throw new Error('MCP server payload has an invalid shape');
+  }
+  const name = input.name.trim();
+  const endpointUrl = input.endpoint_url.trim();
+  const toolName = input.tool_name.trim();
+  if (name.length < 1 || name.length > 80) {
+    throw new Error('MCP server name must contain 1–80 characters');
+  }
+  if (input.description.length > 500) {
+    throw new Error('MCP server description must not exceed 500 characters');
+  }
+  validateMcpEndpoint(endpointUrl);
+  if (!/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/u.test(toolName)) {
+    throw new Error('MCP tool name is invalid');
+  }
+  return Object.freeze({ description: input.description, endpointUrl, name, toolName });
 }
 
 const DATABASE_COLUMN = /^[A-Za-z][A-Za-z0-9_]{0,39}$/u;

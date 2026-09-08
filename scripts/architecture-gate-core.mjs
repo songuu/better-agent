@@ -29,6 +29,7 @@ const REQUIRED_EVIDENCE_DOMAINS = Object.freeze([
   'product-plugin-catalog',
   'product-custom-api',
   'product-skill-pack',
+  'product-mcp-server',
   'runtime-security',
 ]);
 
@@ -42,7 +43,7 @@ const EXPECTED_SCRIPTS = Object.freeze({
     'pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build',
   rootPostgres16: 'pnpm --filter @better-agent/db test:integration',
   dbIntegration:
-    'pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-product-flow-studio-integration.mjs && node ../../infra/test/postgres/run-product-knowledge-center-integration.mjs && node ../../infra/test/postgres/run-product-agent-knowledge-binding-integration.mjs && node ../../infra/test/postgres/run-product-release-evaluation-overview-integration.mjs && node ../../infra/test/postgres/run-product-database-studio-integration.mjs && node ../../infra/test/postgres/run-product-agent-database-binding-integration.mjs && node ../../infra/test/postgres/run-product-agent-role-profile-integration.mjs && node ../../infra/test/postgres/run-product-agent-strategy-profile-integration.mjs && node ../../infra/test/postgres/run-product-plugin-catalog-integration.mjs && node ../../infra/test/postgres/run-product-custom-api-integration.mjs && node ../../infra/test/postgres/run-product-skill-pack-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs',
+    'pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-product-flow-studio-integration.mjs && node ../../infra/test/postgres/run-product-knowledge-center-integration.mjs && node ../../infra/test/postgres/run-product-agent-knowledge-binding-integration.mjs && node ../../infra/test/postgres/run-product-release-evaluation-overview-integration.mjs && node ../../infra/test/postgres/run-product-database-studio-integration.mjs && node ../../infra/test/postgres/run-product-agent-database-binding-integration.mjs && node ../../infra/test/postgres/run-product-agent-role-profile-integration.mjs && node ../../infra/test/postgres/run-product-agent-strategy-profile-integration.mjs && node ../../infra/test/postgres/run-product-plugin-catalog-integration.mjs && node ../../infra/test/postgres/run-product-custom-api-integration.mjs && node ../../infra/test/postgres/run-product-skill-pack-integration.mjs && node ../../infra/test/postgres/run-product-mcp-server-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs',
 });
 
 const EXPECTED_POSTGRES_SUITES = Object.freeze([
@@ -203,6 +204,12 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
     successMarker: 'architecture-gate-suite/1 product-skill-pack pass',
   }),
   Object.freeze({
+    id: 'product-mcp-server',
+    file: 'infra/test/postgres/run-product-mcp-server-integration.mjs',
+    sha256: 'b576405cee1f6182e8186b3f0367624ea122625e812311ddab9dcb268d6c5142',
+    successMarker: 'architecture-gate-suite/1 product-mcp-server pass',
+  }),
+  Object.freeze({
     id: 'runtime-security',
     file: 'infra/test/postgres/run-runtime-security-integration.mjs',
     sha256: 'a7853d2633d27aeed25ef9e4c58d43300bbdefd88e0d2eb81c1e3aac3655e5f1',
@@ -283,8 +290,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/db',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 205,
-    successMarker: '@better-agent/db:test:       Tests  205 passed (205)',
+    testCount: 208,
+    successMarker: '@better-agent/db:test:       Tests  208 passed (208)',
   }),
   Object.freeze({
     packageName: '@better-agent/domain-contracts',
@@ -326,8 +333,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/web',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 121,
-    successMarker: '@better-agent/web:test:       Tests  121 passed (121)',
+    testCount: 127,
+    successMarker: '@better-agent/web:test:       Tests  127 passed (127)',
   }),
 ]);
 
@@ -529,6 +536,7 @@ function validateMigrationFiles(value) {
       '037',
       '038',
       '039',
+      '040',
     ],
     'migration IDs',
   );

@@ -4,6 +4,7 @@ const state = {
   conversationId: null,
   currentCustomApi: null,
   currentSkillPack: null,
+  currentMcpServer: null,
   current: null,
   currentFlow: null,
   currentKnowledge: null,
@@ -16,6 +17,7 @@ const state = {
   flowApiPin: null,
   knowledgeBases: [],
   knowledgeDocuments: [],
+  mcpServers: [],
   plugins: [],
   releaseTargets: [],
   runs: [],
@@ -31,6 +33,7 @@ const databaseTableForm = byId('database-table-form');
 const databaseRowsForm = byId('database-rows-form');
 const customApiForm = byId('custom-api-form');
 const skillPackForm = byId('skill-pack-form');
+const mcpServerForm = byId('mcp-server-form');
 const loginDialog = byId('login-dialog');
 const roleThemes = [
   'identity',
@@ -126,6 +129,7 @@ function currentCapabilityKinds() {
     ...(form.elements.child_agent_id.value ? ['subagent'] : []),
     ...(form.elements.flow_id.value ? ['flow'] : []),
     ...(form.elements.skill_pack_binding.value ? ['skill_pack'] : []),
+    ...(form.elements.mcp_server_binding.value ? ['mcp'] : []),
   ];
 }
 
@@ -599,12 +603,76 @@ function renderSkillPacks() {
         .join('')
     : '<p class="empty-note">还没有 Skill Pack。</p>';
   renderAgentSkillPackOptions();
+  renderAgentMcpServerOptions();
 }
 
 async function loadSkillPacks() {
   const payload = await request('/skill-packs');
   state.skillPacks = payload.skill_packs;
   renderSkillPacks();
+}
+
+function resetMcpServerForm() {
+  state.currentMcpServer = null;
+  mcpServerForm.reset();
+  mcpServerForm.elements.mcpServerId.value = '';
+  mcpServerForm.elements.expectedRevision.value = '';
+}
+
+function editMcpServer(mcpServerId) {
+  const server = state.mcpServers.find((item) => item.id === mcpServerId);
+  if (!server) return;
+  state.currentMcpServer = server;
+  mcpServerForm.elements.mcpServerId.value = server.id;
+  mcpServerForm.elements.expectedRevision.value = String(server.revision);
+  mcpServerForm.elements.name.value = server.name;
+  mcpServerForm.elements.description.value = server.description;
+  mcpServerForm.elements.endpointUrl.value = server.endpointUrl;
+  mcpServerForm.elements.toolName.value = server.toolName;
+  mcpServerForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderAgentMcpServerOptions() {
+  const select = byId('agent-mcp-server');
+  const selected = state.current?.mcpServerId
+    ? `${state.current.mcpServerId}:${state.current.mcpServerReleaseVersion}`
+    : '';
+  const options = [
+    '<option value="">不绑定 MCP 服务</option>',
+    ...state.mcpServers.map(
+      (server) =>
+        `<option value="${server.id}:${server.revision}">${escapeHtml(server.name)} · ${escapeHtml(server.toolName)} · V${server.revision}</option>`,
+    ),
+  ];
+  if (
+    selected &&
+    !state.mcpServers.some((server) => `${server.id}:${server.revision}` === selected)
+  ) {
+    options.push(
+      `<option value="${selected}">已固定历史 MCP 版本 · V${state.current.mcpServerReleaseVersion}</option>`,
+    );
+  }
+  select.innerHTML = options.join('');
+  select.value = selected;
+}
+
+function renderMcpServers() {
+  const list = byId('mcp-server-list');
+  list.innerHTML = state.mcpServers.length
+    ? state.mcpServers
+        .map(
+          (server) =>
+            `<article class="custom-api-card"><header><div><small>MCP · ${escapeHtml(server.toolName)}</small><h3>${escapeHtml(server.name)}</h3></div><em>V${server.revision}</em></header><p>${escapeHtml(server.description || '未填写说明')}</p><code>${escapeHtml(server.endpointUrl)}</code><footer><span>STREAMABLE HTTP</span><button type="button" class="button button-ghost" data-edit-mcp-server="${server.id}">编辑并发布新版本</button></footer></article>`,
+        )
+        .join('')
+    : '<p class="empty-note">还没有 MCP 服务。</p>';
+  renderAgentMcpServerOptions();
+}
+
+async function loadMcpServers() {
+  const payload = await request('/mcp-servers');
+  state.mcpServers = payload.mcp_servers;
+  renderMcpServers();
 }
 
 function renderFlows() {
@@ -1132,6 +1200,7 @@ function showEditor(agent = null) {
   renderAgentChildOptions();
   renderAgentFlowOptions();
   renderAgentSkillPackOptions();
+  renderAgentMcpServerOptions();
   byId('editor-title').textContent = agent?.name || '未命名 Agent';
   byId('agent-kicker').textContent = agent
     ? `${agent.status.toUpperCase()} · REV ${agent.revision}`
@@ -1174,6 +1243,7 @@ async function bootstrap() {
       loadPluginCatalog(),
       loadCustomApis(),
       loadSkillPacks(),
+      loadMcpServers(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -1205,6 +1275,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       loadPluginCatalog(),
       loadCustomApis(),
       loadSkillPacks(),
+      loadMcpServers(),
       loadRuns(),
       loadReleaseTargets(),
     ]);
@@ -1376,11 +1447,51 @@ skillPackForm.addEventListener('submit', async (event) => {
   }
 });
 
+byId('mcp-server-list').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-edit-mcp-server]');
+  if (button) editMcpServer(button.dataset.editMcpServer);
+});
+
+mcpServerForm
+  .querySelector('[data-reset-mcp-server]')
+  .addEventListener('click', resetMcpServerForm);
+
+mcpServerForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const current = state.currentMcpServer;
+  const input = {
+    description: mcpServerForm.elements.description.value,
+    endpoint_url: mcpServerForm.elements.endpointUrl.value,
+    name: mcpServerForm.elements.name.value,
+    tool_name: mcpServerForm.elements.toolName.value,
+  };
+  try {
+    const payload = current
+      ? await request(`/mcp-servers/${current.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...input, expected_revision: current.revision }),
+        })
+      : await request('/mcp-servers', { method: 'POST', body: JSON.stringify(input) });
+    const server = payload.mcp_server;
+    const index = state.mcpServers.findIndex((item) => item.id === server.id);
+    if (index === -1) state.mcpServers.unshift(server);
+    else state.mcpServers[index] = server;
+    resetMcpServerForm();
+    renderMcpServers();
+    toast(`MCP 服务 V${server.revision} 已发布`);
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(form));
   const [skillPackId = '', skillPackReleaseVersion = ''] = String(
     values.skill_pack_binding || '',
+  ).split(':');
+  const [mcpServerId = '', mcpServerReleaseVersion = ''] = String(
+    values.mcp_server_binding || '',
   ).split(':');
   const input = {
     child_agent_id: values.child_agent_id || null,
@@ -1390,6 +1501,8 @@ form.addEventListener('submit', async (event) => {
     instructions: values.instructions,
     knowledge_base_id: values.knowledge_base_id || null,
     model: values.model,
+    mcp_server_id: mcpServerId || null,
+    mcp_server_release_version: mcpServerReleaseVersion ? Number(mcpServerReleaseVersion) : null,
     name: values.name,
     role_mode: values.role_mode,
     role_profile: values.role_mode === 'structured' ? readRoleProfile() : null,

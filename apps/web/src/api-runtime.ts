@@ -108,7 +108,7 @@ function isBlockedIpv4(address: string): boolean {
   );
 }
 
-function isBlockedAddress(address: string): boolean {
+export function isBlockedAddress(address: string): boolean {
   const normalized = address.toLowerCase();
   if (isIP(normalized) === 4) return isBlockedIpv4(normalized);
   if (isIP(normalized) !== 6) return true;
