@@ -137,7 +137,7 @@ test('ships the Flow editor, environment deployment and durable debug controls',
   for (const marker of [
     "type: 'condition'",
     "type: 'plugin'",
-    "plugin: 'builtin.text.v1'",
+    'plugin.resource.identity',
     'pipeline.slice(1).map',
   ]) {
     assert.ok(publicJavaScript.includes(marker), `missing executable Flow node marker: ${marker}`);
@@ -236,9 +236,8 @@ test('ships a workspace-scoped versioned Plugin catalog and installation control
     'id="plugin-view"',
     'id="plugin-catalog"',
     'data-install-plugin',
-    'builtin.text.v1',
-    'character_count',
-    'word_count',
+    'flow-plugin-resource',
+    'plugin.operations',
   ]) {
     assert.ok(
       publicHtml.includes(marker) || publicJavaScript.includes(marker),
@@ -271,6 +270,25 @@ test('ships version-pinned Custom HTTPS API resources and Flow controls', () => 
     assert.match(publicJavaScript, new RegExp(marker, 'u'));
   }
   assert.doesNotMatch(publicJavaScript, /eval\(|new Function|https?:\/\//u);
+});
+
+test('ships workspace Custom Plugin authoring and exact Flow binding controls', () => {
+  for (const marker of [
+    'id="custom-plugin-form"',
+    'id="custom-plugin-list"',
+    'id="flow-plugin-resource"',
+    '发布并自动安装',
+  ]) {
+    assert.match(publicHtml, new RegExp(marker, 'u'));
+  }
+  for (const marker of [
+    '/custom-plugins',
+    'pluginResourceId',
+    'pluginRevision',
+    'loadCustomPlugins',
+  ]) {
+    assert.match(publicJavaScript, new RegExp(marker, 'u'));
+  }
 });
 
 test('ships versioned Skill Pack resources and exact Agent binding controls', () => {

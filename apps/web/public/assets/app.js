@@ -3,12 +3,14 @@ const state = {
   agents: [],
   conversationId: null,
   currentCustomApi: null,
+  currentCustomPlugin: null,
   currentSkillPack: null,
   currentMcpServer: null,
   current: null,
   currentFlow: null,
   currentKnowledge: null,
   customApis: [],
+  customPlugins: [],
   currentDatabase: null,
   databaseTables: [],
   flows: [],
@@ -32,6 +34,7 @@ const knowledgeDocumentForm = byId('knowledge-document-form');
 const databaseTableForm = byId('database-table-form');
 const databaseRowsForm = byId('database-rows-form');
 const customApiForm = byId('custom-api-form');
+const customPluginForm = byId('custom-plugin-form');
 const skillPackForm = byId('skill-pack-form');
 const mcpServerForm = byId('mcp-server-form');
 const loginDialog = byId('login-dialog');
@@ -361,14 +364,24 @@ function flowGraph(template, transform, plugin, api, condition) {
   }
   const transformSource = transform.enabled ? 'transform' : 'prompt';
   if (plugin.enabled) {
+    if (!plugin.resource) throw new Error('请选择已安装的 Plugin 精确版本');
+    const config = {
+      operation: plugin.operation,
+      plugin: plugin.resource.identity,
+      source: transformSource,
+    };
+    if (plugin.resource.runtime === 'https') {
+      Object.assign(config, {
+        endpointUrl: plugin.resource.endpointUrl,
+        pluginId: plugin.resource.pluginResourceId,
+        pluginRevision: plugin.resource.pluginRevision,
+        responsePath: plugin.resource.responsePath,
+      });
+    }
     nodes.push({
-      config: {
-        operation: plugin.operation,
-        plugin: 'builtin.text.v1',
-        source: transformSource,
-      },
+      config,
       id: 'plugin',
-      label: '内置文本插件',
+      label: plugin.resource.name,
       type: 'plugin',
     });
   }
@@ -442,14 +455,37 @@ function syncFlowConditionEditor() {
     `${conditionEnabled ? 'condition' : apiEnabled ? 'api' : pluginEnabled ? 'plugin' : transformEnabled ? 'transform' : 'prompt'} → output`;
 }
 
-function hasInstalledTextPlugin() {
-  return state.plugins.some(
-    (plugin) => plugin.identity === 'builtin.text.v1' && plugin.installationId,
+function selectedFlowPlugin() {
+  const [identity, operation] = byId('flow-plugin-resource').value.split(':');
+  const resource = state.plugins.find(
+    (plugin) => plugin.identity === identity && plugin.installationId,
   );
+  return resource && resource.operations.includes(operation) ? { operation, resource } : null;
+}
+
+function renderFlowPluginOptions(selectedValue = null) {
+  const installed = state.plugins.filter((plugin) => plugin.installationId);
+  const select = byId('flow-plugin-resource');
+  select.innerHTML = installed.length
+    ? installed
+        .flatMap((plugin) =>
+          plugin.operations.map(
+            (operation) =>
+              `<option value="${escapeHtml(`${plugin.identity}:${operation}`)}">${escapeHtml(plugin.name)} · ${escapeHtml(operation)} · ${escapeHtml(plugin.identity)}</option>`,
+          ),
+        )
+        .join('')
+    : '<option value="">先安装或创建 Plugin</option>';
+  if (selectedValue && [...select.options].some((option) => option.value === selectedValue)) {
+    select.value = selectedValue;
+  }
+  const selected = selectedFlowPlugin();
+  byId('flow-plugin-identity').textContent = selected?.resource.identity || '未选择';
 }
 
 function syncPluginAvailability() {
-  const available = hasInstalledTextPlugin();
+  renderFlowPluginOptions(byId('flow-plugin-resource').value);
+  const available = selectedFlowPlugin() !== null;
   flowForm.elements.pluginEnabled.disabled = !available;
   if (!available) flowForm.elements.pluginEnabled.checked = false;
   syncFlowConditionEditor();
@@ -472,6 +508,43 @@ async function loadPluginCatalog() {
   const payload = await request('/plugins');
   state.plugins = payload.plugins;
   renderPluginCatalog();
+}
+
+function resetCustomPluginForm() {
+  state.currentCustomPlugin = null;
+  customPluginForm.reset();
+  customPluginForm.elements.pluginId.value = '';
+  customPluginForm.elements.expectedRevision.value = '';
+}
+
+function editCustomPlugin(pluginId) {
+  const plugin = state.customPlugins.find((item) => item.id === pluginId);
+  if (!plugin) return;
+  state.currentCustomPlugin = plugin;
+  customPluginForm.elements.pluginId.value = plugin.id;
+  customPluginForm.elements.expectedRevision.value = String(plugin.revision);
+  customPluginForm.elements.name.value = plugin.name;
+  customPluginForm.elements.description.value = plugin.description;
+  customPluginForm.elements.operation.value = plugin.operation;
+  customPluginForm.elements.endpointUrl.value = plugin.endpointUrl;
+  customPluginForm.elements.responsePath.value = plugin.responsePath;
+}
+
+function renderCustomPlugins() {
+  byId('custom-plugin-list').innerHTML = state.customPlugins.length
+    ? state.customPlugins
+        .map(
+          (plugin) =>
+            `<article><header><div><b>${escapeHtml(plugin.name)}</b><small>${escapeHtml(plugin.operation)} · R${plugin.revision}</small></div><button type="button" class="button button-ghost" data-edit-custom-plugin="${plugin.id}">编辑</button></header><p>${escapeHtml(plugin.description || '未填写说明')}</p><code>${escapeHtml(plugin.endpointUrl)}</code><footer><span>自动安装 · 不可变版本</span><span>${escapeHtml(plugin.responsePath || '完整响应')}</span></footer></article>`,
+        )
+        .join('')
+    : '<p class="empty-note">还没有自定义 Plugin。</p>';
+}
+
+async function loadCustomPlugins() {
+  const payload = await request('/custom-plugins');
+  state.customPlugins = payload.custom_plugins;
+  renderCustomPlugins();
 }
 
 function customApiOptionValue(api) {
@@ -773,7 +846,9 @@ function showFlowEditor(flow = null) {
   flowForm.elements.transformEnabled.checked = Boolean(transformNode);
   flowForm.elements.transformOperation.value = transformNode?.config.operation || 'trim';
   flowForm.elements.pluginEnabled.checked = Boolean(pluginNode);
-  flowForm.elements.pluginOperation.value = pluginNode?.config.operation || 'character_count';
+  renderFlowPluginOptions(
+    pluginNode ? `${pluginNode.config.plugin}:${pluginNode.config.operation}` : null,
+  );
   state.flowApiPin = apiNode
     ? {
         endpointUrl: apiNode.config.url,
@@ -1241,6 +1316,7 @@ async function bootstrap() {
       loadKnowledgeBases(),
       loadDatabaseTables(),
       loadPluginCatalog(),
+      loadCustomPlugins(),
       loadCustomApis(),
       loadSkillPacks(),
       loadMcpServers(),
@@ -1273,6 +1349,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       loadKnowledgeBases(),
       loadDatabaseTables(),
       loadPluginCatalog(),
+      loadCustomPlugins(),
       loadCustomApis(),
       loadSkillPacks(),
       loadMcpServers(),
@@ -1351,6 +1428,9 @@ flowForm.elements.name.addEventListener('input', () => {
 flowForm.elements.conditionEnabled.addEventListener('change', syncFlowConditionEditor);
 flowForm.elements.transformEnabled.addEventListener('change', syncFlowConditionEditor);
 flowForm.elements.pluginEnabled.addEventListener('change', syncFlowConditionEditor);
+byId('flow-plugin-resource').addEventListener('change', () => {
+  byId('flow-plugin-identity').textContent = selectedFlowPlugin()?.resource.identity || '未选择';
+});
 flowForm.elements.apiEnabled.addEventListener('change', syncFlowConditionEditor);
 
 byId('plugin-catalog').addEventListener('click', async (event) => {
@@ -1369,6 +1449,45 @@ byId('plugin-catalog').addEventListener('click', async (event) => {
     toast('插件精确版本已安装到当前工作区');
   } catch (error) {
     button.disabled = false;
+    toast(error.message, true);
+  }
+});
+
+byId('custom-plugin-list').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-edit-custom-plugin]');
+  if (button) editCustomPlugin(button.dataset.editCustomPlugin);
+});
+
+customPluginForm
+  .querySelector('[data-reset-custom-plugin]')
+  .addEventListener('click', resetCustomPluginForm);
+
+customPluginForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const current = state.currentCustomPlugin;
+  const input = {
+    description: customPluginForm.elements.description.value,
+    endpoint_url: customPluginForm.elements.endpointUrl.value,
+    name: customPluginForm.elements.name.value,
+    operation: customPluginForm.elements.operation.value,
+    response_path: customPluginForm.elements.responsePath.value,
+  };
+  try {
+    const payload = current
+      ? await request(`/custom-plugins/${current.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...input, expected_revision: current.revision }),
+        })
+      : await request('/custom-plugins', { method: 'POST', body: JSON.stringify(input) });
+    const plugin = payload.custom_plugin;
+    const index = state.customPlugins.findIndex((item) => item.id === plugin.id);
+    if (index === -1) state.customPlugins.unshift(plugin);
+    else state.customPlugins[index] = plugin;
+    resetCustomPluginForm();
+    renderCustomPlugins();
+    await loadPluginCatalog();
+    toast(`自定义 Plugin R${plugin.revision} 已发布并安装`);
+  } catch (error) {
     toast(error.message, true);
   }
 });
@@ -1555,7 +1674,8 @@ flowForm.addEventListener('submit', async (event) => {
       },
       {
         enabled: flowForm.elements.pluginEnabled.checked,
-        operation: flowForm.elements.pluginOperation.value,
+        operation: selectedFlowPlugin()?.operation,
+        resource: selectedFlowPlugin()?.resource,
       },
       {
         enabled: flowForm.elements.apiEnabled.checked,

@@ -11,6 +11,7 @@ import {
   type ProductStore,
   validateAgentInput,
   validateCustomApiInput,
+  validateCustomPluginInput,
   validateDatabaseQueryInput,
   validateDatabaseRowsInput,
   validateDatabaseTableInput,
@@ -553,6 +554,45 @@ export async function createBetterAgentWebServer(
         Number(payload.release_version),
       );
       sendJson(request, response, 200, { plugin });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/custom-plugins` && request.method === 'GET') {
+      sendJson(request, response, 200, {
+        custom_plugins: await productStore.listCustomPlugins(workspaceId),
+      });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/custom-plugins` && request.method === 'POST') {
+      const customPlugin = await productStore.createCustomPlugin(
+        workspaceId,
+        actorId,
+        validateCustomPluginInput(await readJsonBody(request)),
+      );
+      sendJson(request, response, 201, { custom_plugin: customPlugin });
+      return true;
+    }
+    const customPluginMatch = path.match(
+      new RegExp(`^${WEB_BASE_PATH}api/product/custom-plugins/([0-9a-f-]{36})$`, 'u'),
+    );
+    if (
+      customPluginMatch !== null &&
+      UUID.test(customPluginMatch[1] ?? '') &&
+      request.method === 'PUT'
+    ) {
+      const payload = (await readJsonBody(request)) as Record<string, unknown>;
+      const expectedRevision = payload.expected_revision;
+      if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) {
+        throw new Error('invalid_expected_revision');
+      }
+      const { expected_revision: _, ...customPluginPayload } = payload;
+      const customPlugin = await productStore.updateCustomPlugin(
+        workspaceId,
+        actorId,
+        customPluginMatch[1] as string,
+        Number(expectedRevision),
+        validateCustomPluginInput(customPluginPayload),
+      );
+      sendJson(request, response, 200, { custom_plugin: customPlugin });
       return true;
     }
     if (path === `${WEB_BASE_PATH}api/product/custom-apis` && request.method === 'GET') {
@@ -1302,7 +1342,7 @@ export async function createBetterAgentWebServer(
                     : message.startsWith('invalid_') ||
                         message.includes('payload') ||
                         message.includes('request_body') ||
-                        /^(Agent|Custom API|Database|Flow|Input|Knowledge|MCP|Output|Role|Run|Skill Pack|Template) /u.test(
+                        /^(Agent|Custom API|Custom Plugin|Database|Flow|Input|Knowledge|MCP|Output|Role|Run|Skill Pack|Template) /u.test(
                           message,
                         )
                       ? 400

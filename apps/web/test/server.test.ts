@@ -24,6 +24,7 @@ import type {
   AgentDraftInput,
   ProductConversation,
   ProductCustomApi,
+  ProductCustomPlugin,
   ProductDatabaseRow,
   ProductDatabaseTable,
   ProductFlowDebugRun,
@@ -250,6 +251,7 @@ function productFixture(): {
   readonly agents: AgentDraft[];
   readonly conversations: ProductConversation[];
   readonly customApis: ProductCustomApi[];
+  readonly customPlugins: ProductCustomPlugin[];
   readonly databaseRows: ProductDatabaseRow[];
   readonly databaseTables: ProductDatabaseTable[];
   readonly flowDebugRuns: ProductFlowDebugRun[];
@@ -265,6 +267,7 @@ function productFixture(): {
   const agents: AgentDraft[] = [];
   const conversations: ProductConversation[] = [];
   const customApis: ProductCustomApi[] = [];
+  const customPlugins: ProductCustomPlugin[] = [];
   const databaseRows: ProductDatabaseRow[] = [];
   const databaseTables: ProductDatabaseTable[] = [];
   const flows: ProductFlowDraft[] = [];
@@ -291,6 +294,35 @@ function productFixture(): {
   const skillPacks: ProductSkillPack[] = [];
   const timestamp = '2026-09-03T00:00:00.000Z';
   const store: ProductStore = {
+    async listCustomPlugins() {
+      return customPlugins;
+    },
+    async createCustomPlugin(_workspaceId, _actorId, input) {
+      const plugin: ProductCustomPlugin = {
+        ...input,
+        createdAt: timestamp,
+        id: 'f1000000-0000-4000-8000-000000000001',
+        revision: 1,
+        updatedAt: timestamp,
+      };
+      customPlugins.push(plugin);
+      return plugin;
+    },
+    async updateCustomPlugin(_workspaceId, _actorId, pluginId, expectedRevision, input) {
+      const index = customPlugins.findIndex((plugin) => plugin.id === pluginId);
+      const current = customPlugins[index];
+      if (current === undefined || current.revision !== expectedRevision) {
+        throw new Error('Custom Plugin revision conflict');
+      }
+      const updated = {
+        ...current,
+        ...input,
+        revision: current.revision + 1,
+        updatedAt: timestamp,
+      };
+      customPlugins[index] = updated;
+      return updated;
+    },
     async listMcpServers() {
       return mcpServers;
     },
@@ -773,6 +805,7 @@ function productFixture(): {
     agents,
     conversations,
     customApis,
+    customPlugins,
     flowDebugRuns,
     flows,
     databaseRows,
@@ -1422,6 +1455,65 @@ describe('Better Agent web runtime', () => {
       method: 'POST',
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it('creates and CAS-updates an auto-installed Custom Plugin resource', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const loginResponse = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = loginResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const input = {
+      description: 'Lookup order state',
+      endpoint_url: 'https://plugins.example.com/run',
+      name: 'Order lookup',
+      operation: 'lookup_order',
+      response_path: 'data.answer',
+    };
+    const created = await localRequest(origin, '/better-agent/api/product/custom-plugins', {
+      body: JSON.stringify(input),
+      headers: { ...mutationHeaders, Cookie: cookie },
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    const plugin = ((await created.json()) as { custom_plugin: ProductCustomPlugin }).custom_plugin;
+    expect(plugin).toMatchObject({ name: 'Order lookup', revision: 1 });
+
+    const updated = await localRequest(
+      origin,
+      `/better-agent/api/product/custom-plugins/${plugin.id}`,
+      {
+        body: JSON.stringify({ ...input, expected_revision: 1, name: 'Order lookup v2' }),
+        headers: { ...mutationHeaders, Cookie: cookie },
+        method: 'PUT',
+      },
+    );
+    expect(updated.status).toBe(200);
+    expect(
+      ((await updated.json()) as { custom_plugin: ProductCustomPlugin }).custom_plugin,
+    ).toMatchObject({
+      name: 'Order lookup v2',
+      revision: 2,
+    });
+    const listed = await localRequest(origin, '/better-agent/api/product/custom-plugins', {
+      headers: { Cookie: cookie },
+    });
+    expect(
+      ((await listed.json()) as { custom_plugins: ProductCustomPlugin[] }).custom_plugins,
+    ).toHaveLength(1);
   });
 
   it('creates and CAS-updates a versioned Custom API resource', async () => {

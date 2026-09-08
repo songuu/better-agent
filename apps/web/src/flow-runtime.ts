@@ -50,6 +50,20 @@ export type ProductFlowNode =
     }
   | {
       readonly config: {
+        readonly endpointUrl: string;
+        readonly operation: string;
+        readonly plugin: `custom.${string}.v${number}`;
+        readonly pluginId: string;
+        readonly pluginRevision: number;
+        readonly responsePath: string;
+        readonly source: string;
+      };
+      readonly id: string;
+      readonly label: string;
+      readonly type: 'plugin';
+    }
+  | {
+      readonly config: {
         readonly apiId: string;
         readonly apiRevision: number;
         readonly method: 'GET' | 'POST';
@@ -103,6 +117,7 @@ export const PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_OPERATIONS = [
 ] as const;
 export type ProductFlowBuiltinTextPluginOperation =
   (typeof PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_OPERATIONS)[number];
+type ProductFlowCustomPluginIdentity = `custom.${string}.v${number}`;
 export type ProductFlowApiExecutor = (request: ProductApiExecutionRequest) => Promise<string>;
 
 const PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS: Readonly<
@@ -113,6 +128,7 @@ const PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS: Readonly<
 });
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]{0,39}$/u;
+const PLUGIN_OPERATION = /^[a-z][a-z0-9_]{0,39}$/u;
 const TEMPLATE_REFERENCE = /\{\{\s*([a-z][a-z0-9_-]{0,39})\s*\}\}/gu;
 const CONDITION_VALUE_REFERENCE = /\{\{\s*value\s*\}\}/gu;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -209,13 +225,54 @@ function validateNode(value: unknown): ProductFlowNode {
     });
   }
   if (node.type === 'plugin') {
+    const rawConfig = node.config as Record<string, unknown>;
+    const custom = Object.hasOwn(rawConfig, 'pluginId');
     const config = closedObject(
-      node.config,
-      ['source', 'plugin', 'operation'],
+      rawConfig,
+      custom
+        ? [
+            'source',
+            'plugin',
+            'operation',
+            'pluginId',
+            'pluginRevision',
+            'endpointUrl',
+            'responsePath',
+          ]
+        : ['source', 'plugin', 'operation'],
       'Plugin node config',
     );
     const source = boundedText(config.source, 1, 40, 'Plugin source');
     if (!IDENTIFIER.test(source)) throw new Error('Plugin source is invalid');
+    if (custom) {
+      if (typeof config.pluginId !== 'string' || !UUID.test(config.pluginId)) {
+        throw new Error('Plugin resource id is invalid');
+      }
+      if (!Number.isSafeInteger(config.pluginRevision) || (config.pluginRevision as number) < 1) {
+        throw new Error('Plugin resource revision is invalid');
+      }
+      const operation = boundedText(config.operation, 1, 40, 'Plugin operation');
+      if (!PLUGIN_OPERATION.test(operation)) throw new Error('Plugin operation is invalid');
+      const identity =
+        `custom.${config.pluginId.replaceAll('-', '')}.v${String(config.pluginRevision)}` as ProductFlowCustomPluginIdentity;
+      if (config.plugin !== identity) throw new Error('Plugin identity does not match its release');
+      const endpointUrl = validateProductApiEndpoint(config.endpointUrl as string).href;
+      const responsePath = validateProductApiResponsePath(config.responsePath as string);
+      return Object.freeze({
+        config: Object.freeze({
+          endpointUrl,
+          operation,
+          plugin: identity,
+          pluginId: config.pluginId,
+          pluginRevision: config.pluginRevision as number,
+          responsePath,
+          source,
+        }),
+        id,
+        label,
+        type: 'plugin',
+      });
+    }
     if (config.plugin !== 'builtin.text.v1') throw new Error('Plugin identity is unsupported');
     if (
       !PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_OPERATIONS.includes(
@@ -456,6 +513,9 @@ function executeLocalNode(node: ProductFlowNode, state: ProductFlowExecutionStat
   if (node.type === 'plugin') {
     const sourceValue = state.values.get(node.config.source);
     if (sourceValue === undefined) throw new Error('Flow plugin source is unavailable');
+    if ('endpointUrl' in node.config) {
+      throw new Error('Flow custom Plugin node requires the secure API runtime');
+    }
     return PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS[node.config.operation](sourceValue);
   }
   if (node.type === 'api') throw new Error('Flow API node requires the secure API runtime');
@@ -512,6 +572,15 @@ export async function executeProductFlowWithApis(
         method: node.config.method,
         responsePath: node.config.responsePath,
         url: node.config.url,
+      });
+    } else if (node.type === 'plugin' && 'endpointUrl' in node.config) {
+      const sourceValue = state.values.get(node.config.source);
+      if (sourceValue === undefined) throw new Error('Flow Plugin source is unavailable');
+      output = await apiExecutor({
+        input: sourceValue,
+        method: 'POST',
+        responsePath: node.config.responsePath,
+        url: node.config.endpointUrl,
       });
     } else output = executeLocalNode(node, state);
     recordNodeOutput(state, node, output);

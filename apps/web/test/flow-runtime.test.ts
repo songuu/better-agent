@@ -151,6 +151,53 @@ describe('product Flow runtime', () => {
     expect(executeProductFlow(pluginGraph, { input: '你好 Agent' }).output).toBe('8');
   });
 
+  it('executes a version-pinned custom Plugin through the secure HTTP executor', async () => {
+    const pluginGraph = {
+      edges: [
+        { id: 'edge_input_plugin', source: 'input', target: 'plugin' },
+        { id: 'edge_plugin_output', source: 'plugin', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        {
+          config: {
+            endpointUrl: 'https://plugins.example.com/tools/summarize',
+            operation: 'summarize',
+            plugin: 'custom.f1000000000040008000000000000001.v3',
+            pluginId: 'f1000000-0000-4000-8000-000000000001',
+            pluginRevision: 3,
+            responsePath: 'result.text',
+            source: 'input',
+          },
+          id: 'plugin',
+          label: '摘要插件',
+          type: 'plugin',
+        },
+        { config: { source: 'plugin' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+    const calls: unknown[] = [];
+
+    const result = await executeProductFlowWithApis(
+      pluginGraph,
+      { input: '待摘要内容' },
+      async (call) => {
+        calls.push(call);
+        return '摘要结果';
+      },
+    );
+
+    expect(calls).toEqual([
+      {
+        input: '待摘要内容',
+        method: 'POST',
+        responsePath: 'result.text',
+        url: 'https://plugins.example.com/tools/summarize',
+      },
+    ]);
+    expect(result.output).toBe('摘要结果');
+  });
+
   it('rejects unknown plugin identities, operations and disconnected plugin inputs', () => {
     const pluginNode = {
       config: {

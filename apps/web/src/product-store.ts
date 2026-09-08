@@ -390,7 +390,26 @@ export interface ProductPluginCatalogItem {
   readonly operations: readonly string[];
   readonly pluginId: string;
   readonly releaseVersion: number;
-  readonly runtime: 'deterministic';
+  readonly runtime: 'deterministic' | 'https';
+  readonly endpointUrl?: string;
+  readonly pluginResourceId?: string;
+  readonly pluginRevision?: number;
+  readonly responsePath?: string;
+}
+
+export interface ProductCustomPluginInput {
+  readonly description: string;
+  readonly endpointUrl: string;
+  readonly name: string;
+  readonly operation: string;
+  readonly responsePath: string;
+}
+
+export interface ProductCustomPlugin extends ProductCustomPluginInput {
+  readonly createdAt: string;
+  readonly id: string;
+  readonly revision: number;
+  readonly updatedAt: string;
 }
 
 export type ProductCustomApiMethod = 'GET' | 'POST';
@@ -517,6 +536,7 @@ export interface ProductStore {
   listKnowledgeBases(workspaceId: string): Promise<readonly ProductKnowledgeBase[]>;
   listDatabaseTables(workspaceId: string): Promise<readonly ProductDatabaseTable[]>;
   listPluginCatalog(workspaceId: string): Promise<readonly ProductPluginCatalogItem[]>;
+  listCustomPlugins(workspaceId: string): Promise<readonly ProductCustomPlugin[]>;
   readAgentDatabase(
     workspaceId: string,
     conversationId: string,
@@ -553,6 +573,18 @@ export interface ProductStore {
     actorId: string,
     input: ProductCustomApiInput,
   ): Promise<ProductCustomApi>;
+  createCustomPlugin(
+    workspaceId: string,
+    actorId: string,
+    input: ProductCustomPluginInput,
+  ): Promise<ProductCustomPlugin>;
+  updateCustomPlugin(
+    workspaceId: string,
+    actorId: string,
+    pluginId: string,
+    expectedRevision: number,
+    input: ProductCustomPluginInput,
+  ): Promise<ProductCustomPlugin>;
   updateCustomApi(
     workspaceId: string,
     actorId: string,
@@ -812,6 +844,18 @@ interface CustomApiRow {
   readonly id: string;
   readonly method: string;
   readonly name: string;
+  readonly response_path: string;
+  readonly revision: string | number;
+  readonly updated_at: Date | string;
+}
+
+interface CustomPluginRow {
+  readonly created_at: Date | string;
+  readonly description: string;
+  readonly endpoint_url: string;
+  readonly id: string;
+  readonly name: string;
+  readonly operation: string;
   readonly response_path: string;
   readonly revision: string | number;
   readonly updated_at: Date | string;
@@ -1720,10 +1764,14 @@ function toPluginCatalogItem(row: PluginCatalogRow): ProductPluginCatalogItem {
     throw new Error('product store returned an invalid Plugin manifest');
   }
   const manifest = row.manifest as Record<string, unknown>;
+  const runtime = manifest.runtime;
+  const deterministic = runtime === 'deterministic';
+  const https = runtime === 'https';
   if (
-    Object.keys(manifest).length !== 3 ||
     manifest.identity !== row.identity ||
-    manifest.runtime !== 'deterministic' ||
+    (!deterministic && !https) ||
+    (deterministic && Object.keys(manifest).length !== 3) ||
+    (https && Object.keys(manifest).length !== 7) ||
     !Array.isArray(manifest.operations) ||
     manifest.operations.length < 1 ||
     manifest.operations.length > 20 ||
@@ -1732,6 +1780,27 @@ function toPluginCatalogItem(row: PluginCatalogRow): ProductPluginCatalogItem {
     )
   ) {
     throw new Error('product store returned an invalid Plugin manifest');
+  }
+  if (
+    https &&
+    (typeof manifest.pluginId !== 'string' ||
+      !PRODUCT_UUID.test(manifest.pluginId) ||
+      !Number.isSafeInteger(manifest.pluginRevision) ||
+      Number(manifest.pluginRevision) < 1 ||
+      Number(manifest.pluginRevision) !== Number(row.release_version) ||
+      row.plugin_id !== `custom.${manifest.pluginId.replaceAll('-', '')}` ||
+      typeof manifest.endpointUrl !== 'string' ||
+      typeof manifest.responsePath !== 'string')
+  ) {
+    throw new Error('product store returned an invalid HTTPS Plugin manifest');
+  }
+  if (https) {
+    try {
+      validateProductApiEndpoint(manifest.endpointUrl as string);
+      validateProductApiResponsePath(manifest.responsePath as string);
+    } catch {
+      throw new Error('product store returned an unsafe HTTPS Plugin manifest');
+    }
   }
   return Object.freeze({
     description: row.description,
@@ -1742,7 +1811,56 @@ function toPluginCatalogItem(row: PluginCatalogRow): ProductPluginCatalogItem {
     operations: Object.freeze([...manifest.operations]) as readonly string[],
     pluginId: row.plugin_id,
     releaseVersion: positiveInteger(row.release_version, 'Plugin release version'),
-    runtime: 'deterministic',
+    runtime,
+    ...(https
+      ? {
+          endpointUrl: manifest.endpointUrl as string,
+          pluginResourceId: manifest.pluginId as string,
+          pluginRevision: Number(manifest.pluginRevision),
+          responsePath: manifest.responsePath as string,
+        }
+      : {}),
+  });
+}
+
+function normalizeCustomPluginInput(input: ProductCustomPluginInput): ProductCustomPluginInput {
+  const name = input.name.trim();
+  const operation = input.operation.trim();
+  if (name.length < 1 || name.length > 80) throw new Error('Custom Plugin name is invalid');
+  if (input.description.length > 500) throw new Error('Custom Plugin description is invalid');
+  if (!/^[a-z][a-z0-9_]{0,39}$/u.test(operation)) {
+    throw new Error('Custom Plugin operation is invalid');
+  }
+  let endpointUrl: string;
+  let responsePath: string;
+  try {
+    endpointUrl = validateProductApiEndpoint(input.endpointUrl).href;
+    responsePath = validateProductApiResponsePath(input.responsePath);
+  } catch {
+    throw new Error('Custom Plugin endpoint or response path is invalid');
+  }
+  return Object.freeze({
+    description: input.description,
+    endpointUrl,
+    name,
+    operation,
+    responsePath,
+  });
+}
+
+function toCustomPlugin(row: CustomPluginRow): ProductCustomPlugin {
+  return Object.freeze({
+    ...normalizeCustomPluginInput({
+      description: row.description,
+      endpointUrl: row.endpoint_url,
+      name: row.name,
+      operation: row.operation,
+      responsePath: row.response_path,
+    }),
+    createdAt: asIso(row.created_at),
+    id: row.id,
+    revision: positiveInteger(row.revision, 'Custom Plugin revision'),
+    updatedAt: asIso(row.updated_at),
   });
 }
 
@@ -2040,6 +2158,77 @@ export class PostgresProductStore implements ProductStore {
       [workspaceId],
     );
     return Object.freeze(result.rows.map(toPluginCatalogItem));
+  }
+
+  async listCustomPlugins(workspaceId: string): Promise<readonly ProductCustomPlugin[]> {
+    const result = await this.#pool.query<CustomPluginRow>(
+      'SELECT * FROM app.list_product_custom_plugins($1::uuid)',
+      [workspaceId],
+    );
+    return Object.freeze(result.rows.map(toCustomPlugin));
+  }
+
+  async createCustomPlugin(
+    workspaceId: string,
+    actorId: string,
+    input: ProductCustomPluginInput,
+  ): Promise<ProductCustomPlugin> {
+    const validated = normalizeCustomPluginInput(input);
+    const result = await this.#pool.query<{ readonly id: string }>(
+      'SELECT app.create_product_custom_plugin($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::text) AS id',
+      [
+        workspaceId,
+        actorId,
+        validated.name,
+        validated.description,
+        validated.operation,
+        validated.endpointUrl,
+        validated.responsePath,
+      ],
+    );
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error('product store did not create Custom Plugin');
+    const created = (await this.listCustomPlugins(workspaceId)).find((plugin) => plugin.id === id);
+    if (created === undefined)
+      throw new Error('product store did not return created Custom Plugin');
+    return created;
+  }
+
+  async updateCustomPlugin(
+    workspaceId: string,
+    actorId: string,
+    pluginId: string,
+    expectedRevision: number,
+    input: ProductCustomPluginInput,
+  ): Promise<ProductCustomPlugin> {
+    if (
+      !PRODUCT_UUID.test(pluginId) ||
+      !Number.isSafeInteger(expectedRevision) ||
+      expectedRevision < 1
+    ) {
+      throw new Error('Custom Plugin update target is invalid');
+    }
+    const validated = normalizeCustomPluginInput(input);
+    await this.#pool.query(
+      'SELECT app.update_product_custom_plugin($1::uuid, $2::uuid, $3::bigint, $4::uuid, $5::text, $6::text, $7::text, $8::text, $9::text)',
+      [
+        workspaceId,
+        pluginId,
+        expectedRevision,
+        actorId,
+        validated.name,
+        validated.description,
+        validated.operation,
+        validated.endpointUrl,
+        validated.responsePath,
+      ],
+    );
+    const updated = (await this.listCustomPlugins(workspaceId)).find(
+      (plugin) => plugin.id === pluginId,
+    );
+    if (updated === undefined)
+      throw new Error('product store did not return updated Custom Plugin');
+    return updated;
   }
 
   async installPlugin(
@@ -3173,6 +3362,30 @@ export function validateCustomApiInput(value: unknown): ProductCustomApiInput {
     endpointUrl: input.endpoint_url,
     method: input.method as ProductCustomApiMethod,
     name: input.name,
+    responsePath: input.response_path,
+  });
+}
+
+export function validateCustomPluginInput(value: unknown): ProductCustomPluginInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Custom Plugin payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 5 ||
+    typeof input.name !== 'string' ||
+    typeof input.description !== 'string' ||
+    typeof input.operation !== 'string' ||
+    typeof input.endpoint_url !== 'string' ||
+    typeof input.response_path !== 'string'
+  ) {
+    throw new Error('Custom Plugin payload has an invalid shape');
+  }
+  return normalizeCustomPluginInput({
+    description: input.description,
+    endpointUrl: input.endpoint_url,
+    name: input.name,
+    operation: input.operation,
     responsePath: input.response_path,
   });
 }

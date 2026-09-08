@@ -5,6 +5,7 @@ import {
   createDefaultAgentStrategyProfile,
   parseAgentStrategyProfile,
   validateAgentInput,
+  validateCustomPluginInput,
   validateDatabaseQueryInput,
   validateDatabaseRowsInput,
   validateDatabaseTableInput,
@@ -29,6 +30,35 @@ const structuredRole = {
   process: { content: '先检索证据，再给出结论', weight: 90 },
   tone: { content: '简洁、直接、中文优先', weight: 60 },
 };
+
+describe('product Custom Plugin input', () => {
+  it('accepts a public HTTPS operation and rejects unsafe endpoints', () => {
+    expect(
+      validateCustomPluginInput({
+        description: 'Lookup order state',
+        endpoint_url: 'https://plugins.example.com/run',
+        name: 'Order lookup',
+        operation: 'lookup_order',
+        response_path: 'data.answer',
+      }),
+    ).toEqual({
+      description: 'Lookup order state',
+      endpointUrl: 'https://plugins.example.com/run',
+      name: 'Order lookup',
+      operation: 'lookup_order',
+      responsePath: 'data.answer',
+    });
+    expect(() =>
+      validateCustomPluginInput({
+        description: '',
+        endpoint_url: 'http://127.0.0.1/internal',
+        name: 'Unsafe',
+        operation: 'lookup',
+        response_path: '',
+      }),
+    ).toThrow('Custom Plugin endpoint or response path is invalid');
+  });
+});
 
 describe('product Agent input', () => {
   it('validates a closed, versioned strategy and derives safe defaults', () => {
