@@ -217,13 +217,19 @@ async function localRequest(
 ): Promise<Response> {
   const target = new URL(origin);
   return await new Promise((resolve, reject) => {
+    const requestHeaders = {
+      ...options.headers,
+      ...(options.body === undefined
+        ? {}
+        : { 'Content-Length': String(Buffer.byteLength(options.body)) }),
+    };
     const request = httpRequest(
       {
         host: target.hostname,
         method: options.method ?? 'GET',
         path,
         port: target.port,
-        headers: options.headers,
+        headers: requestHeaders,
       },
       (response) => {
         const chunks: Buffer[] = [];
@@ -447,6 +453,7 @@ function productFixture(): {
           createdAt: timestamp,
           ordinal: offset + index,
           record,
+          version: 1,
         })),
       );
       databaseTables[databaseTables.indexOf(table)] = {
@@ -454,6 +461,42 @@ function productFixture(): {
         rowCount: table.rowCount + input.rows.length,
       };
       return input.rows.length;
+    },
+    async updateDatabaseRow(_workspaceId, _actorId, tableId, ordinal, input) {
+      const table = databaseTables.find((item) => item.id === tableId);
+      const index = databaseRows.findIndex((row) => row.ordinal === ordinal);
+      const current = databaseRows[index];
+      if (table === undefined || current === undefined) throw new Error('Database row not found');
+      if (current.version !== input.expectedVersion) {
+        throw new Error('Database row revision conflict');
+      }
+      const updated = {
+        createdAt: timestamp,
+        deleted: false,
+        ordinal,
+        record: input.record,
+        version: current.version + 1,
+      } as const;
+      databaseRows[index] = updated;
+      return updated;
+    },
+    async deleteDatabaseRow(_workspaceId, _actorId, tableId, ordinal, input) {
+      const table = databaseTables.find((item) => item.id === tableId);
+      const index = databaseRows.findIndex((row) => row.ordinal === ordinal);
+      const current = databaseRows[index];
+      if (table === undefined || current === undefined) throw new Error('Database row not found');
+      if (current.version !== input.expectedVersion) {
+        throw new Error('Database row revision conflict');
+      }
+      databaseRows.splice(index, 1);
+      databaseTables[databaseTables.indexOf(table)] = { ...table, rowCount: table.rowCount - 1 };
+      return {
+        createdAt: timestamp,
+        deleted: true,
+        ordinal,
+        record: null,
+        version: current.version + 1,
+      };
     },
     async listDatabaseTables() {
       return databaseTables;
@@ -1384,6 +1427,18 @@ describe('Better Agent web runtime', () => {
     expect(appended.status).toBe(201);
     expect(await appended.json()).toEqual({ appended: 2 });
 
+    const deleteWithoutCsrf = await localRequest(
+      origin,
+      `/better-agent/api/product/database-tables/${table.id}/rows/0`,
+      {
+        body: JSON.stringify({ expected_version: 1 }),
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        method: 'DELETE',
+      },
+    );
+    expect(deleteWithoutCsrf.status).toBe(403);
+    expect(await deleteWithoutCsrf.json()).toEqual({ error: 'csrf_guard_required' });
+
     const queried = await localRequest(
       origin,
       `/better-agent/api/product/database-tables/${table.id}/query`,
@@ -1395,8 +1450,58 @@ describe('Better Agent web runtime', () => {
     );
     expect(queried.status).toBe(200);
     expect(((await queried.json()) as { rows: ProductDatabaseRow[] }).rows).toMatchObject([
-      { ordinal: 0, record: { customer_id: 7, status: 'active' } },
+      { ordinal: 0, record: { customer_id: 7, status: 'active' }, version: 1 },
     ]);
+
+    const updated = await localRequest(
+      origin,
+      `/better-agent/api/product/database-tables/${table.id}/rows/0`,
+      {
+        body: JSON.stringify({
+          expected_version: 1,
+          record: { customer_id: 7, status: 'paused' },
+        }),
+        headers,
+        method: 'PUT',
+      },
+    );
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      mutation: {
+        deleted: false,
+        ordinal: 0,
+        record: { customer_id: 7, status: 'paused' },
+        version: 2,
+      },
+    });
+
+    const staleUpdate = await localRequest(
+      origin,
+      `/better-agent/api/product/database-tables/${table.id}/rows/0`,
+      {
+        body: JSON.stringify({
+          expected_version: 1,
+          record: { customer_id: 7, status: 'stale' },
+        }),
+        headers,
+        method: 'PUT',
+      },
+    );
+    expect(staleUpdate.status).toBe(409);
+
+    const deleted = await localRequest(
+      origin,
+      `/better-agent/api/product/database-tables/${table.id}/rows/0`,
+      {
+        body: JSON.stringify({ expected_version: 2 }),
+        headers,
+        method: 'DELETE',
+      },
+    );
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toMatchObject({
+      mutation: { deleted: true, ordinal: 0, record: null, version: 3 },
+    });
 
     const listed = await localRequest(origin, '/better-agent/api/product/database-tables', {
       headers: { Cookie: cookie },
@@ -1404,7 +1509,7 @@ describe('Better Agent web runtime', () => {
     expect(listed.status).toBe(200);
     expect(
       ((await listed.json()) as { database_tables: ProductDatabaseTable[] }).database_tables[0],
-    ).toMatchObject({ columns: ['customer_id', 'status'], rowCount: 2 });
+    ).toMatchObject({ columns: ['customer_id', 'status'], rowCount: 1 });
   });
 
   it('lists and installs an exact versioned Plugin release for the workspace', async () => {
@@ -1748,11 +1853,13 @@ describe('Better Agent web runtime', () => {
       createdAt: '2026-09-03T00:00:00.000Z',
       ordinal: 0,
       record: { service: 'web', status: 'healthy' },
+      version: 1,
     });
     databaseRows.push({
       createdAt: '2026-09-03T00:00:00.000Z',
       ordinal: 1,
       record: { service: 'worker', status: 'paused' },
+      version: 1,
     });
     knowledgeBases.push({
       createdAt: '2026-09-03T00:00:00.000Z',

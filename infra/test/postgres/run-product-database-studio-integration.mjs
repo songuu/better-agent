@@ -51,12 +51,63 @@ async function main() {
   assertEqual(
     await harness.queryScalar(
       'ba_runtime_test',
-      `SELECT record ->> 'customer_id'
+      `SELECT (record ->> 'customer_id') || ':' || version::text
        FROM app.query_product_database_table(
          '${workspaceId}','${tableId}','status','active',20);`,
     ),
-    '7',
-    'parameterized Database query result',
+    '7:1',
+    'parameterized Database query exposes the base version',
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT version::text || ':' || (record ->> 'status') || ':' || deleted::text
+       FROM app.mutate_product_database_row(
+         '${workspaceId}','${tableId}',0,1,'${actorId}','update',
+         '{"customer_id":7,"status":"paused","enabled":true}'::jsonb);`,
+    ),
+    '2:paused:false',
+    'CAS Database row update receipt',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT * FROM app.mutate_product_database_row(
+        '${workspaceId}','${tableId}',0,1,'${actorId}','update',
+        '{"customer_id":7,"status":"stale","enabled":true}'::jsonb);`,
+      { allowFailure: true },
+    ),
+    /revision conflict|40001/u,
+    'stale Database row update',
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT version::text || ':' || deleted::text
+       FROM app.mutate_product_database_row(
+         '${workspaceId}','${tableId}',1,1,'${actorId}','delete',NULL);`,
+    ),
+    '2:true',
+    'CAS Database row delete receipt',
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT row_count FROM app.list_product_database_tables('${workspaceId}')
+       WHERE id = '${tableId}';`,
+    ),
+    '1',
+    'active Database row count excludes tombstones',
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT version::text || ':' || (record ->> 'status')
+       FROM app.query_product_database_table(
+         '${workspaceId}','${tableId}','status','',20);`,
+    ),
+    '2:paused',
+    'Database query projects only the current non-deleted version',
   );
   assertEqual(
     await harness.queryScalar(
@@ -89,6 +140,16 @@ async function main() {
     'query outside the column allowlist',
   );
   assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT * FROM app.mutate_product_database_row(
+        '${otherWorkspaceId}','${tableId}',0,2,'${actorId}','delete',NULL);`,
+      { allowFailure: true },
+    ),
+    /not found|P0002/u,
+    'cross-workspace Database mutation isolation',
+  );
+  assertRejected(
     await harness.psql('ba_runtime_test', 'SELECT count(*) FROM public.product_database_rows;', {
       allowFailure: true,
     }),
@@ -106,9 +167,20 @@ async function main() {
     /immutable|55000/u,
     'immutable Database row history',
   );
+  assertRejected(
+    await harness.psql(
+      'ba_migrator_test',
+      `SET ROLE ba_authorization_owner;
+       UPDATE public.product_database_row_versions SET record = '{}'::jsonb
+       WHERE workspace_id = '${workspaceId}' AND table_id = '${tableId}' AND ordinal = 0;`,
+      { allowFailure: true },
+    ),
+    /immutable|55000/u,
+    'immutable Database row version history',
+  );
 
   process.stdout.write(
-    `PostgreSQL 16 product Database Studio passed: ${migrations.length} migrations, declared columns, append-only scalar rows, bounded parameterized reads, tenant isolation, direct-table denial and immutable row history.\n`,
+    `PostgreSQL 16 product Database Studio passed: ${migrations.length} migrations, declared columns, append-only base rows, CAS update/delete versions, bounded current reads, tenant isolation, direct-table denial and immutable history.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-database-studio pass\n');
 }

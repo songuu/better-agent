@@ -187,6 +187,14 @@
 .button-ghost {
   background: #0b1713;
 }
+.button-danger {
+  border-color: #713c46;
+  background: #1d1014;
+  color: #ff8e9b;
+}
+.button-danger:hover {
+  border-color: #ff6578;
+}
 .studio-grid {
   display: grid;
   grid-template-columns: 250px minmax(520px, 1fr) 230px;
@@ -2429,6 +2437,17 @@ body::before {
   color: #91a49b;
   line-height: 1.7;
   overflow-wrap: anywhere;
+}
+.database-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.database-row-actions .button {
+  min-height: 28px;
+  padding: 5px 10px;
+  font-size: 8px;
 }
 @media (max-width: 1400px) {
   .knowledge-studio {

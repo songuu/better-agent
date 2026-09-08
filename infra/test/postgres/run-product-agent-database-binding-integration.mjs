@@ -56,6 +56,12 @@ async function main() {
   );
   await harness.psql(
     'ba_runtime_test',
+    `SELECT app.mutate_product_database_row(
+      '${workspaceId}','${tableId}',0,1,'${actorId}','update',
+      '{"service":"web","status":"degraded"}'::jsonb);`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
     `SELECT app.append_product_database_rows(
       '${workspaceId}','${tableId}','${actorId}',
       '[{"service":"worker","status":"late"}]'::jsonb);`,
@@ -68,12 +74,12 @@ async function main() {
   assertEqual(
     await harness.queryScalar(
       'ba_runtime_test',
-      `SELECT string_agg(record ->> 'service',',' ORDER BY row_ordinal)
+      `SELECT string_agg((record ->> 'service') || ':' || (record ->> 'status'),',' ORDER BY row_ordinal)
        FROM app.read_agent_product_conversation_database(
          '${workspaceId}','${conversationV1}',20);`,
     ),
-    'web',
-    'release v1 excludes rows appended after publication',
+    'web:healthy',
+    'release v1 preserves values changed after publication and excludes later rows',
   );
 
   await harness.psql(
@@ -131,7 +137,7 @@ async function main() {
   );
 
   process.stdout.write(
-    `PostgreSQL 16 product Agent Database binding passed: ${migrations.length} migrations, draft selection, immutable release row snapshots, conversation-pinned reads, unbound releases, tenant isolation and direct-table denial.\n`,
+    `PostgreSQL 16 product Agent Database binding passed: ${migrations.length} migrations, draft selection, exact immutable row-version snapshots, conversation-pinned reads, unbound releases, tenant isolation and direct-table denial.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-agent-database pass\n');
 }

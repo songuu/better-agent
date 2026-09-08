@@ -213,7 +213,7 @@ test('ships a release and evaluation center backed by recorded product evidence'
   assert.doesNotMatch(publicJavaScript, /mockEvaluation|fakeEvaluation|simulatedEvaluation/u);
 });
 
-test('ships the managed PostgreSQL Database Studio with parameterized read controls', () => {
+test('ships managed PostgreSQL Database Studio with versioned row operations', () => {
   for (const marker of [
     'id="show-database"',
     'id="database-view"',
@@ -224,7 +224,15 @@ test('ships the managed PostgreSQL Database Studio with parameterized read contr
   ]) {
     assert.ok(publicHtml.includes(marker), `missing Database Studio control: ${marker}`);
   }
-  for (const marker of ['/database-tables', '/rows', '/query', 'loadDatabaseTables']) {
+  for (const marker of [
+    '/database-tables',
+    '/rows',
+    '/query',
+    'expected_version',
+    'editDatabaseRow',
+    'deleteDatabaseRow',
+    'loadDatabaseTables',
+  ]) {
     assert.ok(publicJavaScript.includes(marker), `missing Database Studio behavior: ${marker}`);
   }
   assert.doesNotMatch(publicJavaScript, /SELECT\s+\*\s+FROM|executeSql|rawSql/iu);

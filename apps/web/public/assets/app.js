@@ -12,6 +12,8 @@ const state = {
   customApis: [],
   customPlugins: [],
   currentDatabase: null,
+  databaseQuery: null,
+  databaseQueryRows: [],
   databaseTables: [],
   flows: [],
   flowReleases: [],
@@ -1071,11 +1073,13 @@ function showDatabaseCreator() {
   byId('database-detail').hidden = true;
   databaseTableForm.hidden = false;
   databaseTableForm.reset();
-  byId('database-results').innerHTML = '<span>创建数据表后执行只读操作。</span>';
+  state.databaseQuery = null;
+  state.databaseQueryRows = [];
+  byId('database-results').innerHTML = '<span>创建数据表后执行受控操作。</span>';
   renderDatabaseTables();
 }
 
-function selectDatabaseTable(id) {
+function selectDatabaseTable(id, resetQuery = true) {
   const table = state.databaseTables.find((item) => item.id === id);
   if (!table) return;
   state.currentDatabase = table;
@@ -1091,8 +1095,82 @@ function selectDatabaseTable(id) {
   byId('database-query-column').innerHTML = table.columns
     .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
     .join('');
-  byId('database-results').innerHTML = '<span>选择列并执行参数化查询。</span>';
+  if (resetQuery) {
+    byId('database-results').innerHTML = '<span>选择列并执行参数化查询。</span>';
+    state.databaseQuery = null;
+    state.databaseQueryRows = [];
+  }
   renderDatabaseTables();
+}
+
+function renderDatabaseQueryRows() {
+  const results = byId('database-results');
+  results.innerHTML = state.databaseQueryRows.length
+    ? state.databaseQueryRows
+        .map(
+          (row) =>
+            `<article data-database-row="${row.ordinal}"><header><b>ROW #${row.ordinal + 1} · V${row.version}</b><em>CAS CONTROLLED</em></header><p>${escapeHtml(JSON.stringify(row.record, null, 2))}</p><footer class="database-row-actions"><button type="button" class="button button-ghost" data-database-edit="${row.ordinal}">编辑</button><button type="button" class="button button-danger" data-database-delete="${row.ordinal}">删除</button></footer></article>`,
+        )
+        .join('')
+    : '<span>没有匹配记录。</span>';
+  results.querySelectorAll('[data-database-edit]').forEach((button) => {
+    button.addEventListener('click', () => editDatabaseRow(Number(button.dataset.databaseEdit)));
+  });
+  results.querySelectorAll('[data-database-delete]').forEach((button) => {
+    button.addEventListener('click', () =>
+      deleteDatabaseRow(Number(button.dataset.databaseDelete)),
+    );
+  });
+}
+
+async function refreshDatabaseQuery() {
+  if (!state.currentDatabase || !state.databaseQuery) return;
+  const payload = await request(`/database-tables/${state.currentDatabase.id}/query`, {
+    method: 'POST',
+    body: JSON.stringify(state.databaseQuery),
+  });
+  state.databaseQueryRows = payload.rows;
+  renderDatabaseQueryRows();
+}
+
+async function editDatabaseRow(ordinal) {
+  if (!state.currentDatabase) return;
+  const row = state.databaseQueryRows.find((candidate) => candidate.ordinal === ordinal);
+  if (!row) return;
+  const edited = window.prompt(
+    '编辑完整 JSON 记录（字段必须与表结构完全一致）',
+    JSON.stringify(row.record, null, 2),
+  );
+  if (edited === null) return;
+  try {
+    const record = JSON.parse(edited);
+    await request(`/database-tables/${state.currentDatabase.id}/rows/${row.ordinal}`, {
+      method: 'PUT',
+      body: JSON.stringify({ expected_version: row.version, record }),
+    });
+    await loadDatabaseTables();
+    await refreshDatabaseQuery();
+    toast(`ROW #${row.ordinal + 1} 已生成不可变新版本`);
+  } catch (error) {
+    toast(error instanceof SyntaxError ? 'JSON 格式无效' : error.message, true);
+  }
+}
+
+async function deleteDatabaseRow(ordinal) {
+  if (!state.currentDatabase) return;
+  const row = state.databaseQueryRows.find((candidate) => candidate.ordinal === ordinal);
+  if (!row || !window.confirm(`删除 ROW #${row.ordinal + 1}？历史版本仍会保留。`)) return;
+  try {
+    await request(`/database-tables/${state.currentDatabase.id}/rows/${row.ordinal}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ expected_version: row.version }),
+    });
+    await loadDatabaseTables();
+    await refreshDatabaseQuery();
+    toast(`ROW #${row.ordinal + 1} 已追加删除版本`);
+  } catch (error) {
+    toast(error.message, true);
+  }
 }
 
 async function loadDatabaseTables() {
@@ -1106,7 +1184,7 @@ async function loadDatabaseTables() {
   if (state.currentDatabase) {
     const id = state.currentDatabase.id;
     state.currentDatabase = state.databaseTables.find((item) => item.id === id) || null;
-    if (state.currentDatabase) selectDatabaseTable(id);
+    if (state.currentDatabase) selectDatabaseTable(id, false);
   }
 }
 
@@ -1867,24 +1945,14 @@ byId('database-query-form').addEventListener('submit', async (event) => {
     return;
   }
   const results = byId('database-results');
-  results.innerHTML = '<span>正在执行受控只读操作……</span>';
+  results.innerHTML = '<span>正在执行受控查询……</span>';
   try {
-    const payload = await request(`/database-tables/${state.currentDatabase.id}/query`, {
-      method: 'POST',
-      body: JSON.stringify({
-        column: event.currentTarget.elements.column.value,
-        contains: event.currentTarget.elements.contains.value,
-        limit: 20,
-      }),
-    });
-    results.innerHTML = payload.rows.length
-      ? payload.rows
-          .map(
-            (row) =>
-              `<article><header><b>ROW #${row.ordinal + 1}</b><em>PARAMETERIZED</em></header><p>${escapeHtml(JSON.stringify(row.record, null, 2))}</p></article>`,
-          )
-          .join('')
-      : '<span>没有匹配记录。</span>';
+    state.databaseQuery = {
+      column: event.currentTarget.elements.column.value,
+      contains: event.currentTarget.elements.contains.value,
+      limit: 20,
+    };
+    await refreshDatabaseQuery();
   } catch (error) {
     results.textContent = `查询失败：${error.message}`;
     toast(error.message, true);

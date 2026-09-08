@@ -7,6 +7,8 @@ import {
   validateAgentInput,
   validateCustomPluginInput,
   validateDatabaseQueryInput,
+  validateDatabaseRowDeleteInput,
+  validateDatabaseRowUpdateInput,
   validateDatabaseRowsInput,
   validateDatabaseTableInput,
   validateFlowDebugInput,
@@ -478,6 +480,15 @@ describe('product Database input', () => {
         limit: 20,
       },
     );
+    expect(
+      validateDatabaseRowUpdateInput({
+        expected_version: 1,
+        record: { customer_id: 7, status: 'paused' },
+      }),
+    ).toEqual({ expectedVersion: 1, record: { customer_id: 7, status: 'paused' } });
+    expect(validateDatabaseRowDeleteInput({ expected_version: 2 })).toEqual({
+      expectedVersion: 2,
+    });
   });
 
   it.each([
@@ -487,13 +498,20 @@ describe('product Database input', () => {
     [{ rows: [{ nested: { unsafe: true } }] }],
     [{ rows: [{ score: Number.NaN }] }],
     [{ column: 'status', contains: '', limit: 101 }],
+    [{ expected_version: 0, record: { status: 'active' } }],
+    [{ expected_version: 1, record: { nested: { unsafe: true } } }],
+    [{ expected_version: 1, extra: true }],
   ])('rejects unsafe or unbounded Database payloads', (payload) => {
     expect(() =>
       'columns' in payload
         ? validateDatabaseTableInput(payload)
         : 'rows' in payload
           ? validateDatabaseRowsInput(payload)
-          : validateDatabaseQueryInput(payload),
+          : 'record' in payload
+            ? validateDatabaseRowUpdateInput(payload)
+            : 'expected_version' in payload
+              ? validateDatabaseRowDeleteInput(payload)
+              : validateDatabaseQueryInput(payload),
     ).toThrow();
   });
 });

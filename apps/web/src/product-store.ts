@@ -362,6 +362,15 @@ export interface ProductDatabaseRow {
   readonly createdAt: string;
   readonly ordinal: number;
   readonly record: Readonly<Record<string, boolean | null | number | string>>;
+  readonly version: number;
+}
+
+export interface ProductDatabaseRowMutation {
+  readonly createdAt: string;
+  readonly deleted: boolean;
+  readonly ordinal: number;
+  readonly record: Readonly<Record<string, boolean | null | number | string>> | null;
+  readonly version: number;
 }
 
 export interface ProductAgentDatabaseRecord {
@@ -373,6 +382,15 @@ export interface ProductAgentDatabaseRecord {
 
 export interface ProductDatabaseRowsInput {
   readonly rows: readonly Readonly<Record<string, boolean | null | number | string>>[];
+}
+
+export interface ProductDatabaseRowUpdateInput {
+  readonly expectedVersion: number;
+  readonly record: Readonly<Record<string, boolean | null | number | string>>;
+}
+
+export interface ProductDatabaseRowDeleteInput {
+  readonly expectedVersion: number;
 }
 
 export interface ProductDatabaseQueryInput {
@@ -515,6 +533,20 @@ export interface ProductStore {
     tableId: string,
     input: ProductDatabaseRowsInput,
   ): Promise<number>;
+  updateDatabaseRow(
+    workspaceId: string,
+    actorId: string,
+    tableId: string,
+    ordinal: number,
+    input: ProductDatabaseRowUpdateInput,
+  ): Promise<ProductDatabaseRowMutation>;
+  deleteDatabaseRow(
+    workspaceId: string,
+    actorId: string,
+    tableId: string,
+    ordinal: number,
+    input: ProductDatabaseRowDeleteInput,
+  ): Promise<ProductDatabaseRowMutation>;
   ingestKnowledgeDocument(
     workspaceId: string,
     actorId: string,
@@ -824,6 +856,15 @@ interface DatabaseRecordRow {
   readonly created_at: Date | string;
   readonly ordinal: string | number;
   readonly record: unknown;
+  readonly version: string | number;
+}
+
+interface DatabaseMutationRow {
+  readonly created_at: Date | string;
+  readonly deleted: boolean;
+  readonly ordinal: string | number;
+  readonly record: unknown | null;
+  readonly version: string | number;
 }
 
 interface PluginCatalogRow {
@@ -1756,6 +1797,20 @@ function toDatabaseRow(row: DatabaseRecordRow): ProductDatabaseRow {
     createdAt: asIso(row.created_at),
     ordinal: nonnegativeInteger(row.ordinal, 'Database row ordinal'),
     record: toScalarDatabaseRecord(row.record),
+    version: positiveInteger(row.version, 'Database row version'),
+  });
+}
+
+function toDatabaseMutation(row: DatabaseMutationRow): ProductDatabaseRowMutation {
+  if (typeof row.deleted !== 'boolean' || (row.deleted && row.record !== null)) {
+    throw new Error('product store returned an invalid Database mutation');
+  }
+  return Object.freeze({
+    createdAt: asIso(row.created_at),
+    deleted: row.deleted,
+    ordinal: nonnegativeInteger(row.ordinal, 'Database row ordinal'),
+    record: row.record === null ? null : toScalarDatabaseRecord(row.record),
+    version: positiveInteger(row.version, 'Database row version'),
   });
 }
 
@@ -2142,6 +2197,38 @@ export class PostgresProductStore implements ProductStore {
       [workspaceId, tableId, actorId, JSON.stringify(input.rows)],
     );
     return positiveInteger(result.rows[0]?.count ?? 0, 'appended Database row count');
+  }
+
+  async updateDatabaseRow(
+    workspaceId: string,
+    actorId: string,
+    tableId: string,
+    ordinal: number,
+    input: ProductDatabaseRowUpdateInput,
+  ): Promise<ProductDatabaseRowMutation> {
+    const result = await this.#pool.query<DatabaseMutationRow>(
+      "SELECT * FROM app.mutate_product_database_row($1::uuid, $2::uuid, $3::integer, $4::bigint, $5::uuid, 'update'::text, $6::jsonb)",
+      [workspaceId, tableId, ordinal, input.expectedVersion, actorId, JSON.stringify(input.record)],
+    );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('product store did not update the Database row');
+    return toDatabaseMutation(row);
+  }
+
+  async deleteDatabaseRow(
+    workspaceId: string,
+    actorId: string,
+    tableId: string,
+    ordinal: number,
+    input: ProductDatabaseRowDeleteInput,
+  ): Promise<ProductDatabaseRowMutation> {
+    const result = await this.#pool.query<DatabaseMutationRow>(
+      "SELECT * FROM app.mutate_product_database_row($1::uuid, $2::uuid, $3::integer, $4::bigint, $5::uuid, 'delete'::text, NULL::jsonb)",
+      [workspaceId, tableId, ordinal, input.expectedVersion, actorId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('product store did not delete the Database row');
+    return toDatabaseMutation(row);
   }
 
   async listDatabaseTables(workspaceId: string): Promise<readonly ProductDatabaseTable[]> {
@@ -3492,25 +3579,68 @@ export function validateDatabaseRowsInput(value: unknown): ProductDatabaseRowsIn
   if (Buffer.byteLength(JSON.stringify(input.rows), 'utf8') > 1_048_576) {
     throw new Error('Database row batch must not exceed 1 MiB');
   }
-  const rows = input.rows.map((value) => {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-      throw new Error('Database row must be an object');
-    }
-    const row = value as Record<string, unknown>;
-    if (
-      Object.keys(row).length < 1 ||
-      Object.entries(row).some(
-        ([key, field]) =>
-          !DATABASE_COLUMN.test(key) ||
-          (field !== null && !['boolean', 'number', 'string'].includes(typeof field)) ||
-          (typeof field === 'number' && !Number.isFinite(field)),
-      )
-    ) {
-      throw new Error('Database row fields must be scalar values');
-    }
-    return Object.freeze({ ...row }) as Readonly<Record<string, boolean | null | number | string>>;
-  });
+  const rows = input.rows.map((row) => validateDatabaseScalarRecord(row));
   return Object.freeze({ rows: Object.freeze(rows) });
+}
+
+function validateDatabaseExpectedVersion(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 2_147_483_646) {
+    throw new Error('Database row expected version is invalid');
+  }
+  return Number(value);
+}
+
+function validateDatabaseScalarRecord(
+  value: unknown,
+): Readonly<Record<string, boolean | null | number | string>> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Database row must be an object');
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).length < 1 ||
+    Object.entries(record).some(
+      ([key, field]) =>
+        !DATABASE_COLUMN.test(key) ||
+        (field !== null && !['boolean', 'number', 'string'].includes(typeof field)) ||
+        (typeof field === 'number' && !Number.isFinite(field)) ||
+        JSON.stringify(field).length > 4_000,
+    )
+  ) {
+    throw new Error('Database row fields must be scalar values');
+  }
+  return Object.freeze({ ...record }) as Readonly<Record<string, boolean | null | number | string>>;
+}
+
+export function validateDatabaseRowUpdateInput(value: unknown): ProductDatabaseRowUpdateInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Database row update payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 2 ||
+    !Object.hasOwn(input, 'expected_version') ||
+    !Object.hasOwn(input, 'record')
+  ) {
+    throw new Error('Database row update payload has an invalid shape');
+  }
+  return Object.freeze({
+    expectedVersion: validateDatabaseExpectedVersion(input.expected_version),
+    record: validateDatabaseScalarRecord(input.record),
+  });
+}
+
+export function validateDatabaseRowDeleteInput(value: unknown): ProductDatabaseRowDeleteInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Database row delete payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (Object.keys(input).length !== 1 || !Object.hasOwn(input, 'expected_version')) {
+    throw new Error('Database row delete payload has an invalid shape');
+  }
+  return Object.freeze({
+    expectedVersion: validateDatabaseExpectedVersion(input.expected_version),
+  });
 }
 
 export function validateDatabaseQueryInput(value: unknown): ProductDatabaseQueryInput {

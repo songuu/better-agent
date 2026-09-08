@@ -193,8 +193,8 @@
           <section class="knowledge-workbench">
             <div id="database-welcome" class="welcome-panel">
               <p class="eyebrow">SAFE DATA OPERATIONS / POSTGRESQL</p>
-              <h2>声明数据结构，<br />执行受控只读检索。</h2>
-              <p>定义固定列白名单，追加标量 JSON 记录，再通过参数化 contains 操作查询。运行时不接受任意 SQL，数据按工作区隔离。</p>
+              <h2>声明数据结构，<br />执行受控数据操作。</h2>
+              <p>定义固定列白名单，追加标量 JSON 记录，通过参数化 contains 查询，并用乐观锁更新或删除。运行时不接受任意 SQL，所有历史版本按工作区隔离。</p>
               <button type="button" class="button button-primary" data-create-database>创建第一个数据表</button>
             </div>
             <form id="database-table-form" class="knowledge-form" hidden>
@@ -214,7 +214,7 @@
             </div>
           </section>
           <aside class="knowledge-search">
-            <p>READ-ONLY OPERATION</p>
+            <p>VERSIONED DATABASE OPERATIONS</p>
             <form id="database-query-form"><label><span>查询列</span><select name="column" id="database-query-column"></select></label><label><span>包含文本</span><textarea name="contains" maxlength="500" placeholder="留空可预览前 20 行"></textarea></label><button type="submit" class="button button-ghost">执行参数化查询</button></form>
             <div id="database-results" class="knowledge-hits"><span>选择数据表后执行查询。</span></div>
           </aside>

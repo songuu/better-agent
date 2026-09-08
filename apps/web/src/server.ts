@@ -13,6 +13,8 @@ import {
   validateCustomApiInput,
   validateCustomPluginInput,
   validateDatabaseQueryInput,
+  validateDatabaseRowDeleteInput,
+  validateDatabaseRowUpdateInput,
   validateDatabaseRowsInput,
   validateDatabaseTableInput,
   validateFlowDebugInput,
@@ -339,7 +341,8 @@ export async function createBetterAgentWebServer(
       sendJson(request, response, 503, { error: 'product_runtime_not_configured' });
       return true;
     }
-    const isMutation = request.method === 'POST' || request.method === 'PUT';
+    const isMutation =
+      request.method === 'DELETE' || request.method === 'POST' || request.method === 'PUT';
     if (isMutation && request.headers['x-better-agent-csrf'] !== '1') {
       sendJson(request, response, 403, { error: 'csrf_guard_required' });
       return true;
@@ -746,6 +749,37 @@ export async function createBetterAgentWebServer(
             validateDatabaseQueryInput(await readJsonBody(request)),
           ),
         });
+        return true;
+      }
+    }
+    const databaseRowMatch = new RegExp(
+      `^${WEB_BASE_PATH}api/product/database-tables/([0-9a-f-]{36})/rows/(0|[1-9][0-9]{0,3})$`,
+      'u',
+    ).exec(path);
+    if (databaseRowMatch !== null && UUID.test(databaseRowMatch[1] ?? '')) {
+      const tableId = databaseRowMatch[1] as string;
+      const ordinal = Number(databaseRowMatch[2]);
+      if (ordinal > 4_999) throw new Error('Database row ordinal is invalid');
+      if (request.method === 'PUT') {
+        const mutation = await productStore.updateDatabaseRow(
+          workspaceId,
+          actorId,
+          tableId,
+          ordinal,
+          validateDatabaseRowUpdateInput(await readJsonBody(request)),
+        );
+        sendJson(request, response, 200, { mutation });
+        return true;
+      }
+      if (request.method === 'DELETE') {
+        const mutation = await productStore.deleteDatabaseRow(
+          workspaceId,
+          actorId,
+          tableId,
+          ordinal,
+          validateDatabaseRowDeleteInput(await readJsonBody(request)),
+        );
+        sendJson(request, response, 200, { mutation });
         return true;
       }
     }
@@ -1333,20 +1367,22 @@ export async function createBetterAgentWebServer(
             ? 409
             : message === 'agent has no published release'
               ? 409
-              : message === 'conversation not found'
+              : message === 'Database row not found'
                 ? 404
-                : message.startsWith('model_')
-                  ? 502
-                  : message.startsWith('custom_api_')
+                : message === 'conversation not found'
+                  ? 404
+                  : message.startsWith('model_')
                     ? 502
-                    : message.startsWith('invalid_') ||
-                        message.includes('payload') ||
-                        message.includes('request_body') ||
-                        /^(Agent|Custom API|Custom Plugin|Database|Flow|Input|Knowledge|MCP|Output|Role|Run|Skill Pack|Template) /u.test(
-                          message,
-                        )
-                      ? 400
-                      : 500;
+                    : message.startsWith('custom_api_')
+                      ? 502
+                      : message.startsWith('invalid_') ||
+                          message.includes('payload') ||
+                          message.includes('request_body') ||
+                          /^(Agent|Custom API|Custom Plugin|Database|Flow|Input|Knowledge|MCP|Output|Role|Run|Skill Pack|Template) /u.test(
+                            message,
+                          )
+                        ? 400
+                        : 500;
           sendJson(request, response, status, {
             error: status === 500 ? 'product_operation_failed' : message,
           });
