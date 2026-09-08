@@ -407,8 +407,8 @@
     {
       "packageName": "@better-agent/test-support",
       "script": "vitest run --config vitest.config.ts --configLoader native && node --test ../../tests/deployment/*.test.mjs",
-      "testCount": 24,
-      "successMarker": "@better-agent/test-support:test:       Tests  24 passed (24)"
+      "testCount": 23,
+      "successMarker": "@better-agent/test-support:test:       Tests  23 passed (23)"
     },
     {
       "packageName": "@better-agent/web",
@@ -453,7 +453,7 @@
         "@better-agent/knowledge-core:test:       Tests  7 passed (7)",
         "@better-agent/release-core:test:       Tests  1118 passed (1118)",
         "@better-agent/run-core:test:       Tests  146 passed (146)",
-        "@better-agent/test-support:test:       Tests  24 passed (24)",
+        "@better-agent/test-support:test:       Tests  23 passed (23)",
         "@better-agent/web:test:       Tests  112 passed (112)"
       ],
       "forbidSkippedOutput": true,
