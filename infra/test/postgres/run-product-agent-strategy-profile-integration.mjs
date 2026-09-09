@@ -525,6 +525,90 @@ async function main() {
     '1:4:7>2:3:3',
     'recursive per-level exclusive and inclusive usage receipts',
   );
+  const parallelChildId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${actorId}',
+      'Parallel Auditor','','audit independently','gpt-5.6-sol',NULL,NULL,'text',NULL,
+      '${fixed}'::jsonb,NULL)).id;`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_agent_draft('${workspaceId}','${parallelChildId}',1,'${actorId}');`,
+  );
+  const parallelParentId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities_v10('${workspaceId}','${actorId}',
+      'Parallel Coordinator','','delegate concurrently','gpt-5.6-sol',NULL,NULL,'text',NULL,
+      '${subagentStrategy}'::jsonb,ARRAY['${childId}'::uuid,'${parallelChildId}'::uuid],
+      NULL,NULL,NULL,NULL,NULL,NULL,NULL)).id;`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_agent_draft('${workspaceId}','${parallelParentId}',1,'${actorId}');`,
+  );
+  const parallelConversation = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_product_conversation('${workspaceId}','${parallelParentId}','${actorId}')).id;`,
+  );
+  const parallelRun = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT run_id FROM app.begin_agent_product_run('${workspaceId}','${parallelConversation}','${actorId}','parallel check');`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT * FROM app.resolve_agent_product_run_parameters('${workspaceId}','${parallelRun}','${actorId}',
+      '{"database_contains":"","knowledge_query":"delegate"}'::jsonb,NULL,NULL,0,0);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT string_agg(branch||':'||depth||':'||name||'@'||release_version,'>' ORDER BY branch,depth)
+       FROM app.read_agent_product_run_subagent_chains('${workspaceId}','${parallelRun}','${actorId}');`,
+    ),
+    '1:1:Verifier v2@2>2:1:Parallel Auditor@1',
+    'parallel parent resolves two exact immutable child releases',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.record_agent_product_run_subagent_invocation_v2('${workspaceId}','${parallelRun}','${actorId}',
+      1,1::smallint,1::smallint,'${childId}',2,'Verifier v2','gpt-5.6-sol','branch one','one healthy',
+      'resp-parallel-1',7,6,7,6);`,
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${parallelRun}','${actorId}',1,
+        'gpt-5.6-sol','tool','subagent','parallel check','SUBAGENT_CONTEXT partial',NULL,
+        'resp-parallel-parent',5,2,7,6,'resp-parallel-1');`,
+      { allowFailure: true },
+    ),
+    /complete immutable parallel receipts|40001/u,
+    'parallel decision with a missing branch receipt',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.record_agent_product_run_subagent_invocation_v2('${workspaceId}','${parallelRun}','${actorId}',
+      1,2::smallint,1::smallint,'${parallelChildId}',1,'Parallel Auditor','gpt-5.6-sol',
+      'branch two','two healthy','resp-parallel-2',5,4,5,4);
+     SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${parallelRun}','${actorId}',1,
+      'gpt-5.6-sol','tool','subagent','parallel check','SUBAGENT_CONTEXT complete',NULL,
+      'resp-parallel-parent',5,2,12,10,'resp-parallel-1');
+     SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${parallelRun}','${actorId}',2,
+      'gpt-5.6-sol','final',NULL,NULL,NULL,'parallel healthy','resp-parallel-final',6,3,0,0,NULL);
+     SELECT app.complete_agent_product_run('${workspaceId}','${parallelRun}','${actorId}',
+      'parallel healthy','resp-parallel-final',23,15);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT input_tokens||':'||output_tokens||':'||
+        (SELECT count(*) FROM app.list_agent_product_run_subagent_invocations('${workspaceId}') AS receipt
+          WHERE receipt.run_id='${parallelRun}' AND receipt.depth=1)
+       FROM app.list_agent_product_runs('${workspaceId}') WHERE id='${parallelRun}';`,
+    ),
+    '23:15:2',
+    'parallel branch receipts close the exact aggregate budget',
+  );
   const missingReceiptConversation = await harness.queryScalar(
     'ba_runtime_test',
     `SELECT (app.create_agent_product_conversation('${workspaceId}','${recursiveRootId}','${actorId}')).id;`,
@@ -618,6 +702,15 @@ async function main() {
   assertRejected(
     await harness.psql(
       'ba_runtime_test',
+      'SELECT * FROM public.agent_product_release_parallel_subagent_bindings;',
+      { allowFailure: true },
+    ),
+    /permission denied|42501/u,
+    'runtime direct parallel SubAgent binding read',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
       'SELECT * FROM public.agent_product_run_subagent_invocations;',
       { allowFailure: true },
     ),
@@ -660,7 +753,7 @@ async function main() {
     'immutable strategy release',
   );
   process.stdout.write(
-    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2/v3/v4/v5 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback, ordered iteration/action traces, release-bound model tool decisions, depth-3 child release chains, immutable per-level receipts and aggregate token budgets.\n`,
+    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2/v3/v4/v5 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback, ordered iteration/action traces, release-bound model tool decisions, three-branch root fan-out, depth-3 child release chains, immutable branch/depth receipts and aggregate token budgets.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-agent-strategy-profile pass\n');
 }

@@ -86,7 +86,7 @@
               </section>
               <label><span>发布知识快照</span><select name="knowledge_base_id" id="agent-knowledge-base"><option value="">不绑定知识库</option></select></label>
               <label><span>发布 Database Operation 快照</span><select name="database_operation_binding" id="agent-database-operation"><option value="">不绑定 Database Operation</option></select><small>绑定精确的只读操作版本；查询列、过滤、排序与行数上限均由发布快照控制。</small></label>
-              <label><span>发布子 Agent 快照（最多递归 3 层）</span><select name="child_agent_id" id="agent-child-agent"><option value="">不绑定子 Agent</option></select></label>
+              <label><span>并行子 Agent（最多 3 个，每支递归 3 层）</span><select name="child_agent_id" id="agent-child-agent" multiple size="3"></select></label>
               <label><span>发布 Flow 快照</span><select name="flow_id" id="agent-flow"><option value="">不绑定 Flow</option></select><small>发布 Agent 时固定当前 Flow Release，后续 Flow 更新不会改变该 Agent 版本。</small></label>
               <label><span>发布 Skill Pack 快照</span><select name="skill_pack_binding" id="agent-skill-pack"><option value="">不绑定 Skill Pack</option></select><small>绑定精确的不可变 Pack 版本；资源后续修改不会改变已保存 Draft 或已发布 Agent。</small></label>
               <label><span>发布 MCP 工具快照</span><select name="mcp_server_binding" id="agent-mcp-server"><option value="">不绑定 MCP 服务</option></select><small>固定 Streamable HTTP Endpoint 与工具版本；运行时只把工具结果作为非指令证据。</small></label>

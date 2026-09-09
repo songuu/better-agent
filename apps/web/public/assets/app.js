@@ -135,7 +135,7 @@ function currentCapabilityKinds() {
   return [
     ...(form.elements.knowledge_base_id.value ? ['knowledge'] : []),
     ...(form.elements.database_operation_binding.value ? ['database'] : []),
-    ...(form.elements.child_agent_id.value ? ['subagent'] : []),
+    ...(form.elements.child_agent_id.selectedOptions.length > 0 ? ['subagent'] : []),
     ...(form.elements.flow_id.value ? ['flow'] : []),
     ...(form.elements.skill_pack_binding.value ? ['skill_pack'] : []),
     ...(form.elements.mcp_server_binding.value ? ['mcp'] : []),
@@ -1088,14 +1088,17 @@ function renderAgentDatabaseOptions() {
 
 function renderAgentChildOptions() {
   const select = byId('agent-child-agent');
-  const selected = state.current?.childAgentId || '';
-  select.innerHTML = [
-    '<option value="">不绑定子 Agent</option>',
-    ...state.agents
-      .filter((agent) => agent.status === 'published' && agent.id !== state.current?.id)
-      .map((agent) => `<option value="${agent.id}">${escapeHtml(agent.name)} · LIVE</option>`),
-  ].join('');
-  select.value = selected;
+  const selected = new Set(
+    state.current?.childAgentIds ||
+      (state.current?.childAgentId ? [state.current.childAgentId] : []),
+  );
+  select.innerHTML = state.agents
+    .filter((agent) => agent.status === 'published' && agent.id !== state.current?.id)
+    .map(
+      (agent) =>
+        `<option value="${agent.id}" ${selected.has(agent.id) ? 'selected' : ''}>${escapeHtml(agent.name)} · LIVE</option>`,
+    )
+    .join('');
 }
 
 function renderAgentFlowOptions() {
@@ -1503,11 +1506,14 @@ function renderRuns() {
         );
       const subagents = [...(run.subagentInvocations || [])]
         .sort(
-          (left, right) => left.parentIteration - right.parentIteration || left.depth - right.depth,
+          (left, right) =>
+            left.parentIteration - right.parentIteration ||
+            (left.branch || 1) - (right.branch || 1) ||
+            left.depth - right.depth,
         )
         .map(
           (invocation) =>
-            `I${invocation.parentIteration}/D${invocation.depth} ${invocation.name}@V${invocation.releaseVersion} · ${invocation.aggregateInputTokens}/${invocation.aggregateOutputTokens} TOKENS`,
+            `I${invocation.parentIteration}/B${invocation.branch || 1}/D${invocation.depth} ${invocation.name}@V${invocation.releaseVersion} · ${invocation.aggregateInputTokens}/${invocation.aggregateOutputTokens} TOKENS`,
         );
       return `<article class="run-row"><span>${String(run.sequence).padStart(2, '0')}</span><div><b>${escapeHtml(run.inputText)}</b><small>${escapeHtml(run.outputText || run.errorCode || '运行中')} · ${Number(run.iterationCount || 0)} ITER</small>${tools.length > 0 ? `<small>TOOLS · ${tools.map(escapeHtml).join(' / ')}</small>` : ''}${subagents.length > 0 ? `<small>SUBAGENT TREE · ${subagents.map(escapeHtml).join(' > ')}</small>` : ''}</div><em class="is-${run.status}">${run.status.toUpperCase()}</em><time>${new Date(run.createdAt).toLocaleString('zh-CN')}</time></article>`;
     })
@@ -1893,7 +1899,9 @@ form.addEventListener('submit', async (event) => {
     values.database_operation_binding || '',
   ).split(':');
   const input = {
-    child_agent_id: values.child_agent_id || null,
+    child_agent_ids: [...form.elements.child_agent_id.selectedOptions].map(
+      (option) => option.value,
+    ),
     database_operation_id: databaseOperationId || null,
     database_operation_revision: databaseOperationRevision
       ? Number(databaseOperationRevision)

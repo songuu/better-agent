@@ -66,6 +66,7 @@ const PRODUCT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 export interface AgentDraft {
   readonly childAgentId?: string | null;
+  readonly childAgentIds: readonly string[];
   readonly createdAt: string;
   readonly databaseOperationId?: string | null;
   readonly databaseOperationRevision?: number | null;
@@ -92,6 +93,7 @@ export interface AgentDraft {
 
 export interface AgentDraftInput {
   readonly childAgentId: string | null;
+  readonly childAgentIds: readonly string[];
   readonly databaseOperationId?: string | null;
   readonly databaseOperationRevision?: number | null;
   readonly databaseTableId: string | null;
@@ -195,6 +197,7 @@ export interface ProductRunSubagent {
 }
 
 export interface ProductRunSubagentNode extends ProductRunSubagent {
+  readonly branch: 1 | 2 | 3;
   readonly depth: 1 | 2 | 3;
   readonly strategyProfile: ProductAgentStrategyProfile;
 }
@@ -204,6 +207,7 @@ export interface ProductRunSubagentInvocation {
   readonly aggregateInputTokens: number;
   readonly aggregateOutputTokens: number;
   readonly createdAt: string;
+  readonly branch: 1 | 2 | 3;
   readonly depth: 1 | 2 | 3;
   readonly exclusiveInputTokens: number;
   readonly exclusiveOutputTokens: number;
@@ -543,6 +547,11 @@ export interface ProductStore {
     actorId: string,
     runId: string,
   ): Promise<readonly ProductRunSubagentNode[]>;
+  getRunSubagentChains?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+  ): Promise<readonly (readonly ProductRunSubagentNode[])[]>;
   getRunSkillPack?(
     workspaceId: string,
     actorId: string,
@@ -1051,6 +1060,7 @@ interface ProductRunSubagentInvocationRow {
   readonly aggregate_input_tokens: string | number;
   readonly aggregate_output_tokens: string | number;
   readonly created_at: Date | string;
+  readonly branch: string | number;
   readonly depth: string | number;
   readonly exclusive_input_tokens: string | number;
   readonly exclusive_output_tokens: string | number;
@@ -1092,6 +1102,7 @@ interface PreparedRunRow {
 
 interface AgentRow {
   readonly child_agent_id: string | null;
+  readonly child_agent_ids?: unknown;
   readonly created_at: Date | string;
   readonly database_operation_id?: string | null;
   readonly database_operation_revision?: string | number | null;
@@ -1462,8 +1473,20 @@ function toDraft(row: AgentRow): AgentDraft {
   }
   const strategyProfile = parseAgentStrategyProfile(row.strategy_profile);
   const strategyVersion = positiveInteger(row.strategy_version, 'Agent strategy version');
+  const childAgentIdsValue =
+    row.child_agent_ids ?? (row.child_agent_id === null ? [] : [row.child_agent_id]);
+  if (
+    !Array.isArray(childAgentIdsValue) ||
+    childAgentIdsValue.length > 3 ||
+    childAgentIdsValue.some((id) => typeof id !== 'string' || !PRODUCT_UUID.test(id)) ||
+    new Set(childAgentIdsValue).size !== childAgentIdsValue.length
+  ) {
+    throw new Error('product store returned invalid child Agent bindings');
+  }
+  const childAgentIds = Object.freeze([...childAgentIdsValue]) as readonly string[];
   return Object.freeze({
-    childAgentId: row.child_agent_id,
+    childAgentId: childAgentIds[0] ?? null,
+    childAgentIds,
     createdAt: asIso(row.created_at),
     databaseOperationId: row.database_operation_id ?? null,
     databaseOperationRevision:
@@ -1695,6 +1718,7 @@ function toRunSubagentInvocation(
   row: ProductRunSubagentInvocationRow,
 ): ProductRunSubagentInvocation {
   const depth = positiveInteger(row.depth, 'SubAgent invocation depth');
+  const branch = positiveInteger(row.branch, 'SubAgent invocation branch');
   const aggregateInputTokens = nonnegativeInteger(
     row.aggregate_input_tokens,
     'SubAgent aggregate input token count',
@@ -1711,7 +1735,7 @@ function toRunSubagentInvocation(
     row.exclusive_output_tokens,
     'SubAgent exclusive output token count',
   );
-  if (depth > 3 || !PRODUCT_MODELS.includes(row.model as ProductModel)) {
+  if (branch > 3 || depth > 3 || !PRODUCT_MODELS.includes(row.model as ProductModel)) {
     throw new Error('product store returned an invalid SubAgent invocation');
   }
   if (
@@ -1724,6 +1748,7 @@ function toRunSubagentInvocation(
     agentId: row.agent_id,
     aggregateInputTokens,
     aggregateOutputTokens,
+    branch: branch as 1 | 2 | 3,
     createdAt: asIso(row.created_at),
     depth: depth as 1 | 2 | 3,
     exclusiveInputTokens,
@@ -3095,6 +3120,7 @@ export class PostgresProductStore implements ProductStore {
       }
       return Object.freeze({
         agentId: row.agent_id,
+        branch: 1,
         depth: depth as 1 | 2 | 3,
         instructions: row.instructions,
         maxOutputTokens: strategyProfile.maxOutputTokens,
@@ -3109,6 +3135,62 @@ export class PostgresProductStore implements ProductStore {
       throw new Error('product store returned a cyclic pinned child Agent chain');
     }
     return Object.freeze(chain);
+  }
+
+  async getRunSubagentChains(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+  ): Promise<readonly (readonly ProductRunSubagentNode[])[]> {
+    const result = await this.#pool.query<{
+      readonly agent_id: string;
+      readonly branch: string | number;
+      readonly depth: string | number;
+      readonly instructions: string;
+      readonly model: string;
+      readonly name: string;
+      readonly release_version: string | number;
+      readonly strategy_profile: unknown;
+    }>('SELECT * FROM app.read_agent_product_run_subagent_chains($1::uuid, $2::uuid, $3::uuid)', [
+      workspaceId,
+      runId,
+      actorId,
+    ]);
+    const byBranch = new Map<number, ProductRunSubagentNode[]>();
+    for (const row of result.rows) {
+      const branch = positiveInteger(row.branch, 'child branch');
+      const depth = positiveInteger(row.depth, 'child depth');
+      const strategyProfile = parseAgentStrategyProfile(row.strategy_profile);
+      if (branch > 3 || depth > 3 || !PRODUCT_MODELS.includes(row.model as ProductModel)) {
+        throw new Error('product store returned an invalid pinned parallel child Agent chain');
+      }
+      const chain = byBranch.get(branch) ?? [];
+      if (branch !== byBranch.size + (byBranch.has(branch) ? 0 : 1) || depth !== chain.length + 1) {
+        throw new Error('product store returned a non-contiguous parallel child Agent chain');
+      }
+      chain.push(
+        Object.freeze({
+          agentId: row.agent_id,
+          branch: branch as 1 | 2 | 3,
+          depth: depth as 1 | 2 | 3,
+          instructions: row.instructions,
+          maxOutputTokens: strategyProfile.maxOutputTokens,
+          model: row.model as ProductModel,
+          name: row.name,
+          releaseVersion: positiveInteger(row.release_version, 'child release version'),
+          strategyProfile,
+          temperature: strategyProfile.temperature,
+        }),
+      );
+      byBranch.set(branch, chain);
+    }
+    const chains = [...byBranch.values()].map((chain) => {
+      if (new Set(chain.map((node) => node.agentId)).size !== chain.length) {
+        throw new Error('product store returned a cyclic pinned parallel child Agent chain');
+      }
+      return Object.freeze(chain) as readonly ProductRunSubagentNode[];
+    });
+    return Object.freeze(chains);
   }
 
   async getRunSkillPack(
@@ -3352,12 +3434,13 @@ export class PostgresProductStore implements ProductStore {
     invocation: Omit<ProductRunSubagentInvocation, 'createdAt' | 'runId'>,
   ): Promise<void> {
     await this.#pool.query(
-      'SELECT app.record_agent_product_run_subagent_invocation($1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::smallint, $6::uuid, $7::bigint, $8::text, $9::text, $10::text, $11::text, $12::text, $13::bigint, $14::bigint, $15::bigint, $16::bigint)',
+      'SELECT app.record_agent_product_run_subagent_invocation_v2($1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::smallint, $6::smallint, $7::uuid, $8::bigint, $9::text, $10::text, $11::text, $12::text, $13::text, $14::bigint, $15::bigint, $16::bigint, $17::bigint)',
       [
         workspaceId,
         runId,
         actorId,
         invocation.parentIteration,
+        invocation.branch,
         invocation.depth,
         invocation.agentId,
         invocation.releaseVersion,
@@ -3469,7 +3552,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     const result = await this.#pool.query<{ readonly id: string }>(
-      'SELECT (app.create_agent_draft_with_strategy_capabilities_v9($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid, $13::uuid, $14::uuid, $15::bigint, $16::uuid, $17::bigint, $18::uuid, $19::bigint)).id AS id',
+      'SELECT (app.create_agent_draft_with_strategy_capabilities_v10($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid[], $13::uuid, $14::uuid, $15::bigint, $16::uuid, $17::bigint, $18::uuid, $19::bigint)).id AS id',
       [
         workspaceId,
         actorId,
@@ -3482,7 +3565,7 @@ export class PostgresProductStore implements ProductStore {
         input.roleMode,
         input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
         strategyProfileToStorage(input.strategyProfile),
-        input.childAgentId,
+        input.childAgentIds,
         input.flowId,
         input.skillPackId ?? null,
         input.skillPackReleaseVersion ?? null,
@@ -3504,7 +3587,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     await this.#pool.query(
-      'SELECT app.update_agent_draft_with_strategy_capabilities_v9($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid, $14::uuid, $15::uuid, $16::bigint, $17::uuid, $18::bigint, $19::uuid, $20::bigint)',
+      'SELECT app.update_agent_draft_with_strategy_capabilities_v10($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid[], $14::uuid, $15::uuid, $16::bigint, $17::uuid, $18::bigint, $19::uuid, $20::bigint)',
       [
         workspaceId,
         agentId,
@@ -3518,7 +3601,7 @@ export class PostgresProductStore implements ProductStore {
         input.roleMode,
         input.roleProfile === null ? null : JSON.stringify(input.roleProfile),
         strategyProfileToStorage(input.strategyProfile),
-        input.childAgentId,
+        input.childAgentIds,
         input.flowId,
         input.skillPackId ?? null,
         input.skillPackReleaseVersion ?? null,
@@ -3583,6 +3666,7 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
           'role_profile',
           'strategy_profile',
           'child_agent_id',
+          'child_agent_ids',
           'flow_id',
           'skill_pack_id',
           'skill_pack_release_version',
@@ -3660,14 +3744,23 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
     databaseOperationId === null
   )
     throw new Error('A forced Database call requires a bound Database Operation');
-  const childAgentId = input.child_agent_id ?? null;
-  if (
-    childAgentId !== null &&
-    (typeof childAgentId !== 'string' || !PRODUCT_UUID.test(childAgentId))
-  ) {
-    throw new Error('Agent child Agent id must be a UUID or null');
+  if (input.child_agent_id !== undefined && input.child_agent_ids !== undefined) {
+    throw new Error('Agent child Agent bindings cannot mix legacy and parallel fields');
   }
-  if (strategyProfile.forcedCapability === 'subagent' && childAgentId === null)
+  const legacyChildAgentId = input.child_agent_id ?? null;
+  const childAgentIdsValue =
+    input.child_agent_ids ?? (legacyChildAgentId === null ? [] : [legacyChildAgentId]);
+  if (
+    !Array.isArray(childAgentIdsValue) ||
+    childAgentIdsValue.length > 3 ||
+    childAgentIdsValue.some((id) => typeof id !== 'string' || !PRODUCT_UUID.test(id)) ||
+    new Set(childAgentIdsValue).size !== childAgentIdsValue.length
+  ) {
+    throw new Error('Agent child Agent ids must contain 0–3 unique UUIDs');
+  }
+  const childAgentIds = Object.freeze([...childAgentIdsValue]) as readonly string[];
+  const childAgentId = childAgentIds[0] ?? null;
+  if (strategyProfile.forcedCapability === 'subagent' && childAgentIds.length === 0)
     throw new Error('A forced SubAgent call requires a bound child Agent');
   const flowId = input.flow_id ?? null;
   if (flowId !== null && (typeof flowId !== 'string' || !PRODUCT_UUID.test(flowId))) {
@@ -3703,6 +3796,7 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   }
   return Object.freeze({
     childAgentId,
+    childAgentIds,
     databaseOperationId,
     databaseOperationRevision:
       databaseOperationRevision === null ? null : Number(databaseOperationRevision),

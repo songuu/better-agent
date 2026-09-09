@@ -13,6 +13,7 @@ import { executeProductFlow } from '../src/flow-runtime.js';
 import {
   type BetterAgentWebOptions,
   createBetterAgentWebServer,
+  executeParallelSubagents,
   executeRecursiveSubagent,
   isInvokedEntrypoint,
   withMcpContext,
@@ -49,6 +50,96 @@ import { createDefaultAgentStrategyProfile } from '../src/product-store.js';
 const openServers: Awaited<ReturnType<typeof createBetterAgentWebServer>>[] = [];
 const execFileAsync = promisify(execFile);
 
+it('executes independent SubAgent branches concurrently and aggregates exact usage', async () => {
+  const leafStrategy = createDefaultAgentStrategyProfile('gpt-5.4-mini');
+  const chains: readonly (readonly ProductRunSubagentNode[])[] = [
+    [
+      {
+        agentId: '11111111-1111-4111-8111-111111111111',
+        branch: 1,
+        depth: 1,
+        instructions: 'verify billing',
+        maxOutputTokens: 1_000,
+        model: 'gpt-5.4-mini',
+        name: 'Billing',
+        releaseVersion: 2,
+        strategyProfile: leafStrategy,
+        temperature: 0.2,
+      },
+    ],
+    [
+      {
+        agentId: '22222222-2222-4222-8222-222222222222',
+        branch: 2,
+        depth: 1,
+        instructions: 'verify security',
+        maxOutputTokens: 1_000,
+        model: 'gpt-5.4-mini',
+        name: 'Security',
+        releaseVersion: 4,
+        strategyProfile: leafStrategy,
+        temperature: 0.2,
+      },
+    ],
+  ];
+  const started: string[] = [];
+  let releaseBoth: (() => void) | undefined;
+  const bothStarted = new Promise<void>((resolve) => {
+    releaseBoth = resolve;
+  });
+  const receipts: { readonly branch: number; readonly depth: number }[] = [];
+  const runtime: ProductModelRuntime = {
+    async generate(input) {
+      started.push(input.instructions);
+      if (started.length === 2) releaseBoth?.();
+      await bothStarted;
+      const billing = input.instructions === 'verify billing';
+      return {
+        inputTokens: billing ? 3 : 5,
+        outputText: billing ? 'billing ok' : 'security ok',
+        outputTokens: billing ? 1 : 2,
+        providerRequestId: billing ? 'provider-billing' : 'provider-security',
+      };
+    },
+  };
+
+  const result = await executeParallelSubagents(
+    chains,
+    'verify release',
+    1,
+    runtime,
+    async (receipt) => {
+      receipts.push({ branch: receipt.branch, depth: receipt.depth });
+    },
+  );
+
+  expect(started).toHaveLength(2);
+  expect(result).toEqual({
+    aggregateInputTokens: 8,
+    aggregateOutputTokens: 3,
+    branchCount: 2,
+    branches: [
+      {
+        branch: 1,
+        name: 'Billing',
+        outputText: 'billing ok',
+        providerRequestId: 'provider-billing',
+      },
+      {
+        branch: 2,
+        name: 'Security',
+        outputText: 'security ok',
+        providerRequestId: 'provider-security',
+      },
+    ],
+    providerRequestId: 'provider-billing',
+  });
+  expect(receipts).toEqual([
+    { branch: 1, depth: 1 },
+    { branch: 2, depth: 1 },
+  ]);
+});
+
 it('executes a three-level immutable SubAgent chain and records inclusive usage receipts', async () => {
   const recursiveStrategy = {
     ...createDefaultAgentStrategyProfile('gpt-5.4-mini'),
@@ -61,6 +152,7 @@ it('executes a three-level immutable SubAgent chain and records inclusive usage 
   const chain: readonly ProductRunSubagentNode[] = [
     {
       agentId: '11111111-1111-4111-8111-111111111111',
+      branch: 1,
       depth: 1,
       instructions: 'delegate to level 2',
       maxOutputTokens: 2_000,
@@ -72,6 +164,7 @@ it('executes a three-level immutable SubAgent chain and records inclusive usage 
     },
     {
       agentId: '22222222-2222-4222-8222-222222222222',
+      branch: 1,
       depth: 2,
       instructions: 'delegate to level 3',
       maxOutputTokens: 2_000,
@@ -83,6 +176,7 @@ it('executes a three-level immutable SubAgent chain and records inclusive usage 
     },
     {
       agentId: '33333333-3333-4333-8333-333333333333',
+      branch: 1,
       depth: 3,
       instructions: 'answer the leaf task',
       maxOutputTokens: 2_000,
@@ -2169,6 +2263,7 @@ describe('Better Agent web runtime', () => {
       title: '运行手册',
     });
     agents.push({
+      childAgentIds: [],
       createdAt: '2026-09-03T00:00:00.000Z',
       databaseTableId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       description: '运行助手',
@@ -2404,6 +2499,7 @@ describe('Better Agent web runtime', () => {
       title: '运行手册',
     });
     agents.push({
+      childAgentIds: [],
       createdAt: '2026-09-03T00:00:00.000Z',
       databaseTableId: null,
       description: '工具决策助手',
@@ -2552,6 +2648,7 @@ describe('Better Agent web runtime', () => {
     const childAgentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     agents.push({
       childAgentId,
+      childAgentIds: [childAgentId],
       createdAt: '2026-09-03T00:00:00.000Z',
       databaseTableId: null,
       description: '父 Agent',
@@ -2578,6 +2675,7 @@ describe('Better Agent web runtime', () => {
     store.getRunSubagentChain = async () => [
       {
         agentId: childAgentId,
+        branch: 1,
         depth: 1,
         instructions: '只返回已核验的依赖状态。',
         maxOutputTokens: 400,
@@ -2709,6 +2807,7 @@ describe('Better Agent web runtime', () => {
   it('resolves published defaults without invoking the parameter extraction model', async () => {
     const { agents, store } = productFixture();
     agents.push({
+      childAgentIds: [],
       createdAt: '2026-09-03T00:00:00.000Z',
       databaseTableId: null,
       description: '默认参数助手',

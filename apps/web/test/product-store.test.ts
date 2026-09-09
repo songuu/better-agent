@@ -336,6 +336,7 @@ describe('product Agent input', () => {
 
     expect(input).toEqual({
       childAgentId: null,
+      childAgentIds: [],
       databaseOperationId: null,
       databaseOperationRevision: null,
       databaseTableId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -380,6 +381,7 @@ describe('product Agent input', () => {
     });
 
     expect(input.childAgentId).toBe(childAgentId);
+    expect(input.childAgentIds).toEqual([childAgentId]);
     expect(() =>
       validateAgentInput({
         child_agent_id: null,
@@ -390,6 +392,45 @@ describe('product Agent input', () => {
         strategy_profile: input.strategyProfile,
       }),
     ).toThrow('A forced SubAgent call requires a bound child Agent');
+  });
+
+  it('accepts at most three unique ordered child Agents for parallel delegation', () => {
+    const childAgentIds = [
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    ];
+    const payload = {
+      child_agent_ids: childAgentIds,
+      description: '并行核验三个独立领域',
+      instructions: '并行委派并汇总证据。',
+      model: 'gpt-5.6-sol',
+      name: '并行父 Agent',
+      strategy_profile: {
+        forced_capability: 'subagent',
+        max_input_tokens: 32000,
+        max_iterations: 2,
+        max_output_tokens: 2000,
+        max_tool_calls: 1,
+        parameter_defaults: { database_contains: '', knowledge_query: '' },
+        parameter_extraction: false,
+        routes: [{ description: '父 Agent', model: 'gpt-5.6-sol' }],
+        routing_mode: 'fixed',
+        schema_version: 'product-agent-strategy/5',
+        temperature: 0.2,
+      },
+    };
+    const input = validateAgentInput(payload);
+
+    expect(input.childAgentId).toBe(childAgentIds[0]);
+    expect(input.childAgentIds).toEqual(childAgentIds);
+    expect(Object.isFrozen(input.childAgentIds)).toBe(true);
+    expect(() =>
+      validateAgentInput({
+        ...payload,
+        child_agent_ids: [...childAgentIds, childAgentIds[0]],
+      }),
+    ).toThrow('Agent child Agent ids must contain 0–3 unique UUIDs');
   });
 
   it.each([
