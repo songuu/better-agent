@@ -13,6 +13,8 @@ import {
   validateCustomApiInput,
   validateCustomPluginInput,
   validateDatabaseQueryInput,
+  validateDatabaseOperationExecutionInput,
+  validateDatabaseOperationInput,
   validateDatabaseRowDeleteInput,
   validateDatabaseRowUpdateInput,
   validateDatabaseRowsInput,
@@ -715,6 +717,57 @@ export async function createBetterAgentWebServer(
       });
       return true;
     }
+    if (path === `${WEB_BASE_PATH}api/product/database-operations` && request.method === 'GET') {
+      sendJson(request, response, 200, {
+        database_operations: await productStore.listDatabaseOperations(workspaceId),
+      });
+      return true;
+    }
+    if (path === `${WEB_BASE_PATH}api/product/database-operations` && request.method === 'POST') {
+      const databaseOperation = await productStore.createDatabaseOperation(
+        workspaceId,
+        actorId,
+        validateDatabaseOperationInput(await readJsonBody(request)),
+      );
+      sendJson(request, response, 201, { database_operation: databaseOperation });
+      return true;
+    }
+    const databaseOperationMatch = new RegExp(
+      `^${WEB_BASE_PATH}api/product/database-operations/([0-9a-f-]{36})(/execute)?$`,
+      'u',
+    ).exec(path);
+    if (databaseOperationMatch !== null && UUID.test(databaseOperationMatch[1] ?? '')) {
+      const operationId = databaseOperationMatch[1] as string;
+      if (databaseOperationMatch[2] === '/execute' && request.method === 'POST') {
+        const input = validateDatabaseOperationExecutionInput(await readJsonBody(request));
+        sendJson(request, response, 200, {
+          rows: await productStore.executeDatabaseOperation(
+            workspaceId,
+            operationId,
+            input.operationRevision,
+            input.contains,
+          ),
+        });
+        return true;
+      }
+      if (databaseOperationMatch[2] === undefined && request.method === 'PUT') {
+        const payload = (await readJsonBody(request)) as Record<string, unknown>;
+        const expectedRevision = payload.expected_revision;
+        if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) {
+          throw new Error('invalid_expected_revision');
+        }
+        const { expected_revision: _, ...operationPayload } = payload;
+        const databaseOperation = await productStore.updateDatabaseOperation(
+          workspaceId,
+          actorId,
+          operationId,
+          Number(expectedRevision),
+          validateDatabaseOperationInput(operationPayload),
+        );
+        sendJson(request, response, 200, { database_operation: databaseOperation });
+        return true;
+      }
+    }
     if (path === `${WEB_BASE_PATH}api/product/database-tables` && request.method === 'POST') {
       const databaseTable = await productStore.createDatabaseTable(
         workspaceId,
@@ -1165,7 +1218,11 @@ export async function createBetterAgentWebServer(
                   : withDatabaseContext(
                       '',
                       filterDatabaseContext(
-                        await productStore.readAgentDatabase(workspaceId, prepared.conversationId),
+                        await productStore.readAgentDatabase(
+                          workspaceId,
+                          prepared.conversationId,
+                          decision.toolInput,
+                        ),
                         decision.toolInput,
                       ),
                     ).trim() || 'DATABASE_CONTEXT\n[]\nEND_DATABASE_CONTEXT';
@@ -1230,7 +1287,7 @@ export async function createBetterAgentWebServer(
               )
             : Promise.resolve([]),
           callDatabase
-            ? productStore.readAgentDatabase(workspaceId, prepared.conversationId)
+            ? productStore.readAgentDatabase(workspaceId, prepared.conversationId, databaseContains)
             : Promise.resolve([]),
         ]);
         const selectedDatabaseRows = filterDatabaseContext(databaseRows, databaseContains);

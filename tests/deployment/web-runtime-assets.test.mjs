@@ -153,7 +153,7 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
     'id="knowledge-search-form"',
     'id="knowledge-hits"',
     'id="agent-knowledge-base"',
-    'id="agent-database-table"',
+    'id="agent-database-operation"',
     'id="agent-role-mode"',
     'id="agent-role-profile"',
     'id="role-assist-generate"',
@@ -175,6 +175,7 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
   }
   assert.ok(publicJavaScript.includes('knowledge_base_id'));
   assert.ok(publicJavaScript.includes('database_table_id'));
+  assert.ok(publicJavaScript.includes('database_operation_id'));
   assert.ok(publicJavaScript.includes('role_profile'));
   assert.ok(publicJavaScript.includes('【身份定位】'));
   assert.ok(publicJavaScript.includes('/role-assist'));
@@ -213,13 +214,18 @@ test('ships a release and evaluation center backed by recorded product evidence'
   assert.doesNotMatch(publicJavaScript, /mockEvaluation|fakeEvaluation|simulatedEvaluation/u);
 });
 
-test('ships managed PostgreSQL Database Studio with versioned row operations', () => {
+test('ships managed PostgreSQL Database Studio with versioned row and Operation releases', () => {
   for (const marker of [
     'id="show-database"',
     'id="database-view"',
     'id="database-table-form"',
     'id="database-rows-form"',
     'id="database-query-form"',
+    'id="database-operation-form"',
+    'id="database-operation-list"',
+    'id="database-operation-run-form"',
+    'id="flow-database-enabled"',
+    'id="flow-database-node"',
     'id="database-results"',
   ]) {
     assert.ok(publicHtml.includes(marker), `missing Database Studio control: ${marker}`);
@@ -232,6 +238,10 @@ test('ships managed PostgreSQL Database Studio with versioned row operations', (
     'editDatabaseRow',
     'deleteDatabaseRow',
     'loadDatabaseTables',
+    '/database-operations',
+    'loadDatabaseOperations',
+    "type: 'database'",
+    'operationRevision',
   ]) {
     assert.ok(publicJavaScript.includes(marker), `missing Database Studio behavior: ${marker}`);
   }

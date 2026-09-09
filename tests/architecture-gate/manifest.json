@@ -21,6 +21,7 @@
     "product-agent-knowledge",
     "product-release-evaluation",
     "product-database-studio",
+    "product-database-operation",
     "product-agent-database",
     "product-agent-role-profile",
     "product-agent-strategy-profile",
@@ -134,7 +135,9 @@
     "041_product_custom_plugin.down.sql",
     "041_product_custom_plugin.up.sql",
     "042_product_database_row_operations.down.sql",
-    "042_product_database_row_operations.up.sql"
+    "042_product_database_row_operations.up.sql",
+    "043_product_database_operation.down.sql",
+    "043_product_database_operation.up.sql"
   ],
   "postgresSuites": [
     {
@@ -278,6 +281,13 @@
       "successMarker": "architecture-gate-suite/1 product-database-studio pass"
     },
     {
+      "id": "product-database-operation",
+      "file": "infra/test/postgres/run-product-database-operation-integration.mjs",
+      "sha256": "13a57b3ca8095669a0d3c50052263eef43efb32e4fb4783845b2f9be76a22025",
+      "mode": "real",
+      "successMarker": "architecture-gate-suite/1 product-database-operation pass"
+    },
+    {
       "id": "product-agent-database",
       "file": "infra/test/postgres/run-product-agent-database-binding-integration.mjs",
       "sha256": "8c46b6c03c282212138f67c322fcf50916da7d1880689cd050d4d1c54388642a",
@@ -413,8 +423,8 @@
     {
       "packageName": "@better-agent/db",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 214,
-      "successMarker": "@better-agent/db:test:       Tests  214 passed (214)"
+      "testCount": 217,
+      "successMarker": "@better-agent/db:test:       Tests  217 passed (217)"
     },
     {
       "packageName": "@better-agent/domain-contracts",
@@ -455,8 +465,8 @@
     {
       "packageName": "@better-agent/web",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 133,
-      "successMarker": "@better-agent/web:test:       Tests  133 passed (133)"
+      "testCount": 138,
+      "successMarker": "@better-agent/web:test:       Tests  138 passed (138)"
     }
   ],
   "scripts": {
@@ -464,7 +474,7 @@
     "rootArchitectureGateTest": "node --test tests/architecture-gate/architecture-gate.test.mjs",
     "rootCheck": "pnpm format:check && pnpm lint && pnpm workspace:smoke && pnpm contract:check && pnpm typecheck && pnpm test && pnpm build",
     "rootPostgres16": "pnpm --filter @better-agent/db test:integration",
-    "dbIntegration": "pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-product-flow-studio-integration.mjs && node ../../infra/test/postgres/run-product-knowledge-center-integration.mjs && node ../../infra/test/postgres/run-product-agent-knowledge-binding-integration.mjs && node ../../infra/test/postgres/run-product-release-evaluation-overview-integration.mjs && node ../../infra/test/postgres/run-product-database-studio-integration.mjs && node ../../infra/test/postgres/run-product-agent-database-binding-integration.mjs && node ../../infra/test/postgres/run-product-agent-role-profile-integration.mjs && node ../../infra/test/postgres/run-product-agent-strategy-profile-integration.mjs && node ../../infra/test/postgres/run-product-plugin-catalog-integration.mjs && node ../../infra/test/postgres/run-product-custom-plugin-integration.mjs && node ../../infra/test/postgres/run-product-custom-api-integration.mjs && node ../../infra/test/postgres/run-product-skill-pack-integration.mjs && node ../../infra/test/postgres/run-product-mcp-server-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs"
+    "dbIntegration": "pnpm --filter @better-agent/release-core build && pnpm build && node ../../infra/test/postgres/run-integration.mjs && node ../../infra/test/postgres/run-auth-rls-integration.mjs && node ../../infra/test/postgres/run-release-deployment-integration.mjs && node ../../infra/test/postgres/run-executable-closure-storage-integration.mjs && node ../../infra/test/postgres/run-g1-published-source-registry-integration.mjs && node ../../infra/test/postgres/run-g1-flow-execution-integration.mjs && node ../../infra/test/postgres/run-g1-knowledge-database-capability-integration.mjs && node ../../infra/test/postgres/run-g1-agent-strategy-integration.mjs && node ../../infra/test/postgres/run-g1-worker-human-gate-integration.mjs && node ../../infra/test/postgres/run-g1-join-child-integration.mjs && node ../../infra/test/postgres/run-g1-public-run-events-integration.mjs && node ../../infra/test/postgres/run-g1-production-evaluation-integration.mjs && node ../../infra/test/postgres/run-g1-vertical-agent-integration.mjs && node ../../infra/test/postgres/run-run-billing-integration.mjs && node ../../infra/test/postgres/run-run-conversation-browser-integration.mjs && node ../../infra/test/postgres/run-product-flow-studio-integration.mjs && node ../../infra/test/postgres/run-product-knowledge-center-integration.mjs && node ../../infra/test/postgres/run-product-agent-knowledge-binding-integration.mjs && node ../../infra/test/postgres/run-product-release-evaluation-overview-integration.mjs && node ../../infra/test/postgres/run-product-database-studio-integration.mjs && node ../../infra/test/postgres/run-product-database-operation-integration.mjs && node ../../infra/test/postgres/run-product-agent-database-binding-integration.mjs && node ../../infra/test/postgres/run-product-agent-role-profile-integration.mjs && node ../../infra/test/postgres/run-product-agent-strategy-profile-integration.mjs && node ../../infra/test/postgres/run-product-plugin-catalog-integration.mjs && node ../../infra/test/postgres/run-product-custom-plugin-integration.mjs && node ../../infra/test/postgres/run-product-custom-api-integration.mjs && node ../../infra/test/postgres/run-product-skill-pack-integration.mjs && node ../../infra/test/postgres/run-product-mcp-server-integration.mjs && node ../../infra/test/postgres/run-runtime-security-integration.mjs"
   },
   "gates": [
     {
@@ -489,14 +499,14 @@
         "@better-agent/auth:test:       Tests  54 passed (54)",
         "@better-agent/billing-core:test:       Tests  43 passed (43)",
         "@better-agent/database-capability:test:       Tests  8 passed (8)",
-        "@better-agent/db:test:       Tests  214 passed (214)",
+        "@better-agent/db:test:       Tests  217 passed (217)",
         "@better-agent/domain-contracts:test:       Tests  193 passed (193)",
         "@better-agent/instruction-skill:test:       Tests  8 passed (8)",
         "@better-agent/knowledge-core:test:       Tests  7 passed (7)",
         "@better-agent/release-core:test:       Tests  1118 passed (1118)",
         "@better-agent/run-core:test:       Tests  146 passed (146)",
         "@better-agent/test-support:test:       Tests  23 passed (23)",
-        "@better-agent/web:test:       Tests  133 passed (133)"
+        "@better-agent/web:test:       Tests  138 passed (138)"
       ],
       "forbidSkippedOutput": true,
       "timeoutMs": 300000
@@ -527,6 +537,7 @@
         "architecture-gate-suite/1 product-agent-knowledge pass",
         "architecture-gate-suite/1 product-release-evaluation pass",
         "architecture-gate-suite/1 product-database-studio pass",
+        "architecture-gate-suite/1 product-database-operation pass",
         "architecture-gate-suite/1 product-agent-database pass",
         "architecture-gate-suite/1 product-agent-role-profile pass",
         "architecture-gate-suite/1 product-agent-strategy-profile pass",

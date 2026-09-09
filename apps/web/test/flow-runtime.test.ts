@@ -24,6 +24,90 @@ const graph = {
 };
 
 describe('product Flow runtime', () => {
+  it('executes a version-pinned Database Operation through the supplied executor', async () => {
+    const databaseGraph = {
+      edges: [
+        { id: 'edge_input_database', source: 'input', target: 'database' },
+        { id: 'edge_database_output', source: 'database', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        {
+          config: {
+            operationId: 'd1000000-0000-4000-8000-000000000001',
+            operationRevision: 4,
+            source: 'input',
+          },
+          id: 'database',
+          label: '客户查询',
+          type: 'database',
+        },
+        { config: { source: 'database' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+    const calls: unknown[] = [];
+
+    const result = await executeProductFlowWithApis(
+      databaseGraph,
+      { input: 'active' },
+      async () => 'unused',
+      async (request) => {
+        calls.push(request);
+        return '[{"customer_id":1,"status":"active"}]';
+      },
+    );
+
+    expect(calls).toEqual([
+      {
+        input: 'active',
+        operationId: 'd1000000-0000-4000-8000-000000000001',
+        operationRevision: 4,
+      },
+    ]);
+    expect(result.output).toBe('[{"customer_id":1,"status":"active"}]');
+  });
+
+  it('rejects unpinned and disconnected Database Operation nodes', () => {
+    const databaseNode = {
+      config: {
+        operationId: 'd1000000-0000-4000-8000-000000000001',
+        operationRevision: 1,
+        source: 'input',
+      },
+      id: 'database',
+      label: '客户查询',
+      type: 'database',
+    };
+    const databaseGraph = {
+      edges: [
+        { id: 'edge_input_database', source: 'input', target: 'database' },
+        { id: 'edge_database_output', source: 'database', target: 'output' },
+      ],
+      nodes: [
+        { config: { key: 'message' }, id: 'input', label: '输入', type: 'input' },
+        databaseNode,
+        { config: { source: 'database' }, id: 'output', label: '输出', type: 'output' },
+      ],
+    };
+
+    expect(() =>
+      validateProductFlowGraph({
+        ...databaseGraph,
+        nodes: databaseGraph.nodes.map((node) =>
+          node.id === 'database'
+            ? { ...node, config: { ...databaseNode.config, operationRevision: 0 } }
+            : node,
+        ),
+      }),
+    ).toThrow('Database Operation revision');
+    expect(() =>
+      validateProductFlowGraph({
+        ...databaseGraph,
+        edges: databaseGraph.edges.filter((edge) => edge.target !== 'database'),
+      }),
+    ).toThrow('source must be connected');
+  });
+
   it('executes a pinned custom API node through the supplied secure executor', async () => {
     const apiGraph = {
       edges: [

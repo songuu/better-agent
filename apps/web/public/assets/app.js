@@ -4,6 +4,7 @@ const state = {
   conversationId: null,
   currentCustomApi: null,
   currentCustomPlugin: null,
+  currentDatabaseOperation: null,
   currentSkillPack: null,
   currentMcpServer: null,
   current: null,
@@ -14,11 +15,13 @@ const state = {
   currentDatabase: null,
   databaseQuery: null,
   databaseQueryRows: [],
+  databaseOperations: [],
   databaseTables: [],
   flows: [],
   flowReleases: [],
   flowRollbacks: [],
   flowApiPin: null,
+  flowDatabasePin: null,
   knowledgeBases: [],
   knowledgeDocuments: [],
   mcpServers: [],
@@ -35,6 +38,7 @@ const knowledgeBaseForm = byId('knowledge-base-form');
 const knowledgeDocumentForm = byId('knowledge-document-form');
 const databaseTableForm = byId('database-table-form');
 const databaseRowsForm = byId('database-rows-form');
+const databaseOperationForm = byId('database-operation-form');
 const customApiForm = byId('custom-api-form');
 const customPluginForm = byId('custom-plugin-form');
 const skillPackForm = byId('skill-pack-form');
@@ -130,7 +134,7 @@ function compileRolePreview() {
 function currentCapabilityKinds() {
   return [
     ...(form.elements.knowledge_base_id.value ? ['knowledge'] : []),
-    ...(form.elements.database_table_id.value ? ['database'] : []),
+    ...(form.elements.database_operation_binding.value ? ['database'] : []),
     ...(form.elements.child_agent_id.value ? ['subagent'] : []),
     ...(form.elements.flow_id.value ? ['flow'] : []),
     ...(form.elements.skill_pack_binding.value ? ['skill_pack'] : []),
@@ -351,7 +355,7 @@ function renderAgents() {
   });
 }
 
-function flowGraph(template, transform, plugin, api, condition) {
+function flowGraph(template, transform, plugin, api, database, condition) {
   const nodes = [
     { config: { key: 'message' }, id: 'input', label: '消息输入', type: 'input' },
     { config: { template }, id: 'prompt', label: '模板映射', type: 'template' },
@@ -405,12 +409,26 @@ function flowGraph(template, transform, plugin, api, condition) {
     });
   }
   const apiSource = api.enabled ? 'api' : pluginSource;
+  if (database.enabled) {
+    if (!database.resource) throw new Error('请选择 Database Operation 精确版本');
+    nodes.push({
+      config: {
+        operationId: database.resource.id,
+        operationRevision: database.resource.revision,
+        source: apiSource,
+      },
+      id: 'database',
+      label: database.resource.name,
+      type: 'database',
+    });
+  }
+  const databaseSource = database.enabled ? 'database' : apiSource;
   if (condition.enabled) {
     nodes.push({
       config: {
         operand: condition.operand,
         operator: condition.operator,
-        source: apiSource,
+        source: databaseSource,
         whenFalse: condition.whenFalse,
         whenTrue: condition.whenTrue,
       },
@@ -419,7 +437,7 @@ function flowGraph(template, transform, plugin, api, condition) {
       type: 'condition',
     });
   }
-  const outputSource = condition.enabled ? 'condition' : apiSource;
+  const outputSource = condition.enabled ? 'condition' : databaseSource;
   nodes.push({ config: { source: outputSource }, id: 'output', label: '结果输出', type: 'output' });
   const pipeline = [
     'input',
@@ -427,6 +445,7 @@ function flowGraph(template, transform, plugin, api, condition) {
     ...(transform.enabled ? ['transform'] : []),
     ...(plugin.enabled ? ['plugin'] : []),
     ...(api.enabled ? ['api'] : []),
+    ...(database.enabled ? ['database'] : []),
     ...(condition.enabled ? ['condition'] : []),
     'output',
   ];
@@ -445,16 +464,42 @@ function syncFlowConditionEditor() {
   const transformEnabled = flowForm.elements.transformEnabled.checked;
   const pluginEnabled = flowForm.elements.pluginEnabled.checked;
   const apiEnabled = flowForm.elements.apiEnabled.checked;
+  const databaseEnabled = flowForm.elements.databaseEnabled.checked;
   byId('flow-condition-node').hidden = !conditionEnabled;
   byId('flow-transform-node').hidden = !transformEnabled;
   byId('flow-plugin-node').hidden = !pluginEnabled;
   byId('flow-api-node').hidden = !apiEnabled;
+  byId('flow-database-node').hidden = !databaseEnabled;
   byId('flow-canvas').classList.toggle('has-condition', conditionEnabled);
   byId('flow-canvas').classList.toggle('has-transform', transformEnabled);
   byId('flow-canvas').classList.toggle('has-plugin', pluginEnabled);
   byId('flow-canvas').classList.toggle('has-api', apiEnabled);
+  byId('flow-canvas').classList.toggle('has-database', databaseEnabled);
+  const optionalNodes = [
+    [transformEnabled, 'flow-transform-node'],
+    [pluginEnabled, 'flow-plugin-node'],
+    [apiEnabled, 'flow-api-node'],
+    [databaseEnabled, 'flow-database-node'],
+    [conditionEnabled, 'flow-condition-node'],
+  ].filter(([enabled]) => enabled);
+  optionalNodes.forEach(([, id], index) => {
+    byId(id).style.setProperty('--flow-node-top', `${350 + index * 200}px`);
+    byId(id).style.setProperty('--flow-node-top-mobile', `${470 + index * 220}px`);
+  });
+  byId('flow-canvas').style.setProperty(
+    '--flow-canvas-height',
+    optionalNodes.length === 0 ? '360px' : `${450 + optionalNodes.length * 200}px`,
+  );
+  byId('flow-canvas').style.setProperty(
+    '--flow-canvas-height-mobile',
+    `${650 + optionalNodes.length * 220}px`,
+  );
+  byId('flow-canvas').style.setProperty(
+    '--flow-output-top-mobile',
+    `${470 + optionalNodes.length * 220}px`,
+  );
   byId('flow-canvas').querySelector('.node-output code').textContent =
-    `${conditionEnabled ? 'condition' : apiEnabled ? 'api' : pluginEnabled ? 'plugin' : transformEnabled ? 'transform' : 'prompt'} → output`;
+    `${conditionEnabled ? 'condition' : databaseEnabled ? 'database' : apiEnabled ? 'api' : pluginEnabled ? 'plugin' : transformEnabled ? 'transform' : 'prompt'} → output`;
 }
 
 function selectedFlowPlugin() {
@@ -583,6 +628,50 @@ function selectedFlowApi() {
     state.customApis.find((api) => customApiOptionValue(api) === selected) ||
     (state.flowApiPin && customApiOptionValue(state.flowApiPin) === selected
       ? state.flowApiPin
+      : null)
+  );
+}
+
+function databaseOperationOptionValue(operation) {
+  return `${operation.id}:${operation.revision}`;
+}
+
+function renderFlowDatabaseOptions(pin = state.flowDatabasePin) {
+  const select = byId('flow-database-operation');
+  const options = state.databaseOperations.map(
+    (operation) =>
+      `<option value="${databaseOperationOptionValue(operation)}">${escapeHtml(operation.name)} · R${operation.revision}</option>`,
+  );
+  if (
+    pin &&
+    !state.databaseOperations.some(
+      (operation) => databaseOperationOptionValue(operation) === databaseOperationOptionValue(pin),
+    )
+  ) {
+    options.push(
+      `<option value="${databaseOperationOptionValue(pin)}">${escapeHtml(pin.name)} · R${pin.revision} · 已固定历史版本</option>`,
+    );
+  }
+  select.innerHTML = options.length
+    ? options.join('')
+    : '<option value="">先在 Database Studio 创建 Operation</option>';
+  if (pin) select.value = databaseOperationOptionValue(pin);
+  else if (state.databaseOperations[0]) {
+    select.value = databaseOperationOptionValue(state.databaseOperations[0]);
+  }
+  flowForm.elements.databaseEnabled.disabled = options.length === 0;
+  if (options.length === 0) flowForm.elements.databaseEnabled.checked = false;
+  syncFlowConditionEditor();
+}
+
+function selectedFlowDatabaseOperation() {
+  const selected = byId('flow-database-operation').value;
+  return (
+    state.databaseOperations.find(
+      (operation) => databaseOperationOptionValue(operation) === selected,
+    ) ||
+    (state.flowDatabasePin && databaseOperationOptionValue(state.flowDatabasePin) === selected
+      ? state.flowDatabasePin
       : null)
   );
 }
@@ -839,6 +928,7 @@ function showFlowEditor(flow = null) {
   const transformNode = flow?.graph.nodes.find((node) => node.type === 'transform');
   const pluginNode = flow?.graph.nodes.find((node) => node.type === 'plugin');
   const apiNode = flow?.graph.nodes.find((node) => node.type === 'api');
+  const databaseNode = flow?.graph.nodes.find((node) => node.type === 'database');
   flowForm.elements.template.value = templateNode?.config.template || '已处理：{{message}}';
   flowForm.elements.conditionEnabled.checked = Boolean(conditionNode);
   flowForm.elements.conditionOperator.value = conditionNode?.config.operator || 'contains';
@@ -863,6 +953,15 @@ function showFlowEditor(flow = null) {
     : null;
   flowForm.elements.apiEnabled.checked = Boolean(apiNode);
   renderFlowApiOptions(state.flowApiPin);
+  state.flowDatabasePin = databaseNode
+    ? {
+        id: databaseNode.config.operationId,
+        name: databaseNode.label,
+        revision: databaseNode.config.operationRevision,
+      }
+    : null;
+  flowForm.elements.databaseEnabled.checked = Boolean(databaseNode);
+  renderFlowDatabaseOptions(state.flowDatabasePin);
   syncFlowConditionEditor();
   byId('flow-editor-title').textContent = flow?.name || '未命名 Flow';
   byId('flow-kicker').textContent = flow
@@ -962,15 +1061,28 @@ function renderAgentKnowledgeOptions() {
 }
 
 function renderAgentDatabaseOptions() {
-  const select = byId('agent-database-table');
-  const selected = state.current?.databaseTableId || '';
-  select.innerHTML = [
-    '<option value="">不绑定数据表</option>',
-    ...state.databaseTables.map(
-      (table) =>
-        `<option value="${table.id}">${escapeHtml(table.name)} · ${table.rowCount} ROWS</option>`,
+  const select = byId('agent-database-operation');
+  const selected = state.current?.databaseOperationId
+    ? `${state.current.databaseOperationId}:${state.current.databaseOperationRevision}`
+    : '';
+  const options = [
+    '<option value="">不绑定 Database Operation</option>',
+    ...state.databaseOperations.map(
+      (operation) =>
+        `<option value="${databaseOperationOptionValue(operation)}">${escapeHtml(operation.name)} · R${operation.revision}</option>`,
     ),
-  ].join('');
+  ];
+  if (
+    selected &&
+    !state.databaseOperations.some(
+      (operation) => databaseOperationOptionValue(operation) === selected,
+    )
+  ) {
+    options.push(
+      `<option value="${escapeHtml(selected)}">已固定历史版本 · ${escapeHtml(selected)}</option>`,
+    );
+  }
+  select.innerHTML = options.filter(Boolean).join('');
   select.value = selected;
 }
 
@@ -1079,6 +1191,78 @@ function showDatabaseCreator() {
   renderDatabaseTables();
 }
 
+function resetDatabaseOperationForm() {
+  state.currentDatabaseOperation = null;
+  databaseOperationForm.reset();
+  databaseOperationForm.elements.operationId.value = '';
+  databaseOperationForm.elements.expectedRevision.value = '';
+  databaseOperationForm.elements.limit.value = '20';
+  syncDatabaseOperationColumns();
+}
+
+function syncDatabaseOperationColumns() {
+  const columns = state.currentDatabase?.columns || [];
+  for (const id of ['database-operation-filter', 'database-operation-order']) {
+    const select = byId(id);
+    const selected = select.value;
+    select.innerHTML = columns
+      .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
+      .join('');
+    if (columns.includes(selected)) select.value = selected;
+  }
+}
+
+function editDatabaseOperation(operationId) {
+  const operation = state.databaseOperations.find((item) => item.id === operationId);
+  if (!operation) return;
+  if (state.currentDatabase?.id !== operation.databaseTableId) {
+    selectDatabaseTable(operation.databaseTableId);
+  }
+  state.currentDatabaseOperation = operation;
+  databaseOperationForm.elements.operationId.value = operation.id;
+  databaseOperationForm.elements.expectedRevision.value = String(operation.revision);
+  databaseOperationForm.elements.name.value = operation.name;
+  databaseOperationForm.elements.description.value = operation.description;
+  databaseOperationForm.elements.selectColumns.value = operation.selectColumns.join(', ');
+  databaseOperationForm.elements.filterColumn.value = operation.filterColumn;
+  databaseOperationForm.elements.orderColumn.value = operation.orderColumn;
+  databaseOperationForm.elements.orderDirection.value = operation.orderDirection;
+  databaseOperationForm.elements.limit.value = String(operation.limit);
+}
+
+function renderDatabaseOperations() {
+  const operations = state.currentDatabase
+    ? state.databaseOperations.filter(
+        (operation) => operation.databaseTableId === state.currentDatabase.id,
+      )
+    : [];
+  byId('database-operation-list').innerHTML = operations.length
+    ? operations
+        .map(
+          (operation) =>
+            `<article><header><div><b>${escapeHtml(operation.name)}</b><small>R${operation.revision} · LIMIT ${operation.limit}</small></div><button type="button" class="button button-ghost" data-edit-database-operation="${operation.id}">编辑并发布新版本</button></header><p>${escapeHtml(operation.description || '未填写说明')}</p><code>SELECT ${operation.selectColumns.map(escapeHtml).join(', ')} · FILTER ${escapeHtml(operation.filterColumn)} · ORDER ${escapeHtml(operation.orderColumn)} ${escapeHtml(operation.orderDirection.toUpperCase())}</code></article>`,
+        )
+        .join('')
+    : '<p class="empty-note">当前表还没有 Database Operation。</p>';
+  const runSelect = byId('database-operation-run');
+  runSelect.innerHTML = operations.length
+    ? operations
+        .map(
+          (operation) =>
+            `<option value="${databaseOperationOptionValue(operation)}">${escapeHtml(operation.name)} · R${operation.revision}</option>`,
+        )
+        .join('')
+    : '<option value="">先创建 Operation</option>';
+}
+
+async function loadDatabaseOperations() {
+  const payload = await request('/database-operations');
+  state.databaseOperations = payload.database_operations;
+  renderDatabaseOperations();
+  renderAgentDatabaseOptions();
+  renderFlowDatabaseOptions(state.flowDatabasePin);
+}
+
 function selectDatabaseTable(id, resetQuery = true) {
   const table = state.databaseTables.find((item) => item.id === id);
   if (!table) return;
@@ -1095,6 +1279,9 @@ function selectDatabaseTable(id, resetQuery = true) {
   byId('database-query-column').innerHTML = table.columns
     .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
     .join('');
+  syncDatabaseOperationColumns();
+  resetDatabaseOperationForm();
+  renderDatabaseOperations();
   if (resetQuery) {
     byId('database-results').innerHTML = '<span>选择列并执行参数化查询。</span>';
     state.databaseQuery = null;
@@ -1105,11 +1292,12 @@ function selectDatabaseTable(id, resetQuery = true) {
 
 function renderDatabaseQueryRows() {
   const results = byId('database-results');
+  const mutable = state.databaseQuery !== null;
   results.innerHTML = state.databaseQueryRows.length
     ? state.databaseQueryRows
         .map(
           (row) =>
-            `<article data-database-row="${row.ordinal}"><header><b>ROW #${row.ordinal + 1} · V${row.version}</b><em>CAS CONTROLLED</em></header><p>${escapeHtml(JSON.stringify(row.record, null, 2))}</p><footer class="database-row-actions"><button type="button" class="button button-ghost" data-database-edit="${row.ordinal}">编辑</button><button type="button" class="button button-danger" data-database-delete="${row.ordinal}">删除</button></footer></article>`,
+            `<article data-database-row="${row.ordinal}"><header><b>ROW #${row.ordinal + 1} · V${row.version}</b><em>${mutable ? 'CAS CONTROLLED' : 'READ ONLY RELEASE'}</em></header><p>${escapeHtml(JSON.stringify(row.record, null, 2))}</p>${mutable ? `<footer class="database-row-actions"><button type="button" class="button button-ghost" data-database-edit="${row.ordinal}">编辑</button><button type="button" class="button button-danger" data-database-delete="${row.ordinal}">删除</button></footer>` : ''}</article>`,
         )
         .join('')
     : '<span>没有匹配记录。</span>';
@@ -1393,6 +1581,7 @@ async function bootstrap() {
       loadFlows(),
       loadKnowledgeBases(),
       loadDatabaseTables(),
+      loadDatabaseOperations(),
       loadPluginCatalog(),
       loadCustomPlugins(),
       loadCustomApis(),
@@ -1426,6 +1615,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       loadFlows(),
       loadKnowledgeBases(),
       loadDatabaseTables(),
+      loadDatabaseOperations(),
       loadPluginCatalog(),
       loadCustomPlugins(),
       loadCustomApis(),
@@ -1510,6 +1700,7 @@ byId('flow-plugin-resource').addEventListener('change', () => {
   byId('flow-plugin-identity').textContent = selectedFlowPlugin()?.resource.identity || '未选择';
 });
 flowForm.elements.apiEnabled.addEventListener('change', syncFlowConditionEditor);
+flowForm.elements.databaseEnabled.addEventListener('change', syncFlowConditionEditor);
 
 byId('plugin-catalog').addEventListener('click', async (event) => {
   const button = event.target.closest('[data-install-plugin]');
@@ -1690,9 +1881,16 @@ form.addEventListener('submit', async (event) => {
   const [mcpServerId = '', mcpServerReleaseVersion = ''] = String(
     values.mcp_server_binding || '',
   ).split(':');
+  const [databaseOperationId = '', databaseOperationRevision = ''] = String(
+    values.database_operation_binding || '',
+  ).split(':');
   const input = {
     child_agent_id: values.child_agent_id || null,
-    database_table_id: values.database_table_id || null,
+    database_operation_id: databaseOperationId || null,
+    database_operation_revision: databaseOperationRevision
+      ? Number(databaseOperationRevision)
+      : null,
+    database_table_id: null,
     description: values.description,
     flow_id: values.flow_id || null,
     instructions: values.instructions,
@@ -1758,6 +1956,10 @@ flowForm.addEventListener('submit', async (event) => {
       {
         enabled: flowForm.elements.apiEnabled.checked,
         resource: selectedFlowApi(),
+      },
+      {
+        enabled: flowForm.elements.databaseEnabled.checked,
+        resource: selectedFlowDatabaseOperation(),
       },
       {
         enabled: flowForm.elements.conditionEnabled.checked,
@@ -1935,6 +2137,77 @@ databaseRowsForm.addEventListener('submit', async (event) => {
     toast(`${payload.appended} 行记录已追加到 PostgreSQL`);
   } catch (error) {
     toast(error instanceof SyntaxError ? 'JSON 格式无效' : error.message, true);
+  }
+});
+
+byId('database-operation-list').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-edit-database-operation]');
+  if (button) editDatabaseOperation(button.dataset.editDatabaseOperation);
+});
+
+databaseOperationForm
+  .querySelector('[data-reset-database-operation]')
+  .addEventListener('click', resetDatabaseOperationForm);
+
+databaseOperationForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.currentDatabase) {
+    toast('请先选择数据表', true);
+    return;
+  }
+  const current = state.currentDatabaseOperation;
+  const input = {
+    database_table_id: state.currentDatabase.id,
+    description: databaseOperationForm.elements.description.value,
+    filter_column: databaseOperationForm.elements.filterColumn.value,
+    limit: Number(databaseOperationForm.elements.limit.value),
+    name: databaseOperationForm.elements.name.value,
+    order_column: databaseOperationForm.elements.orderColumn.value,
+    order_direction: databaseOperationForm.elements.orderDirection.value,
+    select_columns: databaseOperationForm.elements.selectColumns.value
+      .split(',')
+      .map((column) => column.trim())
+      .filter(Boolean),
+  };
+  try {
+    const payload = current
+      ? await request(`/database-operations/${current.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...input, expected_revision: current.revision }),
+        })
+      : await request('/database-operations', { method: 'POST', body: JSON.stringify(input) });
+    await loadDatabaseOperations();
+    resetDatabaseOperationForm();
+    toast(`Database Operation R${payload.database_operation.revision} 已发布`);
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+byId('database-operation-run-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const [operationId = '', operationRevision = ''] =
+    event.currentTarget.elements.operation.value.split(':');
+  if (!operationId || !operationRevision) {
+    toast('请先创建 Database Operation', true);
+    return;
+  }
+  const results = byId('database-results');
+  results.innerHTML = '<span>正在执行固定 Operation 版本……</span>';
+  try {
+    const payload = await request(`/database-operations/${operationId}/execute`, {
+      method: 'POST',
+      body: JSON.stringify({
+        contains: event.currentTarget.elements.contains.value,
+        operation_revision: Number(operationRevision),
+      }),
+    });
+    state.databaseQuery = null;
+    state.databaseQueryRows = payload.rows;
+    renderDatabaseQueryRows();
+  } catch (error) {
+    results.textContent = `Operation 执行失败：${error.message}`;
+    toast(error.message, true);
   }
 });
 

@@ -1865,6 +1865,26 @@ body::before {
 .node-api small {
   color: #53dff2;
 }
+.node-database {
+  left: 50%;
+  top: 350px;
+  width: min(420px, calc(100% - 48px));
+  transform: translateX(-50%);
+  border-color: #67c587;
+}
+.node-database small {
+  color: #7dffaf;
+}
+#flow-transform-node,
+#flow-plugin-node,
+#flow-api-node,
+#flow-database-node,
+#flow-condition-node {
+  top: var(--flow-node-top, 350px);
+}
+.flow-canvas[style] {
+  min-height: var(--flow-canvas-height, 360px);
+}
 .flow-canvas.has-transform .node-plugin,
 .flow-canvas.has-transform .node-api,
 .flow-canvas.has-plugin .node-api,
@@ -2104,6 +2124,7 @@ body::before {
   .node-code,
   .node-plugin,
   .node-api,
+  .node-database,
   .node-output {
     left: 50%;
     right: auto;
@@ -2182,6 +2203,19 @@ body::before {
   }
   .node-api {
     top: 470px;
+  }
+  #flow-transform-node,
+  #flow-plugin-node,
+  #flow-api-node,
+  #flow-database-node,
+  #flow-condition-node {
+    top: var(--flow-node-top-mobile, 470px);
+  }
+  .flow-canvas[style] {
+    min-height: var(--flow-canvas-height-mobile, 650px);
+  }
+  .flow-canvas[style] .node-output {
+    top: var(--flow-output-top-mobile, 470px);
   }
   .flow-canvas.has-transform .node-plugin,
   .flow-canvas.has-transform .node-api,

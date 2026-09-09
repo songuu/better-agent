@@ -76,6 +76,16 @@ export type ProductFlowNode =
       readonly type: 'api';
     }
   | {
+      readonly config: {
+        readonly operationId: string;
+        readonly operationRevision: number;
+        readonly source: string;
+      };
+      readonly id: string;
+      readonly label: string;
+      readonly type: 'database';
+    }
+  | {
       readonly config: { readonly source: string };
       readonly id: string;
       readonly label: string;
@@ -119,6 +129,14 @@ export type ProductFlowBuiltinTextPluginOperation =
   (typeof PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_OPERATIONS)[number];
 type ProductFlowCustomPluginIdentity = `custom.${string}.v${number}`;
 export type ProductFlowApiExecutor = (request: ProductApiExecutionRequest) => Promise<string>;
+export interface ProductFlowDatabaseExecutionRequest {
+  readonly input: string;
+  readonly operationId: string;
+  readonly operationRevision: number;
+}
+export type ProductFlowDatabaseExecutor = (
+  request: ProductFlowDatabaseExecutionRequest,
+) => Promise<string>;
 
 const PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS: Readonly<
   Record<ProductFlowBuiltinTextPluginOperation, (input: string) => string>
@@ -325,6 +343,34 @@ function validateNode(value: unknown): ProductFlowNode {
       type: 'api',
     });
   }
+  if (node.type === 'database') {
+    const config = closedObject(
+      node.config,
+      ['source', 'operationId', 'operationRevision'],
+      'Database Operation node config',
+    );
+    const source = boundedText(config.source, 1, 40, 'Database Operation source');
+    if (!IDENTIFIER.test(source)) throw new Error('Database Operation source is invalid');
+    if (typeof config.operationId !== 'string' || !UUID.test(config.operationId)) {
+      throw new Error('Database Operation id is invalid');
+    }
+    if (
+      !Number.isSafeInteger(config.operationRevision) ||
+      (config.operationRevision as number) < 1
+    ) {
+      throw new Error('Database Operation revision is invalid');
+    }
+    return Object.freeze({
+      config: Object.freeze({
+        operationId: config.operationId,
+        operationRevision: config.operationRevision as number,
+        source,
+      }),
+      id,
+      label,
+      type: 'database',
+    });
+  }
   if (node.type === 'output') {
     const config = closedObject(node.config, ['source'], 'Output node config');
     const source = boundedText(config.source, 1, 40, 'Output source');
@@ -438,6 +484,12 @@ export function validateProductFlowGraph(value: unknown): ProductFlowGraph {
       if (!incomingByTarget.get(node.id)?.has(node.config.source)) {
         throw new Error('API source must be connected to the API node');
       }
+    } else if (node.type === 'database') {
+      if (!incomingByTarget.get(node.id)?.has(node.config.source)) {
+        throw new Error(
+          'Database Operation source must be connected to the Database Operation node',
+        );
+      }
     }
   }
   const reachable = new Set([inputNode.id]);
@@ -519,6 +571,9 @@ function executeLocalNode(node: ProductFlowNode, state: ProductFlowExecutionStat
     return PRODUCT_FLOW_BUILTIN_TEXT_PLUGIN_EXECUTORS[node.config.operation](sourceValue);
   }
   if (node.type === 'api') throw new Error('Flow API node requires the secure API runtime');
+  if (node.type === 'database') {
+    throw new Error('Flow Database Operation node requires the managed Database runtime');
+  }
   const value = state.values.get(node.config.source);
   if (value === undefined) throw new Error('Flow output source is unavailable');
   return value;
@@ -560,6 +615,7 @@ export async function executeProductFlowWithApis(
   graphValue: unknown,
   inputValue: unknown,
   apiExecutor: ProductFlowApiExecutor,
+  databaseExecutor?: ProductFlowDatabaseExecutor,
 ): Promise<ProductFlowDebugResult> {
   const state = createExecutionState(graphValue, inputValue);
   for (const node of graphOrder(state.graph)) {
@@ -572,6 +628,18 @@ export async function executeProductFlowWithApis(
         method: node.config.method,
         responsePath: node.config.responsePath,
         url: node.config.url,
+      });
+    } else if (node.type === 'database') {
+      const sourceValue = state.values.get(node.config.source);
+      if (sourceValue === undefined)
+        throw new Error('Flow Database Operation source is unavailable');
+      if (databaseExecutor === undefined) {
+        throw new Error('Flow Database Operation node requires the managed Database runtime');
+      }
+      output = await databaseExecutor({
+        input: sourceValue,
+        operationId: node.config.operationId,
+        operationRevision: node.config.operationRevision,
       });
     } else if (node.type === 'plugin' && 'endpointUrl' in node.config) {
       const sourceValue = state.values.get(node.config.source);

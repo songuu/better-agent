@@ -67,6 +67,8 @@ const PRODUCT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 export interface AgentDraft {
   readonly childAgentId?: string | null;
   readonly createdAt: string;
+  readonly databaseOperationId?: string | null;
+  readonly databaseOperationRevision?: number | null;
   readonly databaseTableId: string | null;
   readonly description: string;
   readonly flowId?: string | null;
@@ -90,6 +92,8 @@ export interface AgentDraft {
 
 export interface AgentDraftInput {
   readonly childAgentId: string | null;
+  readonly databaseOperationId?: string | null;
+  readonly databaseOperationRevision?: number | null;
   readonly databaseTableId: string | null;
   readonly description: string;
   readonly flowId: string | null;
@@ -399,6 +403,37 @@ export interface ProductDatabaseQueryInput {
   readonly limit: number;
 }
 
+export type ProductDatabaseOperationOrderDirection = 'asc' | 'desc';
+
+export interface ProductDatabaseOperationInput {
+  readonly databaseTableId: string;
+  readonly description: string;
+  readonly filterColumn: string;
+  readonly limit: number;
+  readonly name: string;
+  readonly orderColumn: string;
+  readonly orderDirection: ProductDatabaseOperationOrderDirection;
+  readonly selectColumns: readonly string[];
+}
+
+export interface ProductDatabaseOperation extends ProductDatabaseOperationInput {
+  readonly createdAt: string;
+  readonly id: string;
+  readonly revision: number;
+  readonly updatedAt: string;
+}
+
+export interface ProductDatabaseOperationResult {
+  readonly ordinal: number;
+  readonly record: Readonly<Record<string, boolean | null | number | string>>;
+  readonly version: number;
+}
+
+export interface ProductDatabaseOperationExecutionInput {
+  readonly contains: string;
+  readonly operationRevision: number;
+}
+
 export interface ProductPluginCatalogItem {
   readonly description: string;
   readonly identity: string;
@@ -527,6 +562,11 @@ export interface ProductStore {
     actorId: string,
     input: ProductDatabaseTableInput,
   ): Promise<ProductDatabaseTable>;
+  createDatabaseOperation(
+    workspaceId: string,
+    actorId: string,
+    input: ProductDatabaseOperationInput,
+  ): Promise<ProductDatabaseOperation>;
   appendDatabaseRows(
     workspaceId: string,
     actorId: string,
@@ -567,11 +607,13 @@ export interface ProductStore {
   listFlows(workspaceId: string): Promise<readonly ProductFlowDraft[]>;
   listKnowledgeBases(workspaceId: string): Promise<readonly ProductKnowledgeBase[]>;
   listDatabaseTables(workspaceId: string): Promise<readonly ProductDatabaseTable[]>;
+  listDatabaseOperations(workspaceId: string): Promise<readonly ProductDatabaseOperation[]>;
   listPluginCatalog(workspaceId: string): Promise<readonly ProductPluginCatalogItem[]>;
   listCustomPlugins(workspaceId: string): Promise<readonly ProductCustomPlugin[]>;
   readAgentDatabase(
     workspaceId: string,
     conversationId: string,
+    contains?: string,
   ): Promise<readonly ProductAgentDatabaseRecord[]>;
   listKnowledgeDocuments(
     workspaceId: string,
@@ -763,12 +805,25 @@ export interface ProductStore {
     tableId: string,
     input: ProductDatabaseQueryInput,
   ): Promise<readonly ProductDatabaseRow[]>;
+  executeDatabaseOperation(
+    workspaceId: string,
+    operationId: string,
+    operationRevision: number,
+    input: string,
+  ): Promise<readonly ProductDatabaseOperationResult[]>;
   updateAgent(
     workspaceId: string,
     agentId: string,
     expectedRevision: number,
     input: AgentDraftInput,
   ): Promise<AgentDraft>;
+  updateDatabaseOperation(
+    workspaceId: string,
+    actorId: string,
+    operationId: string,
+    expectedRevision: number,
+    input: ProductDatabaseOperationInput,
+  ): Promise<ProductDatabaseOperation>;
   updateFlow(
     workspaceId: string,
     flowId: string,
@@ -864,6 +919,27 @@ interface DatabaseMutationRow {
   readonly deleted: boolean;
   readonly ordinal: string | number;
   readonly record: unknown | null;
+  readonly version: string | number;
+}
+
+interface DatabaseOperationRow {
+  readonly created_at: Date | string;
+  readonly database_table_id: string;
+  readonly description: string;
+  readonly filter_column: string;
+  readonly id: string;
+  readonly name: string;
+  readonly order_column: string;
+  readonly order_direction: string;
+  readonly revision: string | number;
+  readonly row_limit: string | number;
+  readonly select_columns: unknown;
+  readonly updated_at: Date | string;
+}
+
+interface DatabaseOperationResultRow {
+  readonly ordinal: string | number;
+  readonly record: unknown;
   readonly version: string | number;
 }
 
@@ -964,6 +1040,8 @@ interface PreparedRunRow {
 interface AgentRow {
   readonly child_agent_id: string | null;
   readonly created_at: Date | string;
+  readonly database_operation_id?: string | null;
+  readonly database_operation_revision?: string | number | null;
   readonly description: string;
   readonly flow_id: string | null;
   readonly database_table_id: string | null;
@@ -1334,6 +1412,11 @@ function toDraft(row: AgentRow): AgentDraft {
   return Object.freeze({
     childAgentId: row.child_agent_id,
     createdAt: asIso(row.created_at),
+    databaseOperationId: row.database_operation_id ?? null,
+    databaseOperationRevision:
+      row.database_operation_revision == null
+        ? null
+        : positiveInteger(row.database_operation_revision, 'Database Operation revision'),
     databaseTableId: row.database_table_id,
     description: row.description,
     flowId: row.flow_id,
@@ -1814,6 +1897,40 @@ function toDatabaseMutation(row: DatabaseMutationRow): ProductDatabaseRowMutatio
   });
 }
 
+function toDatabaseOperation(row: DatabaseOperationRow): ProductDatabaseOperation {
+  if (
+    !Array.isArray(row.select_columns) ||
+    row.select_columns.some((column) => typeof column !== 'string') ||
+    (row.order_direction !== 'asc' && row.order_direction !== 'desc')
+  ) {
+    throw new Error('product store returned an invalid Database Operation');
+  }
+  return Object.freeze({
+    createdAt: asIso(row.created_at),
+    databaseTableId: row.database_table_id,
+    description: row.description,
+    filterColumn: row.filter_column,
+    id: row.id,
+    limit: positiveInteger(row.row_limit, 'Database Operation limit'),
+    name: row.name,
+    orderColumn: row.order_column,
+    orderDirection: row.order_direction,
+    revision: positiveInteger(row.revision, 'Database Operation revision'),
+    selectColumns: Object.freeze([...row.select_columns]) as readonly string[],
+    updatedAt: asIso(row.updated_at),
+  });
+}
+
+function toDatabaseOperationResult(
+  row: DatabaseOperationResultRow,
+): ProductDatabaseOperationResult {
+  return Object.freeze({
+    ordinal: nonnegativeInteger(row.ordinal, 'Database Operation row ordinal'),
+    record: toScalarDatabaseRecord(row.record),
+    version: positiveInteger(row.version, 'Database Operation row version'),
+  });
+}
+
 function toPluginCatalogItem(row: PluginCatalogRow): ProductPluginCatalogItem {
   if (typeof row.manifest !== 'object' || row.manifest === null || Array.isArray(row.manifest)) {
     throw new Error('product store returned an invalid Plugin manifest');
@@ -2090,6 +2207,15 @@ export class PostgresProductStore implements ProductStore {
       graph,
       { input: validateFlowDebugInput({ input: inputText }) },
       async (request) => await this.#apiRuntime.execute(request),
+      async (request) =>
+        JSON.stringify(
+          await this.executeDatabaseOperation(
+            workspaceId,
+            request.operationId,
+            request.operationRevision,
+            request.input,
+          ),
+        ),
     );
     const recorded = await this.#pool.query<FlowDebugRow>(
       'SELECT * FROM app.record_product_flow_debug($1::uuid, $2::uuid, $3::bigint, $4::uuid, $5::text, $6::text, $7::jsonb)',
@@ -2172,6 +2298,19 @@ export class PostgresProductStore implements ProductStore {
     return toDatabaseTable(row);
   }
 
+  async #getDatabaseOperation(
+    workspaceId: string,
+    operationId: string,
+  ): Promise<ProductDatabaseOperation> {
+    const result = await this.#pool.query<DatabaseOperationRow>(
+      'SELECT * FROM app.list_product_database_operations($1::uuid) AS operation WHERE operation.id = $2::uuid',
+      [workspaceId, operationId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('product store did not return the Database Operation');
+    return toDatabaseOperation(row);
+  }
+
   async createDatabaseTable(
     workspaceId: string,
     actorId: string,
@@ -2184,6 +2323,31 @@ export class PostgresProductStore implements ProductStore {
     const id = result.rows[0]?.id;
     if (id === undefined) throw new Error('product store did not create the Database table');
     return await this.#getDatabaseTable(workspaceId, id);
+  }
+
+  async createDatabaseOperation(
+    workspaceId: string,
+    actorId: string,
+    input: ProductDatabaseOperationInput,
+  ): Promise<ProductDatabaseOperation> {
+    const result = await this.#pool.query<{ readonly id: string }>(
+      'SELECT app.create_product_database_operation($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::jsonb,$7::text,$8::text,$9::text,$10::integer) AS id',
+      [
+        workspaceId,
+        actorId,
+        input.databaseTableId,
+        input.name,
+        input.description,
+        JSON.stringify(input.selectColumns),
+        input.filterColumn,
+        input.orderColumn,
+        input.orderDirection,
+        input.limit,
+      ],
+    );
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error('product store did not create the Database Operation');
+    return await this.#getDatabaseOperation(workspaceId, id);
   }
 
   async appendDatabaseRows(
@@ -2237,6 +2401,54 @@ export class PostgresProductStore implements ProductStore {
       [workspaceId],
     );
     return Object.freeze(result.rows.map(toDatabaseTable));
+  }
+
+  async listDatabaseOperations(workspaceId: string): Promise<readonly ProductDatabaseOperation[]> {
+    const result = await this.#pool.query<DatabaseOperationRow>(
+      'SELECT * FROM app.list_product_database_operations($1::uuid)',
+      [workspaceId],
+    );
+    return Object.freeze(result.rows.map(toDatabaseOperation));
+  }
+
+  async updateDatabaseOperation(
+    workspaceId: string,
+    actorId: string,
+    operationId: string,
+    expectedRevision: number,
+    input: ProductDatabaseOperationInput,
+  ): Promise<ProductDatabaseOperation> {
+    await this.#pool.query(
+      'SELECT app.update_product_database_operation($1::uuid,$2::uuid,$3::bigint,$4::uuid,$5::uuid,$6::text,$7::text,$8::jsonb,$9::text,$10::text,$11::text,$12::integer)',
+      [
+        workspaceId,
+        operationId,
+        expectedRevision,
+        actorId,
+        input.databaseTableId,
+        input.name,
+        input.description,
+        JSON.stringify(input.selectColumns),
+        input.filterColumn,
+        input.orderColumn,
+        input.orderDirection,
+        input.limit,
+      ],
+    );
+    return await this.#getDatabaseOperation(workspaceId, operationId);
+  }
+
+  async executeDatabaseOperation(
+    workspaceId: string,
+    operationId: string,
+    operationRevision: number,
+    input: string,
+  ): Promise<readonly ProductDatabaseOperationResult[]> {
+    const result = await this.#pool.query<DatabaseOperationResultRow>(
+      'SELECT * FROM app.execute_product_database_operation($1::uuid,$2::uuid,$3::bigint,$4::text)',
+      [workspaceId, operationId, operationRevision, input],
+    );
+    return Object.freeze(result.rows.map(toDatabaseOperationResult));
   }
 
   async listPluginCatalog(workspaceId: string): Promise<readonly ProductPluginCatalogItem[]> {
@@ -2541,10 +2753,11 @@ export class PostgresProductStore implements ProductStore {
   async readAgentDatabase(
     workspaceId: string,
     conversationId: string,
+    contains = '',
   ): Promise<readonly ProductAgentDatabaseRecord[]> {
     const result = await this.#pool.query<AgentDatabaseRecordRow>(
-      'SELECT * FROM app.read_agent_product_conversation_database($1::uuid, $2::uuid, 20)',
-      [workspaceId, conversationId],
+      'SELECT * FROM app.read_agent_product_conversation_database($1::uuid, $2::uuid, $3::text, 20)',
+      [workspaceId, conversationId, contains],
     );
     return Object.freeze(result.rows.map(toAgentDatabaseRecord));
   }
@@ -2704,6 +2917,15 @@ export class PostgresProductStore implements ProductStore {
       graph,
       { input: inputText },
       async (request) => await this.#apiRuntime.execute(request),
+      async (request) =>
+        JSON.stringify(
+          await this.executeDatabaseOperation(
+            workspaceId,
+            request.operationId,
+            request.operationRevision,
+            request.input,
+          ),
+        ),
     );
     return Object.freeze({
       flowId: row.flow_id,
@@ -3055,7 +3277,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     const result = await this.#pool.query<{ readonly id: string }>(
-      'SELECT (app.create_agent_draft_with_strategy_capabilities_v8($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid, $13::uuid, $14::uuid, $15::bigint, $16::uuid, $17::bigint)).id AS id',
+      'SELECT (app.create_agent_draft_with_strategy_capabilities_v9($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid, $9::text, $10::jsonb, $11::jsonb, $12::uuid, $13::uuid, $14::uuid, $15::bigint, $16::uuid, $17::bigint, $18::uuid, $19::bigint)).id AS id',
       [
         workspaceId,
         actorId,
@@ -3074,6 +3296,8 @@ export class PostgresProductStore implements ProductStore {
         input.skillPackReleaseVersion ?? null,
         input.mcpServerId ?? null,
         input.mcpServerReleaseVersion ?? null,
+        input.databaseOperationId ?? null,
+        input.databaseOperationRevision ?? null,
       ],
     );
     const id = result.rows[0]?.id;
@@ -3088,7 +3312,7 @@ export class PostgresProductStore implements ProductStore {
     input: AgentDraftInput,
   ): Promise<AgentDraft> {
     await this.#pool.query(
-      'SELECT app.update_agent_draft_with_strategy_capabilities_v8($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid, $14::uuid, $15::uuid, $16::bigint, $17::uuid, $18::bigint)',
+      'SELECT app.update_agent_draft_with_strategy_capabilities_v9($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::uuid, $10::text, $11::jsonb, $12::jsonb, $13::uuid, $14::uuid, $15::uuid, $16::bigint, $17::uuid, $18::bigint, $19::uuid, $20::bigint)',
       [
         workspaceId,
         agentId,
@@ -3108,6 +3332,8 @@ export class PostgresProductStore implements ProductStore {
         input.skillPackReleaseVersion ?? null,
         input.mcpServerId ?? null,
         input.mcpServerReleaseVersion ?? null,
+        input.databaseOperationId ?? null,
+        input.databaseOperationRevision ?? null,
       ],
     );
     return await this.#getAgent(workspaceId, agentId);
@@ -3159,6 +3385,8 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
           'model',
           'knowledge_base_id',
           'database_table_id',
+          'database_operation_id',
+          'database_operation_revision',
           'role_mode',
           'role_profile',
           'strategy_profile',
@@ -3218,10 +3446,28 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   ) {
     throw new Error('Agent Database table id must be a UUID or null');
   }
+  const databaseOperationId = input.database_operation_id ?? null;
+  const databaseOperationRevision = input.database_operation_revision ?? null;
+  if ((databaseOperationId === null) !== (databaseOperationRevision === null)) {
+    throw new Error('Agent Database Operation binding must contain both id and release version');
+  }
+  if (
+    databaseOperationId !== null &&
+    (typeof databaseOperationId !== 'string' ||
+      !PRODUCT_UUID.test(databaseOperationId) ||
+      !Number.isSafeInteger(databaseOperationRevision) ||
+      Number(databaseOperationRevision) < 1)
+  ) {
+    throw new Error('Agent Database Operation binding is invalid');
+  }
   if (strategyProfile.forcedCapability === 'knowledge' && knowledgeBaseId === null)
     throw new Error('A forced Knowledge call requires a bound Knowledge base');
-  if (strategyProfile.forcedCapability === 'database' && databaseTableId === null)
-    throw new Error('A forced Database call requires a bound Database table');
+  if (
+    strategyProfile.forcedCapability === 'database' &&
+    databaseTableId === null &&
+    databaseOperationId === null
+  )
+    throw new Error('A forced Database call requires a bound Database Operation');
   const childAgentId = input.child_agent_id ?? null;
   if (
     childAgentId !== null &&
@@ -3265,6 +3511,9 @@ export function validateAgentInput(value: unknown): AgentDraftInput {
   }
   return Object.freeze({
     childAgentId,
+    databaseOperationId,
+    databaseOperationRevision:
+      databaseOperationRevision === null ? null : Number(databaseOperationRevision),
     databaseTableId,
     description,
     flowId,
@@ -3535,6 +3784,98 @@ export function validateMcpServerInput(value: unknown): ProductMcpServerInput {
 }
 
 const DATABASE_COLUMN = /^[A-Za-z][A-Za-z0-9_]{0,39}$/u;
+
+export function validateDatabaseOperationInput(value: unknown): ProductDatabaseOperationInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Database Operation payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  const keys = [
+    'database_table_id',
+    'description',
+    'filter_column',
+    'limit',
+    'name',
+    'order_column',
+    'order_direction',
+    'select_columns',
+  ];
+  if (Object.keys(input).some((key) => !keys.includes(key))) {
+    throw new Error('Database Operation payload contains unknown fields');
+  }
+  if (
+    Object.keys(input).length !== keys.length ||
+    typeof input.database_table_id !== 'string' ||
+    !PRODUCT_UUID.test(input.database_table_id) ||
+    typeof input.name !== 'string' ||
+    typeof input.description !== 'string' ||
+    typeof input.filter_column !== 'string' ||
+    typeof input.order_column !== 'string' ||
+    !Array.isArray(input.select_columns) ||
+    !Number.isSafeInteger(input.limit) ||
+    (input.order_direction !== 'asc' && input.order_direction !== 'desc')
+  ) {
+    throw new Error('Database Operation payload has an invalid shape');
+  }
+  const name = input.name.trim();
+  const filterColumn = input.filter_column.trim();
+  const orderColumn = input.order_column.trim();
+  const selectColumns = input.select_columns.map((column) =>
+    typeof column === 'string' ? column.trim() : '',
+  );
+  if (name.length < 1 || name.length > 80 || input.description.length > 500) {
+    throw new Error('Database Operation metadata is invalid');
+  }
+  if (
+    selectColumns.length < 1 ||
+    selectColumns.length > 20 ||
+    selectColumns.some((column) => !DATABASE_COLUMN.test(column)) ||
+    new Set(selectColumns).size !== selectColumns.length ||
+    !DATABASE_COLUMN.test(filterColumn) ||
+    !DATABASE_COLUMN.test(orderColumn) ||
+    !selectColumns.includes(filterColumn) ||
+    !selectColumns.includes(orderColumn) ||
+    !Number.isInteger(input.limit) ||
+    Number(input.limit) < 1 ||
+    Number(input.limit) > 100
+  ) {
+    throw new Error('Database Operation policy is invalid');
+  }
+  return Object.freeze({
+    databaseTableId: input.database_table_id,
+    description: input.description,
+    filterColumn,
+    limit: Number(input.limit),
+    name,
+    orderColumn,
+    orderDirection: input.order_direction,
+    selectColumns: Object.freeze(selectColumns),
+  });
+}
+
+export function validateDatabaseOperationExecutionInput(
+  value: unknown,
+): ProductDatabaseOperationExecutionInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Database Operation execution payload must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 2 ||
+    !Object.hasOwn(input, 'operation_revision') ||
+    !Object.hasOwn(input, 'contains') ||
+    !Number.isSafeInteger(input.operation_revision) ||
+    Number(input.operation_revision) < 1 ||
+    typeof input.contains !== 'string' ||
+    input.contains.length > 500
+  ) {
+    throw new Error('Database Operation execution payload has an invalid shape');
+  }
+  return Object.freeze({
+    contains: input.contains,
+    operationRevision: Number(input.operation_revision),
+  });
+}
 
 export function validateDatabaseTableInput(value: unknown): ProductDatabaseTableInput {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {

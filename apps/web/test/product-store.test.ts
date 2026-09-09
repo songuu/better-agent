@@ -6,6 +6,8 @@ import {
   parseAgentStrategyProfile,
   validateAgentInput,
   validateCustomPluginInput,
+  validateDatabaseOperationExecutionInput,
+  validateDatabaseOperationInput,
   validateDatabaseQueryInput,
   validateDatabaseRowDeleteInput,
   validateDatabaseRowUpdateInput,
@@ -22,6 +24,61 @@ import {
   validateRunInput,
   validateSkillPackInput,
 } from '../src/product-store.js';
+
+describe('product Database Operation input', () => {
+  it('accepts a closed read-only policy and rejects columns outside the declared shape', () => {
+    expect(
+      validateDatabaseOperationInput({
+        database_table_id: 'd0000000-0000-4000-8000-000000000001',
+        description: 'Find active customers',
+        filter_column: 'status',
+        limit: 20,
+        name: 'Active customers',
+        order_column: 'customer_id',
+        order_direction: 'asc',
+        select_columns: ['customer_id', 'name', 'status'],
+      }),
+    ).toEqual({
+      databaseTableId: 'd0000000-0000-4000-8000-000000000001',
+      description: 'Find active customers',
+      filterColumn: 'status',
+      limit: 20,
+      name: 'Active customers',
+      orderColumn: 'customer_id',
+      orderDirection: 'asc',
+      selectColumns: ['customer_id', 'name', 'status'],
+    });
+    expect(() =>
+      validateDatabaseOperationInput({
+        database_table_id: 'd0000000-0000-4000-8000-000000000001',
+        description: '',
+        filter_column: 'status',
+        limit: 20,
+        name: 'Open policy',
+        order_column: 'customer_id',
+        order_direction: 'asc',
+        select_columns: ['status'],
+        sql: 'SELECT *',
+      }),
+    ).toThrow('unknown fields');
+  });
+
+  it('accepts only an exact release revision and bounded text input', () => {
+    expect(
+      validateDatabaseOperationExecutionInput({ contains: 'active', operation_revision: 2 }),
+    ).toEqual({ contains: 'active', operationRevision: 2 });
+    expect(() =>
+      validateDatabaseOperationExecutionInput({ contains: '', operation_revision: 0 }),
+    ).toThrow('invalid shape');
+    expect(() =>
+      validateDatabaseOperationExecutionInput({
+        contains: '',
+        operation_revision: 1,
+        sql: 'SELECT *',
+      }),
+    ).toThrow('invalid shape');
+  });
+});
 
 const structuredRole = {
   audience: { content: '企业运维团队', weight: 70 },
@@ -279,6 +336,8 @@ describe('product Agent input', () => {
 
     expect(input).toEqual({
       childAgentId: null,
+      databaseOperationId: null,
+      databaseOperationRevision: null,
       databaseTableId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       description: '面向运维团队的助手',
       flowId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',

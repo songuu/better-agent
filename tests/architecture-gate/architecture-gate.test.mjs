@@ -535,6 +535,7 @@ test('requires one semantic, successful result for every registered gate', () =>
     'architecture-gate-suite/1 product-agent-knowledge pass',
     'architecture-gate-suite/1 product-release-evaluation pass',
     'architecture-gate-suite/1 product-database-studio pass',
+    'architecture-gate-suite/1 product-database-operation pass',
     'architecture-gate-suite/1 product-agent-database pass',
     'architecture-gate-suite/1 product-agent-role-profile pass',
     'architecture-gate-suite/1 product-agent-strategy-profile pass',

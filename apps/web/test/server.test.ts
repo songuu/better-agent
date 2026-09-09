@@ -25,6 +25,7 @@ import type {
   ProductConversation,
   ProductCustomApi,
   ProductCustomPlugin,
+  ProductDatabaseOperation,
   ProductDatabaseRow,
   ProductDatabaseTable,
   ProductFlowDebugRun,
@@ -258,6 +259,7 @@ function productFixture(): {
   readonly conversations: ProductConversation[];
   readonly customApis: ProductCustomApi[];
   readonly customPlugins: ProductCustomPlugin[];
+  readonly databaseOperations: ProductDatabaseOperation[];
   readonly databaseRows: ProductDatabaseRow[];
   readonly databaseTables: ProductDatabaseTable[];
   readonly flowDebugRuns: ProductFlowDebugRun[];
@@ -274,6 +276,8 @@ function productFixture(): {
   const conversations: ProductConversation[] = [];
   const customApis: ProductCustomApi[] = [];
   const customPlugins: ProductCustomPlugin[] = [];
+  const databaseOperations: ProductDatabaseOperation[] = [];
+  const databaseOperationReleases: ProductDatabaseOperation[] = [];
   const databaseRows: ProductDatabaseRow[] = [];
   const databaseTables: ProductDatabaseTable[] = [];
   const flows: ProductFlowDraft[] = [];
@@ -443,6 +447,60 @@ function productFixture(): {
       };
       databaseTables.push(table);
       return table;
+    },
+    async createDatabaseOperation(_workspaceId, _actorId, input) {
+      const operation: ProductDatabaseOperation = {
+        ...input,
+        createdAt: timestamp,
+        id: 'acacacac-acac-4cac-8cac-acacacacacac',
+        revision: 1,
+        updatedAt: timestamp,
+      };
+      databaseOperations.push(operation);
+      databaseOperationReleases.push(operation);
+      return operation;
+    },
+    async listDatabaseOperations() {
+      return databaseOperations;
+    },
+    async updateDatabaseOperation(_workspaceId, _actorId, operationId, expectedRevision, input) {
+      const index = databaseOperations.findIndex((operation) => operation.id === operationId);
+      const current = databaseOperations[index];
+      if (current === undefined || current.revision !== expectedRevision) {
+        throw new Error('Database Operation revision conflict');
+      }
+      const updated: ProductDatabaseOperation = {
+        ...current,
+        ...input,
+        revision: current.revision + 1,
+        updatedAt: timestamp,
+      };
+      databaseOperations[index] = updated;
+      databaseOperationReleases.push(updated);
+      return updated;
+    },
+    async executeDatabaseOperation(_workspaceId, operationId, operationRevision, contains) {
+      const operation = databaseOperationReleases.find(
+        (candidate) => candidate.id === operationId && candidate.revision === operationRevision,
+      );
+      if (operation === undefined) throw new Error('Database Operation release not found');
+      const direction = operation.orderDirection === 'asc' ? 1 : -1;
+      return databaseRows
+        .filter((row) => String(row.record[operation.filterColumn] ?? '').includes(contains))
+        .slice()
+        .sort((left, right) => {
+          const leftValue = String(left.record[operation.orderColumn] ?? '');
+          const rightValue = String(right.record[operation.orderColumn] ?? '');
+          return leftValue.localeCompare(rightValue) * direction;
+        })
+        .slice(0, operation.limit)
+        .map((row) => ({
+          ordinal: row.ordinal,
+          record: Object.fromEntries(
+            operation.selectColumns.map((column) => [column, row.record[column] ?? null]),
+          ),
+          version: row.version,
+        }));
     },
     async appendDatabaseRows(_workspaceId, _actorId, tableId, input) {
       const table = databaseTables.find((item) => item.id === tableId);
@@ -849,6 +907,7 @@ function productFixture(): {
     conversations,
     customApis,
     customPlugins,
+    databaseOperations,
     flowDebugRuns,
     flows,
     databaseRows,
@@ -1510,6 +1569,122 @@ describe('Better Agent web runtime', () => {
     expect(
       ((await listed.json()) as { database_tables: ProductDatabaseTable[] }).database_tables[0],
     ).toMatchObject({ columns: ['customer_id', 'status'], rowCount: 1 });
+  });
+
+  it('creates, versions and executes an exact Database Operation release', async () => {
+    const { store } = productFixture();
+    const origin = await start({
+      actorId: '22222222-2222-4222-8222-222222222222',
+      adminPassword: 'a-secure-admin-password',
+      productStore: store,
+      sessionSecret: 's'.repeat(32),
+      workspaceId: '33333333-3333-4333-8333-333333333333',
+    });
+    const mutationHeaders = {
+      'Content-Type': 'application/json',
+      'X-Better-Agent-CSRF': '1',
+    };
+    const login = await localRequest(origin, '/better-agent/api/product/login', {
+      body: JSON.stringify({ password: 'a-secure-admin-password' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    });
+    const cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    const headers = { ...mutationHeaders, Cookie: cookie };
+    const tableResponse = await localRequest(origin, '/better-agent/api/product/database-tables', {
+      body: JSON.stringify({
+        columns: ['customer_id', 'status'],
+        description: '客户状态',
+        name: 'customers',
+      }),
+      headers,
+      method: 'POST',
+    });
+    const table = ((await tableResponse.json()) as { database_table: ProductDatabaseTable })
+      .database_table;
+    await localRequest(origin, `/better-agent/api/product/database-tables/${table.id}/rows`, {
+      body: JSON.stringify({
+        rows: [
+          { customer_id: 8, status: 'paused' },
+          { customer_id: 7, status: 'active' },
+        ],
+      }),
+      headers,
+      method: 'POST',
+    });
+    const operationInput = {
+      database_table_id: table.id,
+      description: 'Active customers',
+      filter_column: 'status',
+      limit: 10,
+      name: 'Customer status lookup',
+      order_column: 'customer_id',
+      order_direction: 'asc',
+      select_columns: ['customer_id', 'status'],
+    };
+    const created = await localRequest(origin, '/better-agent/api/product/database-operations', {
+      body: JSON.stringify(operationInput),
+      headers,
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    const operation = ((await created.json()) as { database_operation: ProductDatabaseOperation })
+      .database_operation;
+
+    const executed = await localRequest(
+      origin,
+      `/better-agent/api/product/database-operations/${operation.id}/execute`,
+      {
+        body: JSON.stringify({ contains: 'active', operation_revision: 1 }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(executed.status).toBe(200);
+    expect(await executed.json()).toEqual({
+      rows: [{ ordinal: 1, record: { customer_id: 7, status: 'active' }, version: 1 }],
+    });
+
+    const updated = await localRequest(
+      origin,
+      `/better-agent/api/product/database-operations/${operation.id}`,
+      {
+        body: JSON.stringify({
+          ...operationInput,
+          description: 'All customer states',
+          expected_revision: 1,
+          order_direction: 'desc',
+        }),
+        headers,
+        method: 'PUT',
+      },
+    );
+    expect(updated.status).toBe(200);
+    expect(
+      ((await updated.json()) as { database_operation: ProductDatabaseOperation })
+        .database_operation,
+    ).toMatchObject({ orderDirection: 'desc', revision: 2 });
+
+    const exactOldRelease = await localRequest(
+      origin,
+      `/better-agent/api/product/database-operations/${operation.id}/execute`,
+      {
+        body: JSON.stringify({ contains: '', operation_revision: 1 }),
+        headers,
+        method: 'POST',
+      },
+    );
+    expect(exactOldRelease.status).toBe(200);
+    expect(((await exactOldRelease.json()) as { rows: ProductDatabaseRow[] }).rows).toHaveLength(2);
+
+    const listed = await localRequest(origin, '/better-agent/api/product/database-operations', {
+      headers: { Cookie: cookie },
+    });
+    expect(listed.status).toBe(200);
+    expect(
+      ((await listed.json()) as { database_operations: ProductDatabaseOperation[] })
+        .database_operations,
+    ).toHaveLength(1);
   });
 
   it('lists and installs an exact versioned Plugin release for the workspace', async () => {
