@@ -1,0 +1,22 @@
+{
+  "name": "@better-agent/worker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Lease-fenced Better Agent background execution worker",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json --pretty false --stopBuildOnErrors",
+    "lint": "biome lint src test vitest.config.ts",
+    "test": "vitest run --config vitest.config.ts --configLoader native",
+    "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@better-agent/agent-runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}
