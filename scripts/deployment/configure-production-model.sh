@@ -25,6 +25,7 @@ if (url.protocol !== "https:" || url.username || url.password || url.hash) proce
 install -d -m 0700 "${SHARED_ROOT}"
 backup="$(mktemp "${SHARED_ROOT}/model.env.backup.XXXXXX")"
 target_existed=0
+cookie_jar=""
 if [[ -f "${TARGET_FILE}" ]]; then
   [[ ! -L "${TARGET_FILE}" ]]
   cp -a -- "${TARGET_FILE}" "${backup}"
@@ -41,6 +42,9 @@ rollback() {
   fi
   systemctl restart "${WEB_SERVICE_NAME}" || true
   systemctl restart "${WORKER_SERVICE_NAME}" || true
+  if [[ -n "${cookie_jar}" ]]; then
+    rm -f -- "${cookie_jar}"
+  fi
   rm -f -- "${backup}"
   exit "${exit_code}"
 }
@@ -61,6 +65,29 @@ for attempt in {1..20}; do
   if [[ "${attempt}" == 20 ]]; then false; fi
   sleep 1
 done
+
+readonly product_environment="${SHARED_ROOT}/postgres/env/product.env"
+admin_password="$(sed -n 's/^BETTER_AGENT_ADMIN_PASSWORD=//p' "${product_environment}")"
+[[ "${admin_password}" =~ ^[A-Za-z0-9_-]{32}$ ]]
+cookie_jar="$(mktemp)"
+login_payload="$(printf '{"password":"%s"}' "${admin_password}")"
+login_response="$(printf '%s' "${login_payload}" | curl --fail --silent --show-error \
+  --max-time 20 --cookie-jar "${cookie_jar}" \
+  --header 'Content-Type: application/json' \
+  --header 'X-Better-Agent-CSRF: 1' \
+  --data-binary @- \
+  https://songuu.top/better-agent/api/product/login)"
+LOGIN_RESPONSE="${login_response}" node -e 'const r=JSON.parse(process.env.LOGIN_RESPONSE);if(r.authenticated!==true)process.exit(1)'
+readonly assist_payload='{"action":"generate","capability_kinds":[],"description":"验证生产模型运行时可返回结构化角色结果","model":"gpt-5.6-sol","name":"Production Smoke","role_mode":"text"}'
+assist_response="$(printf '%s' "${assist_payload}" | curl --fail --silent --show-error \
+  --max-time 90 --cookie "${cookie_jar}" \
+  --header 'Content-Type: application/json' \
+  --header 'X-Better-Agent-CSRF: 1' \
+  --data-binary @- \
+  https://songuu.top/better-agent/api/product/role-assist)"
+ASSIST_RESPONSE="${assist_response}" node -e 'const r=JSON.parse(process.env.ASSIST_RESPONSE);const instructions=r?.suggestion?.instructions;if(typeof instructions!=="string"||instructions.length<1)process.exit(1)'
+rm -f -- "${cookie_jar}"
+cookie_jar=""
 
 trap - ERR INT TERM
 rm -f -- "${backup}"

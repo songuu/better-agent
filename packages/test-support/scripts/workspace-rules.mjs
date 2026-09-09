@@ -324,7 +324,7 @@ export function validateDeploymentWorkflow(workflow) {
   const workflowDigest = createHash('sha256')
     .update(workflow.replaceAll('\r\n', '\n'))
     .digest('hex');
-  if (workflowDigest !== 'fadd69b0ddf4a22e496bf77592e32048e8a489ab0aa6c125cc70583bb3dc583c') {
+  if (workflowDigest !== 'ee2d916f2c587c4b700a3487c8242f4d87845ac1b5550483b972531205ce2449') {
     errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
   }
   const definition = parseCiWorkflow(workflow, errors);

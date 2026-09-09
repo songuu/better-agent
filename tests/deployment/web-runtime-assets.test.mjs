@@ -413,4 +413,21 @@ test('configures model credentials through a private file without logging their 
   assert.match(modelConfigurator, /better-agent-worker\.service/u);
   assert.match(modelConfigurator, /systemctl is-active --quiet/u);
   assert.doesNotMatch(modelConfigurator, /set -x|echo "\$\{?MODEL_API_KEY/u);
+  assert.match(
+    deploymentWorkflow,
+    /rm -f ~\/\.ssh\/better_agent_deploy_key "\$\{RUNNER_TEMP\}\/better-agent-model\.env"/u,
+  );
+});
+
+test('requires a real production model response before deployment can pass', () => {
+  assert.match(modelConfigurator, /postgres\/env\/product\.env/u);
+  assert.match(modelConfigurator, /\/better-agent\/api\/product\/login/u);
+  assert.match(modelConfigurator, /\/better-agent\/api\/product\/role-assist/u);
+  assert.match(modelConfigurator, /instructions\.length<1/u);
+  assert.match(modelConfigurator, /rollback/u);
+  assert.ok(
+    modelConfigurator.indexOf('/better-agent/api/product/role-assist') <
+      modelConfigurator.lastIndexOf('trap - ERR INT TERM'),
+  );
+  assert.doesNotMatch(modelConfigurator, /echo "\$\{admin_password\}"/u);
 });

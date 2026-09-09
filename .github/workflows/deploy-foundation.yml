@@ -293,4 +293,4 @@ jobs:
             ssh -i ~/.ssh/better_agent_deploy_key -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" \
               "rm -f -- '/tmp/better-agent-model-${ACCEPTED_SHA}.env'" || true
           fi
-          rm -f ~/.ssh/better_agent_deploy_key
+          rm -f ~/.ssh/better_agent_deploy_key "${RUNNER_TEMP}/better-agent-model.env"
