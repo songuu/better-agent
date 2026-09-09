@@ -398,6 +398,15 @@ test('packages the PostgreSQL client dependency required by the product runtime'
 
 test('configures model credentials through a private file without logging their value', () => {
   assert.match(deploymentWorkflow, /secrets\.BETTER_AGENT_MODEL_API_KEY/u);
+  assert.match(deploymentWorkflow, /test -n "\$\{MODEL_API_KEY:-\}"/u);
+  assert.doesNotMatch(
+    deploymentWorkflow,
+    /when provisioned|preserving current host configuration/u,
+  );
+  assert.match(
+    deploymentWorkflow,
+    /h\.build_sha!==process\.argv\[1\]\|\|h\.model_runtime!=="configured"/u,
+  );
   assert.match(deploymentWorkflow, /better-agent-model-\$\{ACCEPTED_SHA\}\.env/u);
   assert.match(modelConfigurator, /^install -m 0640 -o root -g better-agent-web/m);
   assert.match(modelConfigurator, /h\.model_runtime!=="configured"/u);

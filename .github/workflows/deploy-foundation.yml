@@ -144,6 +144,13 @@ jobs:
           cd "${RUNNER_TEMP}/release"
           sha256sum --check "better-agent-${ACCEPTED_SHA}.tgz.sha256"
 
+      - name: Validate required model runtime
+        env:
+          MODEL_API_KEY: ${{ secrets.BETTER_AGENT_MODEL_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${MODEL_API_KEY:-}"
+
       - name: Configure SSH
         env:
           SSH_KNOWN_HOSTS: ${{ secrets.BETTER_AGENT_SSH_KNOWN_HOSTS }}
@@ -257,16 +264,12 @@ jobs:
           page="$(curl --fail --silent --show-error --max-time 10 https://songuu.top/better-agent/)"
           grep -Fq '<title>Better Agent · Studio</title>' <<<"${page}"
 
-      - name: Configure independent model runtime when provisioned
+      - name: Configure independent model runtime
         env:
           MODEL_API_KEY: ${{ secrets.BETTER_AGENT_MODEL_API_KEY }}
           MODEL_BASE_URL: ${{ vars.BETTER_AGENT_MODEL_BASE_URL }}
         run: |
           set -euo pipefail
-          if [ -z "${MODEL_API_KEY:-}" ]; then
-            echo 'Independent model runtime secret is not provisioned; preserving current host configuration.'
-            exit 0
-          fi
           model_base_url="${MODEL_BASE_URL:-https://api.openai.com/v1}"
           model_file="${RUNNER_TEMP}/better-agent-model.env"
           umask 077
@@ -278,6 +281,8 @@ jobs:
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "SHARED_ROOT='${SHARED_ROOT}' bash '${CURRENT_LINK}/scripts/deployment/configure-production-model.sh' '/tmp/better-agent-model-${ACCEPTED_SHA}.env'"
           rm -f -- "${model_file}"
+          health="$(curl --fail --silent --show-error --max-time 10 https://songuu.top/better-agent/api/healthz)"
+          HEALTH="${health}" node -e 'const h=JSON.parse(process.env.HEALTH);if(h.status!=="ok"||h.build_sha!==process.argv[1]||h.model_runtime!=="configured")process.exit(1)' "${ACCEPTED_SHA}"
 
       - name: Remove deployment key
         if: always()

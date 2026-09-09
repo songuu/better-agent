@@ -191,7 +191,7 @@ describe('validateDeploymentWorkflow', () => {
       ],
       [
         'https://songuu.top/better-agent/api/healthz',
-        workflow.replace(
+        workflow.replaceAll(
           'https://songuu.top/better-agent/api/healthz',
           'http://127.0.0.1:4310/healthz',
         ),

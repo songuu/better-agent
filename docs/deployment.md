@@ -8,7 +8,7 @@ Configure these repository Actions secrets:
 
 - `BETTER_AGENT_SSH_PRIVATE_KEY` (required): private key authorized for the deployment user.
 - `BETTER_AGENT_SSH_KNOWN_HOSTS` (required): reviewed `known_hosts` line for the deployment host; runtime TOFU is rejected.
-- `BETTER_AGENT_MODEL_API_KEY` (required for model execution): installed into the host-private model environment without logging its value.
+- `BETTER_AGENT_MODEL_API_KEY` (required): installed into the host-private model environment without logging its value. A production deployment fails before host mutation when this secret is absent.
 
 Set `BETTER_AGENT_MODEL_BASE_URL` when an OpenAI-compatible HTTPS endpoint other than `https://api.openai.com/v1` is required.
 
