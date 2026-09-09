@@ -38,6 +38,25 @@ export interface WorkerJobStore {
   complete(completion: WorkerCompletion): Promise<void>;
   fail(failure: WorkerFailure): Promise<void>;
   recordInvocation(receipt: WorkerInvocationReceipt): Promise<void>;
+  renew(lease: WorkerLeaseIdentity): Promise<void>;
+}
+
+interface WorkerCycleOptions {
+  readonly heartbeatIntervalMs?: number;
+  readonly sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+}
+
+async function abortableSleep(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(done, milliseconds);
+    function done(): void {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    }
+    signal.addEventListener('abort', done, { once: true });
+  });
 }
 
 function leaseIdentity(job: ClaimedSubagentJob): WorkerLeaseIdentity {
@@ -51,19 +70,44 @@ function leaseIdentity(job: ClaimedSubagentJob): WorkerLeaseIdentity {
 export async function runWorkerCycle(
   store: WorkerJobStore,
   modelRuntime: AgentModelRuntime,
+  options: WorkerCycleOptions = {},
 ): Promise<boolean> {
   const job = await store.claim();
   if (job === undefined) return false;
   const lease = leaseIdentity(job);
 
   try {
-    const result = await executeParallelSubagents(
+    const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 10_000;
+    if (!Number.isSafeInteger(heartbeatIntervalMs) || heartbeatIntervalMs < 1) {
+      throw new Error('worker_heartbeat_interval_invalid');
+    }
+    const sleep = options.sleep ?? abortableSleep;
+    const execution = executeParallelSubagents(
       job.chains,
       job.prompt,
       job.parentIteration,
       modelRuntime,
       async (invocation) => await store.recordInvocation({ ...lease, invocation }),
+    ).then(
+      (value) => ({ status: 'fulfilled' as const, value }),
+      (reason: unknown) => ({ reason, status: 'rejected' as const }),
     );
+    let result: Awaited<ReturnType<typeof executeParallelSubagents>>;
+    while (true) {
+      const waitController = new AbortController();
+      const outcome = await Promise.race([
+        execution,
+        sleep(heartbeatIntervalMs, waitController.signal).then(() => undefined),
+      ]);
+      if (outcome === undefined) {
+        await store.renew(lease);
+        continue;
+      }
+      waitController.abort();
+      if (outcome.status === 'rejected') throw outcome.reason;
+      result = outcome.value;
+      break;
+    }
     const singleBranch = result.branches.length === 1 ? result.branches[0] : undefined;
     await store.complete({
       ...lease,

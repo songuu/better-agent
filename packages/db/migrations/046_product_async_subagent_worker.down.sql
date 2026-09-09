@@ -18,6 +18,7 @@ DROP FUNCTION app.read_agent_product_async_subagent_run(uuid,uuid,uuid,uuid);
 DROP FUNCTION app.fail_agent_product_async_subagent_job(uuid,uuid,bigint,text);
 DROP FUNCTION app.complete_agent_product_async_subagent_job(uuid,uuid,bigint,bigint,bigint,text,text);
 DROP FUNCTION app.record_agent_product_async_subagent_invocation(uuid,uuid,bigint,jsonb);
+DROP FUNCTION app.renew_agent_product_async_subagent_job(uuid,uuid,bigint,integer);
 DROP FUNCTION app.claim_agent_product_async_subagent_job(text,integer);
 DROP FUNCTION app.dispatch_agent_product_async_subagent_job(uuid,uuid,uuid,uuid,bigint,text);
 

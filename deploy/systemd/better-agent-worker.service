@@ -1,0 +1,39 @@
+[Unit]
+Description=Better Agent asynchronous SubAgent worker
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/better-agent/shared/model.env
+
+[Service]
+Type=simple
+User=better-agent-worker
+Group=better-agent-worker
+WorkingDirectory=/opt/better-agent/worker-current/apps/worker
+EnvironmentFile=/opt/better-agent/shared/postgres/env/execution.env
+EnvironmentFile=/opt/better-agent/shared/model.env
+Environment=BETTER_AGENT_WORKER_ID=production-worker-1
+Environment=BETTER_AGENT_WORKER_LEASE_SECONDS=45
+Environment=BETTER_AGENT_WORKER_POLL_MS=1000
+ExecStart=/usr/bin/node /opt/better-agent/worker-current/apps/worker/dist/main.js
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=15s
+TimeoutStopSec=65s
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

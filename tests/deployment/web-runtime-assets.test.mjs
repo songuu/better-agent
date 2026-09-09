@@ -6,6 +6,10 @@ const unit = readFileSync(
   new URL('../../deploy/systemd/better-agent-web.service', import.meta.url),
   'utf8',
 );
+const workerUnit = readFileSync(
+  new URL('../../deploy/systemd/better-agent-worker.service', import.meta.url),
+  'utf8',
+);
 const nginx = readFileSync(
   new URL('../../deploy/nginx/better-agent.location.conf', import.meta.url),
   'utf8',
@@ -53,6 +57,25 @@ test('runs the web runtime as a dedicated hardened loopback service', () => {
   assert.doesNotMatch(unit, /^Environment=.*(?:SECRET|PASSWORD|TOKEN)/m);
 });
 
+test('runs the asynchronous SubAgent worker with independent execution credentials', () => {
+  assert.match(workerUnit, /^User=better-agent-worker$/m);
+  assert.match(workerUnit, /^Group=better-agent-worker$/m);
+  assert.match(
+    workerUnit,
+    /^EnvironmentFile=\/opt\/better-agent\/shared\/postgres\/env\/execution\.env$/m,
+  );
+  assert.match(workerUnit, /^EnvironmentFile=\/opt\/better-agent\/shared\/model\.env$/m);
+  assert.match(workerUnit, /^ConditionPathExists=\/opt\/better-agent\/shared\/model\.env$/m);
+  assert.match(
+    workerUnit,
+    /^ExecStart=\/usr\/bin\/node \/opt\/better-agent\/worker-current\/apps\/worker\/dist\/main\.js$/m,
+  );
+  assert.match(workerUnit, /^NoNewPrivileges=true$/m);
+  assert.match(workerUnit, /^ProtectSystem=strict$/m);
+  assert.match(workerUnit, /^CapabilityBoundingSet=$/m);
+  assert.doesNotMatch(workerUnit, /^Environment=.*(?:SECRET|PASSWORD|TOKEN)/m);
+});
+
 test('owns only the canonical Better Agent Nginx path and preserves its URI', () => {
   assert.match(nginx, /^location = \/better-agent \{$/m);
   assert.match(nginx, /^location \/better-agent\/ \{$/m);
@@ -68,6 +91,10 @@ test('installs transactionally and verifies loopback plus TLS-routed health', ()
     "trap 'rollback 143' TERM",
     'Nginx include anchor must exist exactly once',
     'require_release_file',
+    'better-agent-worker.service',
+    'apps/worker/dist/main.js',
+    'WORKER_CURRENT',
+    'systemctl is-active --quiet "${WORKER_SERVICE_NAME}"',
     webCurrentSymlinkGuard,
     "--noproxy '*'",
     'nginx -t',
@@ -361,6 +388,12 @@ test('packages the PostgreSQL client dependency required by the product runtime'
   );
   assert.match(deploymentWorkflow, /web-runtime\/node_modules\/pg\/package\.json/u);
   assert.match(deploymentWorkflow, /apps\/web\/node_modules/u);
+  assert.match(
+    deploymentWorkflow,
+    /pnpm --config\.inject-workspace-packages=true --filter @better-agent\/worker/u,
+  );
+  assert.match(deploymentWorkflow, /worker-runtime\/node_modules\/pg\/package\.json/u);
+  assert.match(deploymentWorkflow, /apps\/worker\/node_modules/u);
 });
 
 test('configures model credentials through a private file without logging their value', () => {
@@ -368,5 +401,7 @@ test('configures model credentials through a private file without logging their 
   assert.match(deploymentWorkflow, /better-agent-model-\$\{ACCEPTED_SHA\}\.env/u);
   assert.match(modelConfigurator, /^install -m 0640 -o root -g better-agent-web/m);
   assert.match(modelConfigurator, /h\.model_runtime!=="configured"/u);
+  assert.match(modelConfigurator, /better-agent-worker\.service/u);
+  assert.match(modelConfigurator, /systemctl is-active --quiet/u);
   assert.doesNotMatch(modelConfigurator, /set -x|echo "\$\{?MODEL_API_KEY/u);
 });

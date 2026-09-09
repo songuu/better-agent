@@ -4,7 +4,8 @@ set -Eeuo pipefail
 readonly SOURCE_FILE="${1:?model environment source file is required}"
 readonly SHARED_ROOT="${SHARED_ROOT:-/opt/better-agent/shared}"
 readonly TARGET_FILE="${SHARED_ROOT}/model.env"
-readonly SERVICE_NAME="better-agent-web.service"
+readonly WEB_SERVICE_NAME="better-agent-web.service"
+readonly WORKER_SERVICE_NAME="better-agent-worker.service"
 
 [[ -f "${SOURCE_FILE}" && ! -L "${SOURCE_FILE}" ]]
 [[ "$(stat -c %h -- "${SOURCE_FILE}")" == 1 ]]
@@ -38,7 +39,8 @@ rollback() {
   else
     rm -f -- "${TARGET_FILE}"
   fi
-  systemctl restart "${SERVICE_NAME}" || true
+  systemctl restart "${WEB_SERVICE_NAME}" || true
+  systemctl restart "${WORKER_SERVICE_NAME}" || true
   rm -f -- "${backup}"
   exit "${exit_code}"
 }
@@ -47,7 +49,9 @@ trap 'rollback 130' INT
 trap 'rollback 143' TERM
 
 install -m 0640 -o root -g better-agent-web "${SOURCE_FILE}" "${TARGET_FILE}"
-systemctl restart "${SERVICE_NAME}"
+systemctl restart "${WEB_SERVICE_NAME}"
+systemctl restart "${WORKER_SERVICE_NAME}"
+systemctl is-active --quiet "${WORKER_SERVICE_NAME}"
 for attempt in {1..20}; do
   if health="$(curl --fail --silent --show-error --max-time 2 --noproxy '*' \
     http://127.0.0.1:4310/better-agent/api/healthz)" && \

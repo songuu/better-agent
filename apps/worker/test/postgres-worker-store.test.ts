@@ -75,6 +75,7 @@ describe('PostgresWorkerJobStore', () => {
     };
 
     await store.recordInvocation({ ...lease, invocation });
+    await store.renew(lease);
     await store.complete({
       ...lease,
       aggregateInputTokens: 4,
@@ -86,6 +87,7 @@ describe('PostgresWorkerJobStore', () => {
 
     expect(query.mock.calls.map((call) => call[0])).toEqual([
       'SELECT app.record_agent_product_async_subagent_invocation($1::uuid, $2::uuid, $3::bigint, $4::jsonb)',
+      'SELECT app.renew_agent_product_async_subagent_job($1::uuid, $2::uuid, $3::bigint, $4::integer)',
       'SELECT app.complete_agent_product_async_subagent_job($1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::bigint, $6::text, $7::text)',
       'SELECT app.fail_agent_product_async_subagent_job($1::uuid, $2::uuid, $3::bigint, $4::text)',
     ]);

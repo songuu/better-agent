@@ -273,6 +273,28 @@ BEGIN
 END;
 $function$;
 
+CREATE FUNCTION app.renew_agent_product_async_subagent_job(
+  p_child_run_id uuid,p_lease_token uuid,p_lease_generation bigint,p_lease_seconds integer
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $function$
+DECLARE
+  v_job public.agent_product_async_subagent_jobs;
+  v_now timestamptz:=clock_timestamp();
+BEGIN
+  IF p_lease_seconds NOT BETWEEN 15 AND 300 THEN
+    RAISE EXCEPTION 'async SubAgent worker lease input is invalid' USING ERRCODE='22023';
+  END IF;
+  SELECT job.* INTO v_job FROM public.agent_product_async_subagent_jobs AS job
+    WHERE job.child_run_id=p_child_run_id FOR UPDATE;
+  IF NOT FOUND OR v_job.status<>'leased' OR v_job.lease_token<>p_lease_token
+    OR v_job.lease_generation<>p_lease_generation OR v_job.lease_expires_at<=v_now THEN
+    RAISE EXCEPTION 'async SubAgent lease conflict' USING ERRCODE='40001';
+  END IF;
+  UPDATE public.agent_product_async_subagent_jobs
+    SET lease_expires_at=v_now+make_interval(secs=>p_lease_seconds)
+    WHERE workspace_id=v_job.workspace_id AND child_run_id=v_job.child_run_id;
+END;
+$function$;
+
 CREATE FUNCTION app.record_agent_product_async_subagent_invocation(
   p_child_run_id uuid,p_lease_token uuid,p_lease_generation bigint,p_invocation jsonb
 ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $function$
@@ -488,6 +510,7 @@ FOR EACH ROW EXECUTE FUNCTION app.cascade_agent_product_async_subagent_children(
 
 ALTER FUNCTION app.dispatch_agent_product_async_subagent_job(uuid,uuid,uuid,uuid,bigint,text) OWNER TO ba_authorization_owner;
 ALTER FUNCTION app.claim_agent_product_async_subagent_job(text,integer) OWNER TO ba_authorization_owner;
+ALTER FUNCTION app.renew_agent_product_async_subagent_job(uuid,uuid,bigint,integer) OWNER TO ba_authorization_owner;
 ALTER FUNCTION app.record_agent_product_async_subagent_invocation(uuid,uuid,bigint,jsonb) OWNER TO ba_authorization_owner;
 ALTER FUNCTION app.complete_agent_product_async_subagent_job(uuid,uuid,bigint,bigint,bigint,text,text) OWNER TO ba_authorization_owner;
 ALTER FUNCTION app.fail_agent_product_async_subagent_job(uuid,uuid,bigint,text) OWNER TO ba_authorization_owner;
@@ -497,6 +520,7 @@ ALTER FUNCTION app.cascade_agent_product_async_subagent_children() OWNER TO ba_a
 
 REVOKE ALL ON FUNCTION app.dispatch_agent_product_async_subagent_job(uuid,uuid,uuid,uuid,bigint,text),
   app.claim_agent_product_async_subagent_job(text,integer),
+  app.renew_agent_product_async_subagent_job(uuid,uuid,bigint,integer),
   app.record_agent_product_async_subagent_invocation(uuid,uuid,bigint,jsonb),
   app.complete_agent_product_async_subagent_job(uuid,uuid,bigint,bigint,bigint,text,text),
   app.fail_agent_product_async_subagent_job(uuid,uuid,bigint,text),
@@ -506,6 +530,7 @@ GRANT EXECUTE ON FUNCTION app.dispatch_agent_product_async_subagent_job(uuid,uui
   app.read_agent_product_async_subagent_run(uuid,uuid,uuid,uuid),
   app.list_agent_product_async_subagent_events(uuid,uuid,uuid) TO ba_runtime;
 GRANT EXECUTE ON FUNCTION app.claim_agent_product_async_subagent_job(text,integer),
+  app.renew_agent_product_async_subagent_job(uuid,uuid,bigint,integer),
   app.record_agent_product_async_subagent_invocation(uuid,uuid,bigint,jsonb),
   app.complete_agent_product_async_subagent_job(uuid,uuid,bigint,bigint,bigint,text,text),
   app.fail_agent_product_async_subagent_job(uuid,uuid,bigint,text) TO ba_execution_executor;

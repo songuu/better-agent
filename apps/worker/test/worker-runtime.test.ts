@@ -40,6 +40,7 @@ function createStore(overrides: Partial<WorkerJobStore> = {}): WorkerJobStore {
     complete: vi.fn().mockResolvedValue(undefined),
     fail: vi.fn().mockResolvedValue(undefined),
     recordInvocation: vi.fn().mockResolvedValue(undefined),
+    renew: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -98,5 +99,35 @@ describe('runWorkerCycle', () => {
 
     expect(await runWorkerCycle(store, { generate })).toBe(false);
     expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('renews the exact lease while model execution remains in flight', async () => {
+    let finishGeneration: (() => void) | undefined;
+    const store = createStore();
+    vi.mocked(store.renew).mockImplementationOnce(async () => finishGeneration?.());
+    const generate = vi.fn(
+      async () =>
+        await new Promise<{
+          inputTokens: number;
+          outputText: string;
+          outputTokens: number;
+          providerRequestId: string;
+        }>((resolve) => {
+          finishGeneration = () =>
+            resolve({
+              inputTokens: 4,
+              outputText: 'renewed evidence',
+              outputTokens: 2,
+              providerRequestId: 'response-renewed',
+            });
+        }),
+    );
+
+    await runWorkerCycle(store, { generate }, { heartbeatIntervalMs: 1, sleep: async () => {} });
+
+    expect(store.renew).toHaveBeenCalledWith(
+      expect.objectContaining({ leaseGeneration: 7, leaseToken: expect.any(String) }),
+    );
+    expect(store.complete).toHaveBeenCalledOnce();
   });
 });

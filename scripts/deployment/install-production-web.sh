@@ -6,10 +6,13 @@ readonly SHARED_ROOT="${SHARED_ROOT:?SHARED_ROOT is required}"
 readonly REMOTE_RELEASE="${REMOTE_RELEASE:?REMOTE_RELEASE is required}"
 readonly ACCEPTED_SHA="${ACCEPTED_SHA:?ACCEPTED_SHA is required}"
 readonly WEB_CURRENT="${WEB_CURRENT:-/opt/better-agent/web-current}"
+readonly WORKER_CURRENT="${WORKER_CURRENT:-/opt/better-agent/worker-current}"
 readonly NGINX_MAIN_CONFIG="${NGINX_MAIN_CONFIG:-/etc/nginx/conf.d/default.conf}"
 readonly NGINX_SNIPPET="/etc/nginx/snippets/better-agent.location.conf"
 readonly SYSTEMD_UNIT="/etc/systemd/system/better-agent-web.service"
 readonly SERVICE_NAME="better-agent-web.service"
+readonly WORKER_SYSTEMD_UNIT="/etc/systemd/system/better-agent-worker.service"
+readonly WORKER_SERVICE_NAME="better-agent-worker.service"
 readonly INCLUDE_ANCHOR='    include /etc/nginx/snippets/essay-manage.location.conf;'
 readonly INCLUDE_LINE='    include /etc/nginx/snippets/better-agent.location.conf;'
 
@@ -34,21 +37,30 @@ require_release_file() {
 }
 
 require_release_file "${release}/apps/web/dist/server.js"
+require_release_file "${release}/apps/worker/dist/main.js"
 require_release_file "${release}/apps/web/public/index.html"
 require_release_file "${release}/deploy/systemd/better-agent-web.service"
+require_release_file "${release}/deploy/systemd/better-agent-worker.service"
 require_release_file "${release}/deploy/nginx/better-agent.location.conf"
 [[ -f "${NGINX_MAIN_CONFIG}" && ! -L "${NGINX_MAIN_CONFIG}" ]]
 if [[ -e "${WEB_CURRENT}" || -L "${WEB_CURRENT}" ]]; then
   [[ -L "${WEB_CURRENT}" ]]
 fi
+if [[ -e "${WORKER_CURRENT}" || -L "${WORKER_CURRENT}" ]]; then
+  [[ -L "${WORKER_CURRENT}" ]]
+fi
 
 backup_dir="$(mktemp -d /tmp/better-agent-web-install.XXXXXX)"
 previous_web_release="$(readlink -f -- "${WEB_CURRENT}" 2>/dev/null || true)"
+previous_worker_release="$(readlink -f -- "${WORKER_CURRENT}" 2>/dev/null || true)"
 unit_existed=0
+worker_unit_existed=0
 snippet_existed=0
 env_existed=0
 service_was_enabled=0
 service_was_active=0
+worker_service_was_enabled=0
+worker_service_was_active=0
 
 backup_file() {
   local source="$1"
@@ -72,11 +84,14 @@ restore_file() {
 }
 
 backup_file "${SYSTEMD_UNIT}" unit && unit_existed=1 || true
+backup_file "${WORKER_SYSTEMD_UNIT}" worker-unit && worker_unit_existed=1 || true
 backup_file "${NGINX_SNIPPET}" snippet && snippet_existed=1 || true
 backup_file "${SHARED_ROOT}/web.env" env && env_existed=1 || true
 cp -a -- "${NGINX_MAIN_CONFIG}" "${backup_dir}/nginx-main"
 systemctl is-enabled --quiet "${SERVICE_NAME}" && service_was_enabled=1 || true
 systemctl is-active --quiet "${SERVICE_NAME}" && service_was_active=1 || true
+systemctl is-enabled --quiet "${WORKER_SERVICE_NAME}" && worker_service_was_enabled=1 || true
+systemctl is-active --quiet "${WORKER_SERVICE_NAME}" && worker_service_was_active=1 || true
 
 rollback() {
   local exit_code="${1:-$?}"
@@ -85,20 +100,34 @@ rollback() {
   cp -a -- "${backup_dir}/nginx-main" "${NGINX_MAIN_CONFIG}"
   restore_file "${NGINX_SNIPPET}" snippet "${snippet_existed}"
   restore_file "${SYSTEMD_UNIT}" unit "${unit_existed}"
+  restore_file "${WORKER_SYSTEMD_UNIT}" worker-unit "${worker_unit_existed}"
   restore_file "${SHARED_ROOT}/web.env" env "${env_existed}"
   rm -f -- "${WEB_CURRENT}.next"
+  rm -f -- "${WORKER_CURRENT}.next"
   if [[ -n "${previous_web_release}" ]]; then
     ln -sfn -- "${previous_web_release}" "${WEB_CURRENT}.next"
     mv -Tf -- "${WEB_CURRENT}.next" "${WEB_CURRENT}"
   else
     rm -f -- "${WEB_CURRENT}"
   fi
+  if [[ -n "${previous_worker_release}" ]]; then
+    ln -sfn -- "${previous_worker_release}" "${WORKER_CURRENT}.next"
+    mv -Tf -- "${WORKER_CURRENT}.next" "${WORKER_CURRENT}"
+  else
+    rm -f -- "${WORKER_CURRENT}"
+  fi
   systemctl daemon-reload
   if [[ "${service_was_enabled}" == 0 ]]; then systemctl disable "${SERVICE_NAME}"; fi
+  if [[ "${worker_service_was_enabled}" == 0 ]]; then systemctl disable "${WORKER_SERVICE_NAME}"; fi
   if [[ "${service_was_active}" == 1 ]]; then
     systemctl restart "${SERVICE_NAME}"
   else
     systemctl stop "${SERVICE_NAME}"
+  fi
+  if [[ "${worker_service_was_active}" == 1 ]]; then
+    systemctl restart "${WORKER_SERVICE_NAME}"
+  else
+    systemctl stop "${WORKER_SERVICE_NAME}"
   fi
   nginx -t && systemctl reload nginx
   rm -rf -- "${backup_dir}"
@@ -111,8 +140,12 @@ trap 'rollback 143' TERM
 if ! getent passwd better-agent-web >/dev/null; then
   useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin better-agent-web
 fi
+if ! getent passwd better-agent-worker >/dev/null; then
+  useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin better-agent-worker
+fi
 install -d -m 0755 /etc/nginx/snippets
 install -m 0644 "${release}/deploy/systemd/better-agent-web.service" "${SYSTEMD_UNIT}"
+install -m 0644 "${release}/deploy/systemd/better-agent-worker.service" "${WORKER_SYSTEMD_UNIT}"
 install -m 0644 "${release}/deploy/nginx/better-agent.location.conf" "${NGINX_SNIPPET}"
 
 if ! grep -Fqx "${INCLUDE_LINE}" "${NGINX_MAIN_CONFIG}"; then
@@ -132,10 +165,19 @@ printf 'BETTER_AGENT_WEB_HOST=127.0.0.1\nBETTER_AGENT_WEB_PORT=4310\nBETTER_AGEN
 install -m 0640 -o root -g better-agent-web "${backup_dir}/web.env.next" "${SHARED_ROOT}/web.env"
 ln -sfn -- "${release}" "${WEB_CURRENT}.next"
 mv -Tf -- "${WEB_CURRENT}.next" "${WEB_CURRENT}"
+ln -sfn -- "${release}" "${WORKER_CURRENT}.next"
+mv -Tf -- "${WORKER_CURRENT}.next" "${WORKER_CURRENT}"
 
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
+systemctl enable "${WORKER_SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
+if [[ -f "${SHARED_ROOT}/model.env" ]]; then
+  systemctl restart "${WORKER_SERVICE_NAME}"
+  systemctl is-active --quiet "${WORKER_SERVICE_NAME}"
+else
+  systemctl stop "${WORKER_SERVICE_NAME}"
+fi
 
 for attempt in {1..20}; do
   if curl --fail --silent --show-error --max-time 2 --noproxy '*' \

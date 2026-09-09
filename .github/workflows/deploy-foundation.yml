@@ -63,11 +63,14 @@ jobs:
           set -euo pipefail
           pnpm --filter @better-agent/db build
           pnpm --filter @better-agent/web build
+          pnpm --filter @better-agent/worker build
           test -f apps/web/dist/server.js
+          test -f apps/worker/dist/main.js
           test -f apps/web/public/index.html
           test -f apps/web/public/assets/app.css
           test -f apps/web/public/assets/app.js
           test -f deploy/systemd/better-agent-web.service
+          test -f deploy/systemd/better-agent-worker.service
           test -f deploy/nginx/better-agent.location.conf
           test -f scripts/deployment/install-production-web.sh
 
@@ -78,14 +81,21 @@ jobs:
           set -euo pipefail
           pnpm --config.inject-workspace-packages=true --filter @better-agent/web \
             deploy --prod "${RUNNER_TEMP}/web-runtime"
+          pnpm --config.inject-workspace-packages=true --filter @better-agent/worker \
+            deploy --prod "${RUNNER_TEMP}/worker-runtime"
           test -f "${RUNNER_TEMP}/web-runtime/node_modules/pg/package.json"
           test -f "${RUNNER_TEMP}/web-runtime/node_modules/@better-agent/agent-runtime/dist/index.js"
+          test -f "${RUNNER_TEMP}/worker-runtime/node_modules/pg/package.json"
+          test -f "${RUNNER_TEMP}/worker-runtime/node_modules/@better-agent/agent-runtime/dist/index.js"
           mkdir -p "${RUNNER_TEMP}/release-tree"
           tar --exclude=.git --exclude=node_modules --exclude=.turbo -cf - . | \
             tar -xf - -C "${RUNNER_TEMP}/release-tree"
           mkdir -p "${RUNNER_TEMP}/release-tree/apps/web"
           cp -a "${RUNNER_TEMP}/web-runtime/node_modules" \
             "${RUNNER_TEMP}/release-tree/apps/web/node_modules"
+          mkdir -p "${RUNNER_TEMP}/release-tree/apps/worker"
+          cp -a "${RUNNER_TEMP}/worker-runtime/node_modules" \
+            "${RUNNER_TEMP}/release-tree/apps/worker/node_modules"
           mkdir -p "${RUNNER_TEMP}/release"
           archive="${RUNNER_TEMP}/release/better-agent-${ACCEPTED_SHA}.tgz"
           tar -C "${RUNNER_TEMP}/release-tree" -czf "${archive}" .
@@ -185,12 +195,14 @@ jobs:
             tar -xzf "${REMOTE_ARCHIVE}" -C "${staging_release}"
             test -f "${staging_release}/packages/db/dist/cli.js"
             test -f "${staging_release}/apps/web/dist/server.js"
+            test -f "${staging_release}/apps/worker/dist/main.js"
             test -f "${staging_release}/apps/web/public/index.html"
             test -f "${staging_release}/scripts/deployment/install-production-web.sh"
             mv "${staging_release}" "${REMOTE_RELEASE}"
           fi
           test -f "${REMOTE_RELEASE}/packages/db/dist/cli.js"
           test -f "${REMOTE_RELEASE}/apps/web/dist/server.js"
+          test -f "${REMOTE_RELEASE}/apps/worker/dist/main.js"
           test -f "${REMOTE_RELEASE}/apps/web/public/index.html"
           test -f "${REMOTE_RELEASE}/scripts/deployment/install-production-web.sh"
 

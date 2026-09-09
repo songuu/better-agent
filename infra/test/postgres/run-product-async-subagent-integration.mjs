@@ -146,6 +146,31 @@ async function main() {
   );
   assertEqual(claim.childRunId, childRunId, 'claim returns dispatched child Run');
   assertEqual(String(claim.chains.length), '2', 'claim carries two immutable branches');
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.renew_agent_product_async_subagent_job('${childRunId}','${claim.leaseToken}',
+        ${claim.leaseGeneration},45);`,
+      { allowFailure: true },
+    ),
+    /permission denied|42501/u,
+    'runtime cannot renew execution work',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_execution_other_test',
+      `SELECT app.renew_agent_product_async_subagent_job('${childRunId}',
+        '00000000-0000-4000-8000-000000000097',${claim.leaseGeneration},45);`,
+      { allowFailure: true },
+    ),
+    /lease conflict|40001/u,
+    'a foreign lease cannot renew execution work',
+  );
+  await harness.psql(
+    'ba_execution_test',
+    `SELECT app.renew_agent_product_async_subagent_job('${childRunId}','${claim.leaseToken}',
+      ${claim.leaseGeneration},45);`,
+  );
   assertEqual(
     await harness.queryScalar(
       'ba_execution_other_test',
@@ -282,7 +307,7 @@ async function main() {
   );
 
   process.stdout.write(
-    `PostgreSQL 16 product async SubAgent passed: ${migrations.length} migrations, atomic dispatch, immutable child context, role-separated SKIP LOCKED claim, lease fencing, exact receipts, idempotent terminalization, independent events and parent cascade.\n`,
+    `PostgreSQL 16 product async SubAgent passed: ${migrations.length} migrations, atomic dispatch, immutable child context, role-separated SKIP LOCKED claim, lease renewal/fencing, exact receipts, idempotent terminalization, independent events and parent cascade.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-async-subagent pass\n');
 }

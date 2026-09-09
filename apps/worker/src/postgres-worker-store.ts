@@ -6,6 +6,7 @@ import type {
   WorkerFailure,
   WorkerInvocationReceipt,
   WorkerJobStore,
+  WorkerLeaseIdentity,
 } from './worker-runtime.js';
 
 interface QueryResult<Row> {
@@ -85,6 +86,13 @@ export class PostgresWorkerJobStore implements WorkerJobStore {
         receipt.leaseGeneration,
         JSON.stringify(receipt.invocation),
       ],
+    );
+  }
+
+  async renew(lease: WorkerLeaseIdentity): Promise<void> {
+    await this.#pool.query(
+      'SELECT app.renew_agent_product_async_subagent_job($1::uuid, $2::uuid, $3::bigint, $4::integer)',
+      [lease.childRunId, lease.leaseToken, lease.leaseGeneration, this.#leaseSeconds],
     );
   }
 

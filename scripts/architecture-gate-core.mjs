@@ -197,7 +197,7 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
   Object.freeze({
     id: 'product-async-subagent',
     file: 'infra/test/postgres/run-product-async-subagent-integration.mjs',
-    sha256: 'ad2d180ff15a220a5f1ee0f3252c46007e28dd64565aa436885aaa01db5abc3f',
+    sha256: 'f5baf94ce1c4108349067c490dcaf1020631a5881bbcaff1a57d360c9708b29e',
     successMarker: 'architecture-gate-suite/1 product-async-subagent pass',
   }),
   Object.freeze({
@@ -281,8 +281,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/agent-runtime',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 2,
-    successMarker: '@better-agent/agent-runtime:test:       Tests  2 passed (2)',
+    testCount: 5,
+    successMarker: '@better-agent/agent-runtime:test:       Tests  5 passed (5)',
   }),
   Object.freeze({
     packageName: '@better-agent/api',
@@ -366,8 +366,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/worker',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 6,
-    successMarker: '@better-agent/worker:test:       Tests  6 passed (6)',
+    testCount: 10,
+    successMarker: '@better-agent/worker:test:       Tests  10 passed (10)',
   }),
 ]);
 
