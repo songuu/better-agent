@@ -2,7 +2,11 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
+    "paths": {
+      "@better-agent/agent-runtime": ["../../packages/agent-runtime/src/index.ts"]
+    },
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
+  "references": [{ "path": "../../packages/agent-runtime/tsconfig.build.json" }]
 }

@@ -41,6 +41,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@better-agent/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
       pg:
         specifier: 8.23.0
         version: 8.23.0
@@ -51,6 +54,18 @@ importers:
       '@types/pg':
         specifier: 8.23.1
         version: 8.23.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@22.20.1)(yaml@2.9.0)
+
+  packages/agent-runtime:
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.1
+        version: 22.20.1
       typescript:
         specifier: 7.0.2
         version: 7.0.2

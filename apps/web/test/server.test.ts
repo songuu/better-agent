@@ -1185,6 +1185,12 @@ describe('Better Agent web runtime', () => {
       await mkdir(join(releaseDirectory, 'dist'), { recursive: true });
       await writeFile(join(releaseDirectory, 'package.json'), '{"type":"module"}\n');
       await compileServer(packageDirectory, releaseDirectory);
+      await mkdir(join(releaseDirectory, 'node_modules', '@better-agent'), { recursive: true });
+      await symlink(
+        join(packageDirectory, '..', '..', 'packages', 'agent-runtime'),
+        join(releaseDirectory, 'node_modules', '@better-agent', 'agent-runtime'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
       await symlink(
         join(packageDirectory, 'public'),
         join(releaseDirectory, 'public'),

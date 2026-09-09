@@ -79,6 +79,7 @@ jobs:
           pnpm --config.inject-workspace-packages=true --filter @better-agent/web \
             deploy --prod "${RUNNER_TEMP}/web-runtime"
           test -f "${RUNNER_TEMP}/web-runtime/node_modules/pg/package.json"
+          test -f "${RUNNER_TEMP}/web-runtime/node_modules/@better-agent/agent-runtime/dist/index.js"
           mkdir -p "${RUNNER_TEMP}/release-tree"
           tar --exclude=.git --exclude=node_modules --exclude=.turbo -cf - . | \
             tar -xf - -C "${RUNNER_TEMP}/release-tree"
