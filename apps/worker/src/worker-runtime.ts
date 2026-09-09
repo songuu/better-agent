@@ -4,6 +4,7 @@ import {
   type SubagentInvocationReceipt,
   type SubagentNode,
   withParallelSubagentContext,
+  withSubagentContext,
 } from '@better-agent/agent-runtime';
 
 export interface WorkerLeaseIdentity {
@@ -116,7 +117,7 @@ export async function runWorkerCycle(
       outputText:
         singleBranch === undefined
           ? withParallelSubagentContext(result.branches)
-          : singleBranch.outputText,
+          : withSubagentContext(singleBranch.name, singleBranch.outputText),
       providerRequestId: result.providerRequestId,
     });
   } catch {

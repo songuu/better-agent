@@ -51,7 +51,7 @@ describe('runWorkerCycle', () => {
     const worked = await runWorkerCycle(store, {
       generate: vi.fn().mockResolvedValue({
         inputTokens: 4,
-        outputText: 'evidence',
+        outputText: expect.stringContaining('evidence'),
         outputTokens: 2,
         providerRequestId: 'response-1',
       }),
@@ -66,7 +66,7 @@ describe('runWorkerCycle', () => {
         aggregateInputTokens: 4,
         aggregateOutputTokens: 2,
         leaseGeneration: 7,
-        outputText: 'evidence',
+        outputText: expect.stringContaining('evidence'),
       }),
     );
     expect(store.fail).not.toHaveBeenCalled();

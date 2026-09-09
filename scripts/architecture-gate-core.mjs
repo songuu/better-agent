@@ -197,7 +197,7 @@ const EXPECTED_POSTGRES_SUITES = Object.freeze([
   Object.freeze({
     id: 'product-async-subagent',
     file: 'infra/test/postgres/run-product-async-subagent-integration.mjs',
-    sha256: 'f5baf94ce1c4108349067c490dcaf1020631a5881bbcaff1a57d360c9708b29e',
+    sha256: 'b36518273b494ac4e49e69a07fd4336c1dd238ae9424bf60bd547803a4274b54',
     successMarker: 'architecture-gate-suite/1 product-async-subagent pass',
   }),
   Object.freeze({

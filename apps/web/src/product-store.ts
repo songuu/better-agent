@@ -202,6 +202,17 @@ export interface ProductRunSubagentNode extends ProductRunSubagent {
   readonly strategyProfile: ProductAgentStrategyProfile;
 }
 
+export interface ProductAsyncSubagentRun {
+  readonly aggregateInputTokens: number | null;
+  readonly aggregateOutputTokens: number | null;
+  readonly childRunId: string;
+  readonly errorCode: string | null;
+  readonly outputText: string | null;
+  readonly parentCallId: string;
+  readonly providerRequestId: string | null;
+  readonly status: 'queued' | 'leased' | 'completed' | 'failed';
+}
+
 export interface ProductRunSubagentInvocation {
   readonly agentId: string;
   readonly aggregateInputTokens: number;
@@ -552,6 +563,22 @@ export interface ProductStore {
     actorId: string,
     runId: string,
   ): Promise<readonly (readonly ProductRunSubagentNode[])[]>;
+  dispatchRunSubagentJob?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    input: {
+      readonly parentCallId: string;
+      readonly parentIteration: number;
+      readonly prompt: string;
+    },
+  ): Promise<string>;
+  readRunSubagentJob?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    parentCallId: string,
+  ): Promise<ProductAsyncSubagentRun | null>;
   getRunSkillPack?(
     workspaceId: string,
     actorId: string,
@@ -3193,6 +3220,91 @@ export class PostgresProductStore implements ProductStore {
     return Object.freeze(chains);
   }
 
+  async dispatchRunSubagentJob(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    input: Parameters<NonNullable<ProductStore['dispatchRunSubagentJob']>>[3],
+  ): Promise<string> {
+    const result = await this.#pool.query<{ readonly child_run_id: string }>(
+      'SELECT app.dispatch_agent_product_async_subagent_job($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::bigint, $6::text) AS child_run_id',
+      [workspaceId, runId, actorId, input.parentCallId, input.parentIteration, input.prompt],
+    );
+    const childRunId = result.rows[0]?.child_run_id;
+    if (childRunId === undefined || !PRODUCT_UUID.test(childRunId)) {
+      throw new Error('product store did not dispatch the async SubAgent job');
+    }
+    return childRunId;
+  }
+
+  async readRunSubagentJob(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    parentCallId: string,
+  ): Promise<ProductAsyncSubagentRun | null> {
+    const result = await this.#pool.query<{ readonly child_run: unknown }>(
+      'SELECT app.read_agent_product_async_subagent_run($1::uuid, $2::uuid, $3::uuid, $4::uuid) AS child_run',
+      [workspaceId, runId, actorId, parentCallId],
+    );
+    const value = result.rows[0]?.child_run;
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('product store returned an invalid async SubAgent Run');
+    }
+    const row = value as Record<string, unknown>;
+    const hasInputTokens =
+      typeof row.aggregateInputTokens === 'number' &&
+      Number.isSafeInteger(row.aggregateInputTokens) &&
+      row.aggregateInputTokens >= 0;
+    const hasOutputTokens =
+      typeof row.aggregateOutputTokens === 'number' &&
+      Number.isSafeInteger(row.aggregateOutputTokens) &&
+      row.aggregateOutputTokens >= 0;
+    const hasCompletedEvidence =
+      typeof row.outputText === 'string' &&
+      row.outputText.length > 0 &&
+      typeof row.providerRequestId === 'string' &&
+      row.providerRequestId.length > 0 &&
+      hasInputTokens &&
+      hasOutputTokens &&
+      row.errorCode === null;
+    const hasFailedEvidence =
+      row.outputText === null &&
+      row.providerRequestId === null &&
+      row.aggregateInputTokens === null &&
+      row.aggregateOutputTokens === null &&
+      typeof row.errorCode === 'string' &&
+      /^[a-z0-9_]{1,100}$/u.test(row.errorCode);
+    const hasPendingEvidence =
+      row.outputText === null &&
+      row.providerRequestId === null &&
+      row.aggregateInputTokens === null &&
+      row.aggregateOutputTokens === null &&
+      row.errorCode === null;
+    if (
+      typeof row.childRunId !== 'string' ||
+      !PRODUCT_UUID.test(row.childRunId) ||
+      row.parentCallId !== parentCallId ||
+      !['queued', 'leased', 'completed', 'failed'].includes(String(row.status)) ||
+      (row.status === 'completed' && !hasCompletedEvidence) ||
+      (row.status === 'failed' && !hasFailedEvidence) ||
+      ((row.status === 'queued' || row.status === 'leased') && !hasPendingEvidence)
+    ) {
+      throw new Error('product store returned an invalid async SubAgent Run');
+    }
+    return Object.freeze({
+      aggregateInputTokens: row.aggregateInputTokens as number | null,
+      aggregateOutputTokens: row.aggregateOutputTokens as number | null,
+      childRunId: row.childRunId,
+      errorCode: row.errorCode as string | null,
+      outputText: row.outputText as string | null,
+      parentCallId,
+      providerRequestId: row.providerRequestId as string | null,
+      status: row.status as ProductAsyncSubagentRun['status'],
+    });
+  }
+
   async getRunSkillPack(
     workspaceId: string,
     actorId: string,
@@ -3501,7 +3613,7 @@ export class PostgresProductStore implements ProductStore {
   }
 
   async listRuns(workspaceId: string): Promise<readonly ProductRun[]> {
-    const [runResult, invocationResult] = await Promise.all([
+    const [runResult, invocationResult, asyncInvocationResult] = await Promise.all([
       this.#pool.query<ProductRunRow>('SELECT * FROM app.list_agent_product_runs($1::uuid)', [
         workspaceId,
       ]),
@@ -3509,9 +3621,13 @@ export class PostgresProductStore implements ProductStore {
         'SELECT * FROM app.list_agent_product_run_subagent_invocations($1::uuid)',
         [workspaceId],
       ),
+      this.#pool.query<ProductRunSubagentInvocationRow>(
+        'SELECT * FROM app.list_agent_product_async_subagent_invocations($1::uuid)',
+        [workspaceId],
+      ),
     ]);
     const invocationsByRun = new Map<string, ProductRunSubagentInvocation[]>();
-    for (const row of invocationResult.rows) {
+    for (const row of [...invocationResult.rows, ...asyncInvocationResult.rows]) {
       const invocation = toRunSubagentInvocation(row);
       const existing = invocationsByRun.get(invocation.runId) ?? [];
       existing.push(invocation);

@@ -478,6 +478,25 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp A
   ORDER BY event.child_run_id,event.sequence;
 $function$;
 
+CREATE FUNCTION app.list_agent_product_async_subagent_invocations(p_workspace_id uuid)
+RETURNS TABLE(
+  run_id uuid,parent_iteration bigint,branch smallint,depth smallint,agent_id uuid,
+  release_version bigint,name text,model text,input_text text,output_text text,
+  provider_request_id text,exclusive_input_tokens bigint,exclusive_output_tokens bigint,
+  aggregate_input_tokens bigint,aggregate_output_tokens bigint,created_at timestamptz
+) LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $function$
+  SELECT context.parent_run_id,context.parent_iteration,invocation.branch,invocation.depth,
+    invocation.agent_id,invocation.release_version,invocation.name,invocation.model,
+    invocation.input_text,invocation.output_text,invocation.provider_request_id,
+    invocation.exclusive_input_tokens,invocation.exclusive_output_tokens,
+    invocation.aggregate_input_tokens,invocation.aggregate_output_tokens,invocation.created_at
+  FROM public.agent_product_async_subagent_invocations AS invocation
+  JOIN public.agent_product_async_subagent_contexts AS context
+    ON context.workspace_id=invocation.workspace_id AND context.child_run_id=invocation.child_run_id
+  WHERE invocation.workspace_id=p_workspace_id
+  ORDER BY context.parent_run_id,context.parent_iteration,invocation.branch,invocation.depth;
+$function$;
+
 CREATE FUNCTION app.cascade_agent_product_async_subagent_children()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $function$
 DECLARE v_child record;v_now timestamptz:=clock_timestamp();
@@ -516,6 +535,7 @@ ALTER FUNCTION app.complete_agent_product_async_subagent_job(uuid,uuid,bigint,bi
 ALTER FUNCTION app.fail_agent_product_async_subagent_job(uuid,uuid,bigint,text) OWNER TO ba_authorization_owner;
 ALTER FUNCTION app.read_agent_product_async_subagent_run(uuid,uuid,uuid,uuid) OWNER TO ba_authorization_owner;
 ALTER FUNCTION app.list_agent_product_async_subagent_events(uuid,uuid,uuid) OWNER TO ba_authorization_owner;
+ALTER FUNCTION app.list_agent_product_async_subagent_invocations(uuid) OWNER TO ba_authorization_owner;
 ALTER FUNCTION app.cascade_agent_product_async_subagent_children() OWNER TO ba_authorization_owner;
 
 REVOKE ALL ON FUNCTION app.dispatch_agent_product_async_subagent_job(uuid,uuid,uuid,uuid,bigint,text),
@@ -525,10 +545,12 @@ REVOKE ALL ON FUNCTION app.dispatch_agent_product_async_subagent_job(uuid,uuid,u
   app.complete_agent_product_async_subagent_job(uuid,uuid,bigint,bigint,bigint,text,text),
   app.fail_agent_product_async_subagent_job(uuid,uuid,bigint,text),
   app.read_agent_product_async_subagent_run(uuid,uuid,uuid,uuid),
-  app.list_agent_product_async_subagent_events(uuid,uuid,uuid) FROM PUBLIC,ba_runtime,ba_execution_executor;
+  app.list_agent_product_async_subagent_events(uuid,uuid,uuid),
+  app.list_agent_product_async_subagent_invocations(uuid) FROM PUBLIC,ba_runtime,ba_execution_executor;
 GRANT EXECUTE ON FUNCTION app.dispatch_agent_product_async_subagent_job(uuid,uuid,uuid,uuid,bigint,text),
   app.read_agent_product_async_subagent_run(uuid,uuid,uuid,uuid),
-  app.list_agent_product_async_subagent_events(uuid,uuid,uuid) TO ba_runtime;
+  app.list_agent_product_async_subagent_events(uuid,uuid,uuid),
+  app.list_agent_product_async_subagent_invocations(uuid) TO ba_runtime;
 GRANT EXECUTE ON FUNCTION app.claim_agent_product_async_subagent_job(text,integer),
   app.renew_agent_product_async_subagent_job(uuid,uuid,bigint,integer),
   app.record_agent_product_async_subagent_invocation(uuid,uuid,bigint,jsonb),

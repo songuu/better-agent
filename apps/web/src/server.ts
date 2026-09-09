@@ -1,14 +1,8 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
-
-import {
-  executeParallelSubagents,
-  withParallelSubagentContext,
-  withSubagentContext,
-} from '@better-agent/agent-runtime';
 
 import {
   createPostgresProductStore,
@@ -73,6 +67,8 @@ interface StaticAsset {
 export interface BetterAgentWebOptions {
   readonly actorId?: string;
   readonly adminPassword?: string;
+  readonly asyncSubagentPollIntervalMs?: number;
+  readonly asyncSubagentTimeoutMs?: number;
   readonly buildSha?: string;
   readonly modelRuntime?: ProductModelRuntime;
   readonly mcpRuntime?: ProductMcpRuntime;
@@ -317,6 +313,16 @@ export async function createBetterAgentWebServer(
   const sessionSecret = options.sessionSecret ?? process.env.BETTER_AGENT_SESSION_SECRET;
   const secureCookies =
     options.secureCookies ?? process.env.BETTER_AGENT_SECURE_COOKIES !== 'false';
+  const asyncSubagentPollIntervalMs = options.asyncSubagentPollIntervalMs ?? 250;
+  const asyncSubagentTimeoutMs = options.asyncSubagentTimeoutMs ?? 300_000;
+  if (
+    !Number.isSafeInteger(asyncSubagentPollIntervalMs) ||
+    asyncSubagentPollIntervalMs < 1 ||
+    !Number.isSafeInteger(asyncSubagentTimeoutMs) ||
+    asyncSubagentTimeoutMs < asyncSubagentPollIntervalMs
+  ) {
+    throw new Error('async_subagent_wait_configuration_invalid');
+  }
   const databaseUrl = process.env.BETTER_AGENT_RUNTIME_DATABASE_URL;
   const modelRuntime = options.modelRuntime ?? createModelRuntimeFromEnvironment();
   const mcpRuntime = options.mcpRuntime ?? new SecureMcpRuntime();
@@ -1082,10 +1088,7 @@ export async function createBetterAgentWebServer(
             modelRuntime.decideAction === undefined ||
             productStore.getRunCapabilities === undefined ||
             (isV5
-              ? productStore.recordRunDecisionV5 === undefined ||
-                (productStore.getRunSubagentChains === undefined &&
-                  productStore.getRunSubagentChain === undefined &&
-                  productStore.getRunSubagent === undefined)
+              ? productStore.recordRunDecisionV5 === undefined
               : productStore.recordRunDecision === undefined)
           ) {
             throw new Error('model_action_runtime_unavailable');
@@ -1188,110 +1191,55 @@ export async function createBetterAgentWebServer(
             if (decision.capability === 'subagent') {
               if (
                 !isV5 ||
-                (productStore.getRunSubagentChains === undefined &&
-                  productStore.getRunSubagentChain === undefined &&
-                  productStore.getRunSubagent === undefined)
+                productStore.dispatchRunSubagentJob === undefined ||
+                productStore.readRunSubagentJob === undefined
               ) {
                 throw new Error('model_subagent_runtime_unavailable');
               }
-              if (
-                productStore.getRunSubagentChains !== undefined ||
-                productStore.getRunSubagentChain !== undefined
-              ) {
-                const chains =
-                  productStore.getRunSubagentChains !== undefined
-                    ? await productStore.getRunSubagentChains(workspaceId, actorId, prepared.runId)
-                    : [
-                        await (
-                          productStore.getRunSubagentChain as NonNullable<
-                            ProductStore['getRunSubagentChain']
-                          >
-                        )(workspaceId, actorId, prepared.runId),
-                      ];
-                if (chains.length === 0 || chains.some((chain) => chain.length === 0)) {
-                  throw new Error('model_subagent_runtime_unavailable');
-                }
-                if (productStore.recordRunSubagentInvocation === undefined) {
-                  throw new Error('model_subagent_receipt_runtime_unavailable');
-                }
-                const remainingOutputBudget = strategy.maxOutputTokens - consumedOutputTokens;
-                const childNodeCount = chains.reduce((total, chain) => total + chain.length, 0);
-                if (remainingOutputBudget < childNodeCount) {
-                  throw new Error('model_output_budget_exhausted');
-                }
-                const perNodeOutputBudget = Math.floor(remainingOutputBudget / childNodeCount);
-                let outputBudgetRemainder = remainingOutputBudget % childNodeCount;
-                const boundedChains = Object.freeze(
-                  chains.map((chain) =>
-                    Object.freeze(
-                      chain.map((node) => {
-                        const allocatedOutputBudget =
-                          perNodeOutputBudget + (outputBudgetRemainder > 0 ? 1 : 0);
-                        outputBudgetRemainder = Math.max(0, outputBudgetRemainder - 1);
-                        const maxOutputTokens = Math.min(
-                          node.maxOutputTokens,
-                          allocatedOutputBudget,
-                        );
-                        return Object.freeze({
-                          ...node,
-                          maxOutputTokens,
-                          strategyProfile: Object.freeze({
-                            ...node.strategyProfile,
-                            maxOutputTokens,
-                          }),
-                        });
-                      }),
-                    ),
-                  ),
-                );
-                const childOutput = await executeParallelSubagents(
-                  boundedChains,
-                  decision.toolInput,
-                  iteration,
-                  modelRuntime,
-                  async (invocation) => {
-                    await productStore.recordRunSubagentInvocation?.(
-                      workspaceId,
-                      actorId,
-                      prepared.runId,
-                      invocation,
-                    );
-                  },
-                );
-                toolInputTokens = childOutput.aggregateInputTokens;
-                toolOutputTokens = childOutput.aggregateOutputTokens;
-                toolProviderRequestId = childOutput.providerRequestId;
-                toolOutput =
-                  childOutput.branchCount === 1
-                    ? withSubagentContext(
-                        childOutput.branches[0]?.name ?? 'SubAgent',
-                        childOutput.branches[0]?.outputText ?? '',
-                      )
-                    : withParallelSubagentContext(childOutput.branches);
-              } else {
-                if (productStore.getRunSubagent === undefined) {
-                  throw new Error('model_subagent_runtime_unavailable');
-                }
-                const child = await productStore.getRunSubagent(
+              const parentCallId = randomUUID();
+              const childRunId = await productStore.dispatchRunSubagentJob(
+                workspaceId,
+                actorId,
+                prepared.runId,
+                {
+                  parentCallId,
+                  parentIteration: iteration,
+                  prompt: decision.toolInput,
+                },
+              );
+              const deadline = Date.now() + asyncSubagentTimeoutMs;
+              for (;;) {
+                const childRun = await productStore.readRunSubagentJob(
                   workspaceId,
                   actorId,
                   prepared.runId,
+                  parentCallId,
                 );
-                const childOutput = await modelRuntime.generate({
-                  history: [],
-                  instructions: child.instructions,
-                  maxOutputTokens: Math.min(
-                    child.maxOutputTokens,
-                    strategy.maxOutputTokens - consumedOutputTokens,
-                  ),
-                  model: child.model,
-                  prompt: decision.toolInput,
-                  temperature: child.temperature,
+                if (childRun !== null && childRun.childRunId !== childRunId) {
+                  throw new Error('async_subagent_identity_conflict');
+                }
+                if (childRun?.status === 'failed') {
+                  throw new Error(childRun.errorCode ?? 'async_subagent_failed');
+                }
+                if (childRun?.status === 'completed') {
+                  if (
+                    childRun.aggregateInputTokens === null ||
+                    childRun.aggregateOutputTokens === null ||
+                    childRun.outputText === null ||
+                    childRun.providerRequestId === null
+                  ) {
+                    throw new Error('async_subagent_terminal_evidence_invalid');
+                  }
+                  toolInputTokens = childRun.aggregateInputTokens;
+                  toolOutputTokens = childRun.aggregateOutputTokens;
+                  toolProviderRequestId = childRun.providerRequestId;
+                  toolOutput = childRun.outputText;
+                  break;
+                }
+                if (Date.now() >= deadline) throw new Error('async_subagent_timeout');
+                await new Promise<void>((resolve) => {
+                  setTimeout(resolve, asyncSubagentPollIntervalMs);
                 });
-                toolInputTokens = childOutput.inputTokens;
-                toolOutputTokens = childOutput.outputTokens;
-                toolProviderRequestId = childOutput.providerRequestId;
-                toolOutput = withSubagentContext(child.name, childOutput.outputText);
               }
               consumedInputTokens += toolInputTokens;
               consumedOutputTokens += toolOutputTokens;

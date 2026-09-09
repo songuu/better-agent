@@ -2648,7 +2648,7 @@ describe('Better Agent web runtime', () => {
     expect(await limited.json()).toEqual({ error: 'model_iteration_limit_reached' });
   });
 
-  it('runs a v5 decision through the pinned child Agent and charges child model usage', async () => {
+  it('dispatches a v5 child Agent to the independent worker and charges settled usage', async () => {
     const { agents, store } = productFixture();
     const parentAgentId = '11111111-1111-4111-8111-111111111111';
     const childAgentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -2678,30 +2678,28 @@ describe('Better Agent web runtime', () => {
       updatedAt: '2026-09-03T00:00:00.000Z',
     });
     store.getRunCapabilities = async () => ({ database: false, knowledge: false, subagent: true });
-    store.getRunSubagentChain = async () => [
-      {
-        agentId: childAgentId,
-        branch: 1,
-        depth: 1,
-        instructions: '只返回已核验的依赖状态。',
-        maxOutputTokens: 400,
-        model: 'gpt-5.4-mini',
-        name: '依赖核验员',
-        releaseVersion: 3,
-        strategyProfile: createDefaultAgentStrategyProfile('gpt-5.4-mini'),
-        temperature: 0.1,
-      },
-    ];
     const recorded: unknown[] = [];
-    const invocationReceipts: unknown[] = [];
+    const dispatched: unknown[] = [];
     store.recordRunDecisionV5 = async (_workspaceId, _actorId, _runId, decision) => {
       recorded.push(decision);
     };
-    store.recordRunSubagentInvocation = async (_workspaceId, _actorId, _runId, invocation) => {
-      invocationReceipts.push(invocation);
+    store.dispatchRunSubagentJob = async (_workspaceId, _actorId, _runId, input) => {
+      dispatched.push(input);
+      return childAgentId;
+    };
+    store.readRunSubagentJob = async (_workspaceId, _actorId, _runId, parentCallId) => {
+      return {
+        aggregateInputTokens: 7,
+        aggregateOutputTokens: 6,
+        childRunId: childAgentId,
+        errorCode: null,
+        outputText: '<subagent name="依赖核验员">支付依赖健康，探针为 200。</subagent>',
+        parentCallId,
+        providerRequestId: 'resp_child',
+        status: 'completed',
+      };
     };
     let action = 0;
-    const generationInputs: unknown[] = [];
     const modelRuntime: ProductModelRuntime = {
       async decideAction() {
         action += 1;
@@ -2724,14 +2722,8 @@ describe('Better Agent web runtime', () => {
               providerRequestId: 'resp_parent_final',
             };
       },
-      async generate(input) {
-        generationInputs.push(input);
-        return {
-          inputTokens: 7,
-          outputText: '支付依赖健康，探针为 200。',
-          outputTokens: 6,
-          providerRequestId: 'resp_child',
-        };
+      async generate() {
+        throw new Error('child generation must execute in the independent worker');
       },
     };
     const origin = await start({
@@ -2776,14 +2768,11 @@ describe('Better Agent web runtime', () => {
       outputTokens: 15,
       providerRequestId: 'resp_parent_final',
     });
-    expect(generationInputs).toEqual([
+    expect(dispatched).toEqual([
       expect.objectContaining({
-        history: [],
-        instructions: '只返回已核验的依赖状态。',
-        maxOutputTokens: 400,
-        model: 'gpt-5.4-mini',
+        parentCallId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+        parentIteration: 1,
         prompt: '核验支付依赖',
-        temperature: 0.1,
       }),
     ]);
     expect(recorded).toEqual([
@@ -2796,17 +2785,6 @@ describe('Better Agent web runtime', () => {
         toolProviderRequestId: 'resp_child',
       }),
       expect.objectContaining({ action: 'final', outputText: '支付依赖健康。' }),
-    ]);
-    expect(invocationReceipts).toEqual([
-      expect.objectContaining({
-        agentId: childAgentId,
-        aggregateInputTokens: 7,
-        aggregateOutputTokens: 6,
-        depth: 1,
-        parentIteration: 1,
-        providerRequestId: 'resp_child',
-        releaseVersion: 3,
-      }),
     ]);
   });
 

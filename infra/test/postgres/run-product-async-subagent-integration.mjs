@@ -287,6 +287,16 @@ async function main() {
     'queued,started,completed',
     'child Run publishes an independent ordered terminal event',
   );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT string_agg(run_id||':'||parent_iteration||':'||branch||':'||depth||':'||provider_request_id,
+        ',' ORDER BY branch,depth)
+       FROM app.list_agent_product_async_subagent_invocations('${workspaceId}');`,
+    ),
+    `${runId}:1:1:1:response-child-1,${runId}:1:2:1:response-child-2`,
+    'runtime projects worker-owned invocation receipts into the parent Run details',
+  );
 
   const cascadeRun = await beginRun(parentId, 'cascade');
   const cascadeCall = 'f4600000-0000-4000-8000-000000000004';

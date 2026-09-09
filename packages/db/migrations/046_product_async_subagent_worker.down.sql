@@ -14,6 +14,7 @@ SET LOCAL ROLE ba_authorization_owner;
 DROP TRIGGER agent_product_runs_async_subagent_settlement ON public.agent_product_runs;
 DROP FUNCTION app.cascade_agent_product_async_subagent_children();
 DROP FUNCTION app.list_agent_product_async_subagent_events(uuid,uuid,uuid);
+DROP FUNCTION app.list_agent_product_async_subagent_invocations(uuid);
 DROP FUNCTION app.read_agent_product_async_subagent_run(uuid,uuid,uuid,uuid);
 DROP FUNCTION app.fail_agent_product_async_subagent_job(uuid,uuid,bigint,text);
 DROP FUNCTION app.complete_agent_product_async_subagent_job(uuid,uuid,bigint,bigint,bigint,text,text);
