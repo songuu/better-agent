@@ -1501,7 +1501,15 @@ function renderRuns() {
           (iteration) =>
             `${String(iteration.iteration)} ${String(iteration.capability).toUpperCase()} · ${String(iteration.toolInput).slice(0, 80)}`,
         );
-      return `<article class="run-row"><span>${String(run.sequence).padStart(2, '0')}</span><div><b>${escapeHtml(run.inputText)}</b><small>${escapeHtml(run.outputText || run.errorCode || '运行中')} · ${Number(run.iterationCount || 0)} ITER</small>${tools.length > 0 ? `<small>TOOLS · ${tools.map(escapeHtml).join(' / ')}</small>` : ''}</div><em class="is-${run.status}">${run.status.toUpperCase()}</em><time>${new Date(run.createdAt).toLocaleString('zh-CN')}</time></article>`;
+      const subagents = [...(run.subagentInvocations || [])]
+        .sort(
+          (left, right) => left.parentIteration - right.parentIteration || left.depth - right.depth,
+        )
+        .map(
+          (invocation) =>
+            `I${invocation.parentIteration}/D${invocation.depth} ${invocation.name}@V${invocation.releaseVersion} · ${invocation.aggregateInputTokens}/${invocation.aggregateOutputTokens} TOKENS`,
+        );
+      return `<article class="run-row"><span>${String(run.sequence).padStart(2, '0')}</span><div><b>${escapeHtml(run.inputText)}</b><small>${escapeHtml(run.outputText || run.errorCode || '运行中')} · ${Number(run.iterationCount || 0)} ITER</small>${tools.length > 0 ? `<small>TOOLS · ${tools.map(escapeHtml).join(' / ')}</small>` : ''}${subagents.length > 0 ? `<small>SUBAGENT TREE · ${subagents.map(escapeHtml).join(' > ')}</small>` : ''}</div><em class="is-${run.status}">${run.status.toUpperCase()}</em><time>${new Date(run.createdAt).toLocaleString('zh-CN')}</time></article>`;
     })
     .join('');
 }

@@ -138,6 +138,7 @@ export interface ProductRun {
   readonly providerRequestId: string | null;
   readonly sequence: number;
   readonly status: 'pending' | 'completed' | 'failed';
+  readonly subagentInvocations?: readonly ProductRunSubagentInvocation[];
 }
 
 interface ProductRunIterationBase {
@@ -191,6 +192,29 @@ export interface ProductRunSubagent {
   readonly name: string;
   readonly releaseVersion: number;
   readonly temperature: number;
+}
+
+export interface ProductRunSubagentNode extends ProductRunSubagent {
+  readonly depth: 1 | 2 | 3;
+  readonly strategyProfile: ProductAgentStrategyProfile;
+}
+
+export interface ProductRunSubagentInvocation {
+  readonly agentId: string;
+  readonly aggregateInputTokens: number;
+  readonly aggregateOutputTokens: number;
+  readonly createdAt: string;
+  readonly depth: 1 | 2 | 3;
+  readonly exclusiveInputTokens: number;
+  readonly exclusiveOutputTokens: number;
+  readonly inputText: string;
+  readonly model: ProductModel;
+  readonly name: string;
+  readonly outputText: string;
+  readonly parentIteration: number;
+  readonly providerRequestId: string;
+  readonly releaseVersion: number;
+  readonly runId: string;
 }
 
 export interface ProductRunSkillPack {
@@ -514,6 +538,11 @@ export interface ProductStore {
     inputText: string,
   ): Promise<ProductRunFlowResult | null>;
   getRunSubagent?(workspaceId: string, actorId: string, runId: string): Promise<ProductRunSubagent>;
+  getRunSubagentChain?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+  ): Promise<readonly ProductRunSubagentNode[]>;
   getRunSkillPack?(
     workspaceId: string,
     actorId: string,
@@ -777,6 +806,12 @@ export interface ProductStore {
           readonly toolProviderRequestId: string | null;
         },
   ): Promise<void>;
+  recordRunSubagentInvocation?(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    invocation: Omit<ProductRunSubagentInvocation, 'createdAt' | 'runId'>,
+  ): Promise<void>;
   searchAgentKnowledge(
     workspaceId: string,
     conversationId: string,
@@ -1009,6 +1044,24 @@ interface ProductRunRow {
   readonly provider_request_id: string | null;
   readonly sequence: string | number;
   readonly status: string;
+}
+
+interface ProductRunSubagentInvocationRow {
+  readonly agent_id: string;
+  readonly aggregate_input_tokens: string | number;
+  readonly aggregate_output_tokens: string | number;
+  readonly created_at: Date | string;
+  readonly depth: string | number;
+  readonly exclusive_input_tokens: string | number;
+  readonly exclusive_output_tokens: string | number;
+  readonly input_text: string;
+  readonly model: string;
+  readonly name: string;
+  readonly output_text: string;
+  readonly parent_iteration: string | number;
+  readonly provider_request_id: string;
+  readonly release_version: string | number;
+  readonly run_id: string;
 }
 
 interface ProductReleaseEvaluationTargetRow {
@@ -1635,6 +1688,54 @@ function toRun(row: ProductRunRow): ProductRun {
     providerRequestId: row.provider_request_id,
     sequence: positiveInteger(row.sequence, 'Run sequence'),
     status: row.status,
+  });
+}
+
+function toRunSubagentInvocation(
+  row: ProductRunSubagentInvocationRow,
+): ProductRunSubagentInvocation {
+  const depth = positiveInteger(row.depth, 'SubAgent invocation depth');
+  const aggregateInputTokens = nonnegativeInteger(
+    row.aggregate_input_tokens,
+    'SubAgent aggregate input token count',
+  );
+  const aggregateOutputTokens = nonnegativeInteger(
+    row.aggregate_output_tokens,
+    'SubAgent aggregate output token count',
+  );
+  const exclusiveInputTokens = nonnegativeInteger(
+    row.exclusive_input_tokens,
+    'SubAgent exclusive input token count',
+  );
+  const exclusiveOutputTokens = nonnegativeInteger(
+    row.exclusive_output_tokens,
+    'SubAgent exclusive output token count',
+  );
+  if (depth > 3 || !PRODUCT_MODELS.includes(row.model as ProductModel)) {
+    throw new Error('product store returned an invalid SubAgent invocation');
+  }
+  if (
+    aggregateInputTokens < exclusiveInputTokens ||
+    aggregateOutputTokens < exclusiveOutputTokens
+  ) {
+    throw new Error('product store returned an invalid SubAgent invocation token aggregate');
+  }
+  return Object.freeze({
+    agentId: row.agent_id,
+    aggregateInputTokens,
+    aggregateOutputTokens,
+    createdAt: asIso(row.created_at),
+    depth: depth as 1 | 2 | 3,
+    exclusiveInputTokens,
+    exclusiveOutputTokens,
+    inputText: row.input_text,
+    model: row.model as ProductModel,
+    name: row.name,
+    outputText: row.output_text,
+    parentIteration: positiveInteger(row.parent_iteration, 'SubAgent parent iteration'),
+    providerRequestId: row.provider_request_id,
+    releaseVersion: positiveInteger(row.release_version, 'SubAgent release version'),
+    runId: row.run_id,
   });
 }
 
@@ -2968,6 +3069,48 @@ export class PostgresProductStore implements ProductStore {
     });
   }
 
+  async getRunSubagentChain(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+  ): Promise<readonly ProductRunSubagentNode[]> {
+    const result = await this.#pool.query<{
+      readonly agent_id: string;
+      readonly depth: string | number;
+      readonly instructions: string;
+      readonly model: string;
+      readonly name: string;
+      readonly release_version: string | number;
+      readonly strategy_profile: unknown;
+    }>('SELECT * FROM app.read_agent_product_run_subagent_chain($1::uuid, $2::uuid, $3::uuid)', [
+      workspaceId,
+      runId,
+      actorId,
+    ]);
+    const chain = result.rows.map((row, index): ProductRunSubagentNode => {
+      const depth = positiveInteger(row.depth, 'child depth');
+      const strategyProfile = parseAgentStrategyProfile(row.strategy_profile);
+      if (depth !== index + 1 || depth > 3 || !PRODUCT_MODELS.includes(row.model as ProductModel)) {
+        throw new Error('product store returned an invalid pinned child Agent chain');
+      }
+      return Object.freeze({
+        agentId: row.agent_id,
+        depth: depth as 1 | 2 | 3,
+        instructions: row.instructions,
+        maxOutputTokens: strategyProfile.maxOutputTokens,
+        model: row.model as ProductModel,
+        name: row.name,
+        releaseVersion: positiveInteger(row.release_version, 'child release version'),
+        strategyProfile,
+        temperature: strategyProfile.temperature,
+      });
+    });
+    if (new Set(chain.map((node) => node.agentId)).size !== chain.length) {
+      throw new Error('product store returned a cyclic pinned child Agent chain');
+    }
+    return Object.freeze(chain);
+  }
+
   async getRunSkillPack(
     workspaceId: string,
     actorId: string,
@@ -3202,6 +3345,35 @@ export class PostgresProductStore implements ProductStore {
     );
   }
 
+  async recordRunSubagentInvocation(
+    workspaceId: string,
+    actorId: string,
+    runId: string,
+    invocation: Omit<ProductRunSubagentInvocation, 'createdAt' | 'runId'>,
+  ): Promise<void> {
+    await this.#pool.query(
+      'SELECT app.record_agent_product_run_subagent_invocation($1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::smallint, $6::uuid, $7::bigint, $8::text, $9::text, $10::text, $11::text, $12::text, $13::bigint, $14::bigint, $15::bigint, $16::bigint)',
+      [
+        workspaceId,
+        runId,
+        actorId,
+        invocation.parentIteration,
+        invocation.depth,
+        invocation.agentId,
+        invocation.releaseVersion,
+        invocation.name,
+        invocation.model,
+        invocation.inputText,
+        invocation.outputText,
+        invocation.providerRequestId,
+        invocation.exclusiveInputTokens,
+        invocation.exclusiveOutputTokens,
+        invocation.aggregateInputTokens,
+        invocation.aggregateOutputTokens,
+      ],
+    );
+  }
+
   async completeRun(
     workspaceId: string,
     actorId: string,
@@ -3246,11 +3418,31 @@ export class PostgresProductStore implements ProductStore {
   }
 
   async listRuns(workspaceId: string): Promise<readonly ProductRun[]> {
-    const result = await this.#pool.query<ProductRunRow>(
-      'SELECT * FROM app.list_agent_product_runs($1::uuid)',
-      [workspaceId],
+    const [runResult, invocationResult] = await Promise.all([
+      this.#pool.query<ProductRunRow>('SELECT * FROM app.list_agent_product_runs($1::uuid)', [
+        workspaceId,
+      ]),
+      this.#pool.query<ProductRunSubagentInvocationRow>(
+        'SELECT * FROM app.list_agent_product_run_subagent_invocations($1::uuid)',
+        [workspaceId],
+      ),
+    ]);
+    const invocationsByRun = new Map<string, ProductRunSubagentInvocation[]>();
+    for (const row of invocationResult.rows) {
+      const invocation = toRunSubagentInvocation(row);
+      const existing = invocationsByRun.get(invocation.runId) ?? [];
+      existing.push(invocation);
+      invocationsByRun.set(invocation.runId, existing);
+    }
+    return Object.freeze(
+      runResult.rows.map((row) => {
+        const run = toRun(row);
+        return Object.freeze({
+          ...run,
+          subagentInvocations: Object.freeze(invocationsByRun.get(run.id) ?? []),
+        });
+      }),
     );
-    return Object.freeze(result.rows.map(toRun));
   }
 
   async listReleaseEvaluationTargets(

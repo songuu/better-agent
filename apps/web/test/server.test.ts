@@ -13,6 +13,7 @@ import { executeProductFlow } from '../src/flow-runtime.js';
 import {
   type BetterAgentWebOptions,
   createBetterAgentWebServer,
+  executeRecursiveSubagent,
   isInvokedEntrypoint,
   withMcpContext,
   withSkillPackInstructions,
@@ -39,6 +40,7 @@ import type {
   ProductPluginCatalogItem,
   ProductReleaseEvaluationTarget,
   ProductRun,
+  ProductRunSubagentNode,
   ProductSkillPack,
   ProductStore,
 } from '../src/product-store.js';
@@ -46,6 +48,121 @@ import { createDefaultAgentStrategyProfile } from '../src/product-store.js';
 
 const openServers: Awaited<ReturnType<typeof createBetterAgentWebServer>>[] = [];
 const execFileAsync = promisify(execFile);
+
+it('executes a three-level immutable SubAgent chain and records inclusive usage receipts', async () => {
+  const recursiveStrategy = {
+    ...createDefaultAgentStrategyProfile('gpt-5.4-mini'),
+    forcedCapability: 'subagent' as const,
+    maxIterations: 2 as const,
+    maxToolCalls: 1,
+    schemaVersion: 'product-agent-strategy/5' as const,
+  };
+  const leafStrategy = createDefaultAgentStrategyProfile('gpt-5.4-mini');
+  const chain: readonly ProductRunSubagentNode[] = [
+    {
+      agentId: '11111111-1111-4111-8111-111111111111',
+      depth: 1,
+      instructions: 'delegate to level 2',
+      maxOutputTokens: 2_000,
+      model: 'gpt-5.4-mini',
+      name: 'Level 1',
+      releaseVersion: 3,
+      strategyProfile: recursiveStrategy,
+      temperature: 0.2,
+    },
+    {
+      agentId: '22222222-2222-4222-8222-222222222222',
+      depth: 2,
+      instructions: 'delegate to level 3',
+      maxOutputTokens: 2_000,
+      model: 'gpt-5.4-mini',
+      name: 'Level 2',
+      releaseVersion: 2,
+      strategyProfile: recursiveStrategy,
+      temperature: 0.2,
+    },
+    {
+      agentId: '33333333-3333-4333-8333-333333333333',
+      depth: 3,
+      instructions: 'answer the leaf task',
+      maxOutputTokens: 2_000,
+      model: 'gpt-5.4-mini',
+      name: 'Level 3',
+      releaseVersion: 1,
+      strategyProfile: leafStrategy,
+      temperature: 0.2,
+    },
+  ];
+  let decisionOrdinal = 0;
+  const decisions: Parameters<NonNullable<ProductModelRuntime['decideAction']>>[0][] = [];
+  const modelRuntime: ProductModelRuntime = {
+    async decideAction(input) {
+      decisions.push(input);
+      decisionOrdinal += 1;
+      if (decisionOrdinal === 1 || decisionOrdinal === 2) {
+        return {
+          action: 'tool',
+          capability: 'subagent',
+          inputTokens: decisionOrdinal === 1 ? 5 : 2,
+          outputText: '{"action":"tool","capability":"subagent"}',
+          outputTokens: decisionOrdinal === 1 ? 2 : 1,
+          providerRequestId: `tool-${decisionOrdinal}`,
+          toolInput: decisionOrdinal === 1 ? 'level 2 task' : 'leaf task',
+        };
+      }
+      return {
+        action: 'final',
+        finalOutput: decisionOrdinal === 3 ? 'level 2 verified leaf' : 'level 1 verified all',
+        inputTokens: decisionOrdinal === 3 ? 2 : 5,
+        outputText: '{"action":"final"}',
+        outputTokens: decisionOrdinal === 3 ? 1 : 2,
+        providerRequestId: `final-${decisionOrdinal}`,
+      };
+    },
+    async generate(input) {
+      expect(input).toMatchObject({ prompt: 'leaf task', instructions: 'answer the leaf task' });
+      return {
+        inputTokens: 3,
+        outputText: 'leaf verified',
+        outputTokens: 4,
+        providerRequestId: 'leaf-provider',
+      };
+    },
+  };
+  const receipts: unknown[] = [];
+
+  const result = await executeRecursiveSubagent(
+    chain,
+    'root task',
+    1,
+    modelRuntime,
+    async (receipt) => {
+      receipts.push(receipt);
+    },
+  );
+
+  expect(result).toEqual({
+    aggregateInputTokens: 17,
+    aggregateOutputTokens: 10,
+    outputText: 'level 1 verified all',
+    providerRequestId: 'final-4',
+  });
+  expect(decisions).toHaveLength(4);
+  expect(decisions[2]).toMatchObject({
+    availableCapabilities: [],
+    history: [
+      {
+        assistant: '{"action":"tool","capability":"subagent"}',
+        user: expect.stringContaining('leaf verified'),
+      },
+    ],
+  });
+  expect(receipts).toEqual([
+    expect.objectContaining({ depth: 3, aggregateInputTokens: 3, aggregateOutputTokens: 4 }),
+    expect.objectContaining({ depth: 2, aggregateInputTokens: 7, aggregateOutputTokens: 6 }),
+    expect.objectContaining({ depth: 1, aggregateInputTokens: 17, aggregateOutputTokens: 10 }),
+  ]);
+});
 
 it('appends a pinned Skill Pack as subordinate executable instructions', () => {
   expect(
@@ -2458,18 +2575,26 @@ describe('Better Agent web runtime', () => {
       updatedAt: '2026-09-03T00:00:00.000Z',
     });
     store.getRunCapabilities = async () => ({ database: false, knowledge: false, subagent: true });
-    store.getRunSubagent = async () => ({
-      agentId: childAgentId,
-      instructions: '只返回已核验的依赖状态。',
-      maxOutputTokens: 400,
-      model: 'gpt-5.4-mini',
-      name: '依赖核验员',
-      releaseVersion: 3,
-      temperature: 0.1,
-    });
+    store.getRunSubagentChain = async () => [
+      {
+        agentId: childAgentId,
+        depth: 1,
+        instructions: '只返回已核验的依赖状态。',
+        maxOutputTokens: 400,
+        model: 'gpt-5.4-mini',
+        name: '依赖核验员',
+        releaseVersion: 3,
+        strategyProfile: createDefaultAgentStrategyProfile('gpt-5.4-mini'),
+        temperature: 0.1,
+      },
+    ];
     const recorded: unknown[] = [];
+    const invocationReceipts: unknown[] = [];
     store.recordRunDecisionV5 = async (_workspaceId, _actorId, _runId, decision) => {
       recorded.push(decision);
+    };
+    store.recordRunSubagentInvocation = async (_workspaceId, _actorId, _runId, invocation) => {
+      invocationReceipts.push(invocation);
     };
     let action = 0;
     const generationInputs: unknown[] = [];
@@ -2567,6 +2692,17 @@ describe('Better Agent web runtime', () => {
         toolProviderRequestId: 'resp_child',
       }),
       expect.objectContaining({ action: 'final', outputText: '支付依赖健康。' }),
+    ]);
+    expect(invocationReceipts).toEqual([
+      expect.objectContaining({
+        agentId: childAgentId,
+        aggregateInputTokens: 7,
+        aggregateOutputTokens: 6,
+        depth: 1,
+        parentIteration: 1,
+        providerRequestId: 'resp_child',
+        releaseVersion: 3,
+      }),
     ]);
   });
 

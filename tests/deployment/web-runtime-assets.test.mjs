@@ -184,6 +184,9 @@ test('ships the durable Knowledge Center ingestion and retrieval controls', () =
   assert.ok(publicJavaScript.includes('product-agent-strategy/5'));
   assert.ok(publicJavaScript.includes('child_agent_id'));
   assert.ok(publicJavaScript.includes('renderAgentChildOptions'));
+  assert.ok(publicHtml.includes('最多递归 3 层'));
+  assert.ok(publicJavaScript.includes('SUBAGENT TREE'));
+  assert.ok(publicJavaScript.includes('subagentInvocations'));
   assert.ok(publicJavaScript.includes('parameter_defaults'));
   assert.ok(publicJavaScript.includes('knowledge_query_default'));
   assert.ok(publicJavaScript.includes('database_contains_default'));

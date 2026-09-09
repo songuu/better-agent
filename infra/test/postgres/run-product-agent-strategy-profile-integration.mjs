@@ -417,7 +417,9 @@ async function main() {
   );
   await harness.psql(
     'ba_runtime_test',
-    `SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${parentRun}','${actorId}',1,
+    `SELECT app.record_agent_product_run_subagent_invocation('${workspaceId}','${parentRun}','${actorId}',1,1::smallint,
+      '${childId}',1,'Verifier','gpt-5.6-sol','check payment','verified','resp-child',7,6,7,6);
+     SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${parentRun}','${actorId}',1,
       'gpt-5.6-sol','tool','subagent','check payment','SUBAGENT_CONTEXT verified',NULL,
       'resp-parent-tool',9,4,7,6,'resp-child');
      SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${parentRun}','${actorId}',2,
@@ -448,6 +450,162 @@ async function main() {
     '27:15:1',
     'v5 child model usage and exact release evidence',
   );
+  const recursiveLeafId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${actorId}',
+      'Recursive Leaf','','verify leaf','gpt-5.6-sol',NULL,NULL,'text',NULL,'${fixed}'::jsonb,NULL)).id;`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_agent_draft('${workspaceId}','${recursiveLeafId}',1,'${actorId}');`,
+  );
+  const recursiveMiddleId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${actorId}',
+      'Recursive Middle','','delegate leaf','gpt-5.6-sol',NULL,NULL,'text',NULL,
+      '${subagentStrategy}'::jsonb,'${recursiveLeafId}')).id;`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_agent_draft('${workspaceId}','${recursiveMiddleId}',1,'${actorId}');`,
+  );
+  const recursiveRootId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${actorId}',
+      'Recursive Root','','delegate middle','gpt-5.6-sol',NULL,NULL,'text',NULL,
+      '${subagentStrategy}'::jsonb,'${recursiveMiddleId}')).id;`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_agent_draft('${workspaceId}','${recursiveRootId}',1,'${actorId}');`,
+  );
+  const recursiveConversation = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_product_conversation('${workspaceId}','${recursiveRootId}','${actorId}')).id;`,
+  );
+  const recursiveRun = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT run_id FROM app.begin_agent_product_run('${workspaceId}','${recursiveConversation}','${actorId}','recursive check');`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT * FROM app.resolve_agent_product_run_parameters('${workspaceId}','${recursiveRun}','${actorId}',
+      '{"database_contains":"","knowledge_query":"delegate"}'::jsonb,NULL,NULL,0,0);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT string_agg(depth||':'||name||'@'||release_version,'>' ORDER BY depth)
+       FROM app.read_agent_product_run_subagent_chain('${workspaceId}','${recursiveRun}','${actorId}');`,
+    ),
+    '1:Recursive Middle@1>2:Recursive Leaf@1',
+    'recursive chain resolves exact immutable releases',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.record_agent_product_run_subagent_invocation('${workspaceId}','${recursiveRun}','${actorId}',1,2::smallint,
+      '${recursiveLeafId}',1,'Recursive Leaf','gpt-5.6-sol','leaf check','leaf healthy','resp-leaf',3,2,3,2);
+     SELECT app.record_agent_product_run_subagent_invocation('${workspaceId}','${recursiveRun}','${actorId}',1,1::smallint,
+      '${recursiveMiddleId}',1,'Recursive Middle','gpt-5.6-sol','middle check','middle healthy','resp-middle',4,3,7,5);
+     SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${recursiveRun}','${actorId}',1,
+      'gpt-5.6-sol','tool','subagent','middle check','SUBAGENT_CONTEXT middle healthy',NULL,
+      'resp-root-tool',5,2,7,5,'resp-middle');
+     SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${recursiveRun}','${actorId}',2,
+      'gpt-5.6-sol','final',NULL,NULL,NULL,'recursive healthy','resp-root-final',6,3,0,0,NULL);
+     SELECT app.complete_agent_product_run('${workspaceId}','${recursiveRun}','${actorId}',
+      'recursive healthy','resp-root-final',18,10);`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT string_agg(depth||':'||exclusive_input_tokens||':'||aggregate_input_tokens,'>' ORDER BY depth)
+       FROM app.list_agent_product_run_subagent_invocations('${workspaceId}')
+       WHERE run_id='${recursiveRun}';`,
+    ),
+    '1:4:7>2:3:3',
+    'recursive per-level exclusive and inclusive usage receipts',
+  );
+  const missingReceiptConversation = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_product_conversation('${workspaceId}','${recursiveRootId}','${actorId}')).id;`,
+  );
+  const missingReceiptRun = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT run_id FROM app.begin_agent_product_run('${workspaceId}','${missingReceiptConversation}','${actorId}','missing receipt');`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT * FROM app.resolve_agent_product_run_parameters('${workspaceId}','${missingReceiptRun}','${actorId}',
+      '{"database_contains":"","knowledge_query":"delegate"}'::jsonb,NULL,NULL,0,0);`,
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.record_agent_product_run_decision_v5('${workspaceId}','${missingReceiptRun}','${actorId}',1,
+        'gpt-5.6-sol','tool','subagent','middle check','forged without receipt',NULL,
+        'resp-missing-receipt',5,2,7,5,'resp-middle');`,
+      { allowFailure: true },
+    ),
+    /missing its immutable invocation receipt|40001/u,
+    'recursive decision without invocation receipt',
+  );
+  const recursiveTopId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${actorId}',
+      'Recursive Top','','delegate root','gpt-5.6-sol',NULL,NULL,'text',NULL,
+      '${subagentStrategy}'::jsonb,'${recursiveRootId}')).id;`,
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.publish_agent_draft('${workspaceId}','${recursiveTopId}',1,'${actorId}');`,
+  );
+  const recursiveTopConversation = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_product_conversation('${workspaceId}','${recursiveTopId}','${actorId}')).id;`,
+  );
+  const recursiveTopRun = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT run_id FROM app.begin_agent_product_run('${workspaceId}','${recursiveTopConversation}','${actorId}','depth three');`,
+  );
+  assertEqual(
+    await harness.queryScalar(
+      'ba_runtime_test',
+      `SELECT string_agg(depth||':'||name,'>' ORDER BY depth)
+       FROM app.read_agent_product_run_subagent_chain('${workspaceId}','${recursiveTopRun}','${actorId}');`,
+    ),
+    '1:Recursive Root>2:Recursive Middle>3:Recursive Leaf',
+    'depth-three chain is accepted',
+  );
+  const tooDeepId = await harness.queryScalar(
+    'ba_runtime_test',
+    `SELECT (app.create_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${actorId}',
+      'Too Deep','','must fail publication','gpt-5.6-sol',NULL,NULL,'text',NULL,
+      '${subagentStrategy}'::jsonb,'${recursiveTopId}')).id;`,
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.publish_agent_draft('${workspaceId}','${tooDeepId}',1,'${actorId}');`,
+      { allowFailure: true },
+    ),
+    /exceeds depth 3|22023/u,
+    'depth-four release publication',
+  );
+  await harness.psql(
+    'ba_runtime_test',
+    `SELECT app.update_agent_draft_with_strategy_capabilities_v5('${workspaceId}','${recursiveLeafId}',2,
+      'Recursive Leaf','','cycle attempt','gpt-5.6-sol',NULL,NULL,'text',NULL,
+      '${fixed}'::jsonb,'${recursiveRootId}');`,
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      `SELECT app.publish_agent_draft('${workspaceId}','${recursiveLeafId}',3,'${actorId}');`,
+      { allowFailure: true },
+    ),
+    /contains a cycle|22023/u,
+    'indirect recursive release cycle',
+  );
   assertRejected(
     await harness.psql(
       'ba_runtime_test',
@@ -456,6 +614,15 @@ async function main() {
     ),
     /permission denied|42501/u,
     'runtime direct SubAgent binding read',
+  );
+  assertRejected(
+    await harness.psql(
+      'ba_runtime_test',
+      'SELECT * FROM public.agent_product_run_subagent_invocations;',
+      { allowFailure: true },
+    ),
+    /permission denied|42501/u,
+    'runtime direct recursive SubAgent receipt read',
   );
   assertRejected(
     await harness.psql(
@@ -493,7 +660,7 @@ async function main() {
     'immutable strategy release',
   );
   process.stdout.write(
-    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2/v3/v4/v5 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback, ordered iteration/action traces, release-bound model tool decisions, exact child release pinning and aggregate token budgets.\n`,
+    `PostgreSQL 16 product Agent strategy passed: ${migrations.length} migrations, closed v1/v2/v3/v4/v5 profiles, versioned defaults, immutable releases, conversation pinning, autonomous route allowlist, database-authored effective parameters, audited extraction fallback, ordered iteration/action traces, release-bound model tool decisions, depth-3 child release chains, immutable per-level receipts and aggregate token budgets.\n`,
   );
   process.stdout.write('architecture-gate-suite/1 product-agent-strategy-profile pass\n');
 }
