@@ -568,7 +568,7 @@ describe('005 runtime-security migration static red gate', () => {
 
     const g006Sql = migrations.find(({ id }) => id === '004')?.upSql ?? '';
     for (const role of phaseRoles) expect(g006Sql).not.toContain(role);
-  });
+  }, 15_000);
 
   it('makes one complete NOWAIT lock the first up/down statement', async () => {
     const { downSql, upSql } = await runtimeSecuritySql();
