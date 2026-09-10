@@ -409,8 +409,8 @@
     {
       "packageName": "@better-agent/agent-runtime",
       "script": "vitest run --config vitest.config.ts --configLoader native",
-      "testCount": 5,
-      "successMarker": "@better-agent/agent-runtime:test:       Tests  5 passed (5)"
+      "testCount": 6,
+      "successMarker": "@better-agent/agent-runtime:test:       Tests  6 passed (6)"
     },
     {
       "packageName": "@better-agent/api",
@@ -522,7 +522,7 @@
       "successMarkers": [
         "workspace smoke passed for 15 package(s)",
         "Contract gate passed: 11 operations, 314 local references, bundle a19ddd228941e51a9658c109c87af7405d3a0c22324c00757cf987549117cf04, TypeScript a92a2c8b4cd61df15626282b64abd5cb3138622ab32e4dca2f16cd39cc5e6d07, response baseline e383d1ce5fe4494056280c1c36fdd19f769ec194dd97ad46678e2ceabd0f5828",
-        "@better-agent/agent-runtime:test:       Tests  5 passed (5)",
+        "@better-agent/agent-runtime:test:       Tests  6 passed (6)",
         "@better-agent/api:test:       Tests  130 passed (130)",
         "@better-agent/api-contract:test: # pass 16",
         "@better-agent/auth:test:       Tests  54 passed (54)",

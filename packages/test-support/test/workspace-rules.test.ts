@@ -88,8 +88,10 @@ describe('validateDeploymentWorkflow', () => {
         'actions/download-artifact@v4',
       ),
       workflow.replace(
-        'MODEL_API_KEY: $' + '{{ secrets.BETTER_AGENT_MODEL_API_KEY }}',
-        'MODEL_API_KEY: leaked',
+        '      - name: Configure independent model runtime\n        env:\n',
+        '      - name: Configure independent model runtime\n        env:\n' +
+          '          MODEL_API_KEY: $' +
+          '{{ secrets.BETTER_AGENT_MODEL_API_KEY }}\n',
       ),
     ]) {
       expect(validateDeploymentWorkflow(weakened)).not.toEqual([]);

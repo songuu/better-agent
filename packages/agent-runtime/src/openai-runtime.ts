@@ -79,7 +79,9 @@ function responseOutputText(payload: Record<string, unknown>): string {
     if (!Array.isArray(content)) continue;
     for (const entry of content) {
       if (typeof entry !== 'object' || entry === null) continue;
-      const text = (entry as Record<string, unknown>).text;
+      const contentEntry = entry as Record<string, unknown>;
+      if (contentEntry.type !== 'output_text') continue;
+      const text = contentEntry.text;
       if (typeof text === 'string') parts.push(text);
     }
   }

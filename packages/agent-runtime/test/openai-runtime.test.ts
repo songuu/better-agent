@@ -43,6 +43,40 @@ describe('shared OpenAI-compatible Agent runtime', () => {
     });
   });
 
+  it('ignores DeepSeek reasoning items and returns only final output text', async () => {
+    const runtime = new OpenAiAgentRuntime({
+      apiKey: 'test-secret',
+      baseUrl: 'https://api.deepseek.com',
+      fetchImplementation: async () =>
+        new Response(
+          JSON.stringify({
+            id: 'resp_deepseek_1',
+            output: [
+              {
+                type: 'reasoning',
+                content: [{ type: 'reasoning_text', text: 'internal reasoning' }],
+              },
+              {
+                type: 'message',
+                content: [{ type: 'output_text', text: '{"result":"verified"}' }],
+              },
+            ],
+            usage: { input_tokens: 11, output_tokens: 5 },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    await expect(
+      runtime.generate({
+        history: [],
+        instructions: 'return json',
+        model: 'deepseek-v4-flash',
+        prompt: 'status',
+      }),
+    ).resolves.toMatchObject({ outputText: '{"result":"verified"}' });
+  });
+
   it('does not create an unconfigured runtime', () => {
     expect(createAgentModelRuntimeFromEnvironment({})).toBeUndefined();
   });

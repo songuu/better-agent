@@ -8,7 +8,8 @@ Configure these repository Actions secrets:
 
 - `BETTER_AGENT_SSH_PRIVATE_KEY` (required): private key authorized for the deployment user.
 - `BETTER_AGENT_SSH_KNOWN_HOSTS` (required): reviewed `known_hosts` line for the deployment host; runtime TOFU is rejected.
-- `BETTER_AGENT_MODEL_API_KEY` (required): installed into the host-private model environment without logging its value. A production deployment fails before host mutation when this secret is absent.
+
+Provision `BETTER_AGENT_MODEL_API_KEY` once in the host-private `/opt/better-agent/shared/model.env`; it is never copied into GitHub Actions. Each deployment preserves that host credential and applies only the reviewed provider URL and model selection from repository variables.
 
 Set `BETTER_AGENT_MODEL_BASE_URL` when an OpenAI-compatible HTTPS endpoint other than `https://api.openai.com/v1` is required. Set `BETTER_AGENT_MODEL_NAME` to the exact provider model used by the deployment acceptance request. The supported DeepSeek V4 values are `deepseek-v4-flash` and `deepseek-v4-pro`; use `https://api.deepseek.com` as their OpenAI-compatible base URL.
 

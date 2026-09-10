@@ -396,10 +396,12 @@ test('packages the PostgreSQL client dependency required by the product runtime'
   assert.match(deploymentWorkflow, /apps\/worker\/node_modules/u);
 });
 
-test('configures model credentials through a private file without logging their value', () => {
-  assert.match(deploymentWorkflow, /secrets\.BETTER_AGENT_MODEL_API_KEY/u);
-  assert.match(deploymentWorkflow, /test -n "\$\{MODEL_API_KEY:-\}"/u);
+test('keeps the model credential on the host and deploys only provider selection', () => {
+  assert.doesNotMatch(deploymentWorkflow, /BETTER_AGENT_MODEL_API_KEY|MODEL_API_KEY/u);
   assert.match(deploymentWorkflow, /vars\.BETTER_AGENT_MODEL_NAME/u);
+  assert.match(deploymentWorkflow, /vars\.BETTER_AGENT_MODEL_BASE_URL/u);
+  assert.match(deploymentWorkflow, /test -n "\$\{MODEL_BASE_URL:-\}"/u);
+  assert.match(deploymentWorkflow, /test -n "\$\{MODEL_NAME:-\}"/u);
   assert.match(deploymentWorkflow, /BETTER_AGENT_MODEL_NAME=%s/u);
   assert.doesNotMatch(
     deploymentWorkflow,
@@ -411,10 +413,14 @@ test('configures model credentials through a private file without logging their 
   );
   assert.match(deploymentWorkflow, /better-agent-model-\$\{ACCEPTED_SHA\}\.env/u);
   assert.match(modelConfigurator, /^install -m 0640 -o root -g better-agent-web/m);
+  assert.match(
+    modelConfigurator,
+    /sed -n 's\/\^BETTER_AGENT_MODEL_API_KEY=\/\/p' "\$\{TARGET_FILE\}"/u,
+  );
   assert.match(modelConfigurator, /h\.model_runtime!=="configured"/u);
   assert.match(modelConfigurator, /better-agent-worker\.service/u);
   assert.match(modelConfigurator, /systemctl is-active --quiet/u);
-  assert.doesNotMatch(modelConfigurator, /set -x|echo "\$\{?MODEL_API_KEY/u);
+  assert.doesNotMatch(modelConfigurator, /set -x|echo "\$\{?model_api_key/u);
   assert.match(
     deploymentWorkflow,
     /rm -f ~\/\.ssh\/better_agent_deploy_key "\$\{RUNNER_TEMP\}\/better-agent-model\.env"/u,
@@ -429,6 +435,10 @@ test('requires a real production model response before deployment can pass', () 
   assert.doesNotMatch(modelConfigurator, /"model":"gpt-5\.6-sol"/u);
   assert.match(modelConfigurator, /instructions\.length<1/u);
   assert.match(modelConfigurator, /rollback/u);
+  assert.match(modelConfigurator, /if login_response="\$\(/u);
+  assert.match(modelConfigurator, /if assist_response="\$\(/u);
+  assert.doesNotMatch(modelConfigurator, /^login_response="\$\(/mu);
+  assert.doesNotMatch(modelConfigurator, /^assist_response="\$\(/mu);
   assert.ok(
     modelConfigurator.indexOf('/better-agent/api/product/role-assist') <
       modelConfigurator.lastIndexOf('trap - ERR INT TERM'),

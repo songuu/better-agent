@@ -324,7 +324,7 @@ export function validateDeploymentWorkflow(workflow) {
   const workflowDigest = createHash('sha256')
     .update(workflow.replaceAll('\r\n', '\n'))
     .digest('hex');
-  if (workflowDigest !== 'a7d11d271f4a3855446af6930121d8d256bbc1af0765342a87ea347df6f2d781') {
+  if (workflowDigest !== '559d417a184044a30537b19a9152acdbce7c3583a1abc59ae99886784b8d7b6d') {
     errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
   }
   const definition = parseCiWorkflow(workflow, errors);
@@ -373,7 +373,7 @@ export function validateDeploymentWorkflow(workflow) {
   const deploySteps = Array.isArray(deploy.steps) ? deploy.steps : [];
   const configureSsh = deploySteps.find((step) => isRecord(step) && step.name === 'Configure SSH');
   const validateModel = deploySteps.find(
-    (step) => isRecord(step) && step.name === 'Validate required model runtime',
+    (step) => isRecord(step) && step.name === 'Validate model runtime selection',
   );
   const configureModel = deploySteps.find(
     (step) => isRecord(step) && step.name === 'Configure independent model runtime',
@@ -385,21 +385,19 @@ export function validateDeploymentWorkflow(workflow) {
     !isRecord(configureSsh) ||
     !isRecord(validateModel) ||
     !isRecord(configureModel) ||
-    secretSteps.length !== 3 ||
+    secretSteps.length !== 1 ||
     !secretSteps.includes(configureSsh) ||
-    !secretSteps.includes(validateModel) ||
-    !secretSteps.includes(configureModel) ||
     !isRecord(configureSsh.env) ||
     Object.keys(configureSsh.env).sort().join(',') !== 'SSH_KNOWN_HOSTS,SSH_PRIVATE_KEY' ||
     !isRecord(validateModel.env) ||
-    Object.keys(validateModel.env).join(',') !== 'MODEL_API_KEY' ||
-    validateModel.env.MODEL_API_KEY !== '${{ secrets.BETTER_AGENT_MODEL_API_KEY }}' ||
+    Object.keys(validateModel.env).sort().join(',') !== 'MODEL_BASE_URL,MODEL_NAME' ||
+    validateModel.env.MODEL_BASE_URL !== '${{ vars.BETTER_AGENT_MODEL_BASE_URL }}' ||
+    validateModel.env.MODEL_NAME !== '${{ vars.BETTER_AGENT_MODEL_NAME }}' ||
     typeof validateModel.run !== 'string' ||
-    !validateModel.run.includes('test -n "${MODEL_API_KEY:-}"') ||
+    !validateModel.run.includes('test -n "${MODEL_BASE_URL:-}"') ||
+    !validateModel.run.includes('test -n "${MODEL_NAME:-}"') ||
     !isRecord(configureModel.env) ||
-    Object.keys(configureModel.env).sort().join(',') !==
-      'MODEL_API_KEY,MODEL_BASE_URL,MODEL_NAME' ||
-    configureModel.env.MODEL_API_KEY !== '${{ secrets.BETTER_AGENT_MODEL_API_KEY }}' ||
+    Object.keys(configureModel.env).sort().join(',') !== 'MODEL_BASE_URL,MODEL_NAME' ||
     configureModel.env.MODEL_BASE_URL !== '${{ vars.BETTER_AGENT_MODEL_BASE_URL }}' ||
     configureModel.env.MODEL_NAME !== '${{ vars.BETTER_AGENT_MODEL_NAME }}' ||
     typeof configureModel.run !== 'string' ||
@@ -407,7 +405,7 @@ export function validateDeploymentWorkflow(workflow) {
     !configureModel.run.includes('h.model_runtime!=="configured"')
   ) {
     errors.push(
-      '.github/workflows/deploy-foundation.yml: SSH and model secrets must be scoped to their fixed steps',
+      '.github/workflows/deploy-foundation.yml: SSH secrets must stay scoped and model credentials must remain host-private',
     );
   }
   const buildSteps = Array.isArray(build.steps) ? build.steps : [];
