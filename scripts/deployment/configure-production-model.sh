@@ -9,10 +9,11 @@ readonly WORKER_SERVICE_NAME="better-agent-worker.service"
 
 [[ -f "${SOURCE_FILE}" && ! -L "${SOURCE_FILE}" ]]
 [[ "$(stat -c %h -- "${SOURCE_FILE}")" == 1 ]]
-[[ "$(wc -l < "${SOURCE_FILE}")" == 2 ]]
+[[ "$(wc -l < "${SOURCE_FILE}")" == 3 ]]
 grep -Eq '^BETTER_AGENT_MODEL_API_KEY=[A-Za-z0-9_.-]{8,512}$' "${SOURCE_FILE}"
 grep -Eq '^BETTER_AGENT_MODEL_BASE_URL=https://[^[:space:]]{1,1000}$' "${SOURCE_FILE}"
-[[ "$(grep -Ec '^BETTER_AGENT_MODEL_(API_KEY|BASE_URL)=' "${SOURCE_FILE}")" == 2 ]]
+grep -Eq '^BETTER_AGENT_MODEL_NAME=(deepseek-v4-flash|deepseek-v4-pro|gpt-5\.4-mini|gpt-5\.5|gpt-5\.6-sol)$' "${SOURCE_FILE}"
+[[ "$(grep -Ec '^BETTER_AGENT_MODEL_(API_KEY|BASE_URL|NAME)=' "${SOURCE_FILE}")" == 3 ]]
 
 node -e '
 const fs = require("node:fs");
@@ -67,6 +68,7 @@ for attempt in {1..20}; do
 done
 
 readonly product_environment="${SHARED_ROOT}/postgres/env/product.env"
+readonly model_name="$(sed -n 's/^BETTER_AGENT_MODEL_NAME=//p' "${SOURCE_FILE}")"
 admin_password="$(sed -n 's/^BETTER_AGENT_ADMIN_PASSWORD=//p' "${product_environment}")"
 [[ "${admin_password}" =~ ^[A-Za-z0-9_-]{32}$ ]]
 cookie_jar="$(mktemp)"
@@ -78,7 +80,7 @@ login_response="$(printf '%s' "${login_payload}" | curl --fail --silent --show-e
   --data-binary @- \
   https://songuu.top/better-agent/api/product/login)"
 LOGIN_RESPONSE="${login_response}" node -e 'const r=JSON.parse(process.env.LOGIN_RESPONSE);if(r.authenticated!==true)process.exit(1)'
-readonly assist_payload='{"action":"generate","capability_kinds":[],"description":"验证生产模型运行时可返回结构化角色结果","model":"gpt-5.6-sol","name":"Production Smoke","role_mode":"text"}'
+assist_payload="$(MODEL_NAME="${model_name}" node -e 'process.stdout.write(JSON.stringify({action:"generate",capability_kinds:[],description:"验证生产模型运行时可返回结构化角色结果",model:process.env.MODEL_NAME,name:"Production Smoke",role_mode:"text"}))')"
 assist_response="$(printf '%s' "${assist_payload}" | curl --fail --silent --show-error \
   --max-time 90 --cookie "${cookie_jar}" \
   --header 'Content-Type: application/json' \

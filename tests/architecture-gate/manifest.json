@@ -144,7 +144,9 @@
     "045_product_parallel_subagent.down.sql",
     "045_product_parallel_subagent.up.sql",
     "046_product_async_subagent_worker.down.sql",
-    "046_product_async_subagent_worker.up.sql"
+    "046_product_async_subagent_worker.up.sql",
+    "047_product_deepseek_models.down.sql",
+    "047_product_deepseek_models.up.sql"
   ],
   "postgresSuites": [
     {

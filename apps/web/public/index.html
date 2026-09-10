@@ -52,7 +52,7 @@
               <header><div><p id="agent-kicker">DRAFT · NEW</p><h2 id="editor-title">未命名 Agent</h2></div><span id="save-state">尚未保存</span></header>
               <div class="form-grid">
                 <label><span>名称</span><input name="name" maxlength="80" required placeholder="例如：品牌研究员" /></label>
-                <label><span>模型</span><select name="model"><option>gpt-5.6-sol</option><option>gpt-5.5</option><option>gpt-5.4-mini</option></select></label>
+                <label><span>模型</span><select name="model"><option>deepseek-v4-flash</option><option>deepseek-v4-pro</option><option>gpt-5.6-sol</option><option>gpt-5.5</option><option>gpt-5.4-mini</option></select></label>
               </div>
               <label><span>说明</span><input name="description" maxlength="500" placeholder="这个 Agent 负责什么？" /></label>
               <section class="role-composer">
@@ -82,7 +82,7 @@
                   <label><span>数据过滤默认参数</span><input name="database_contains_default" maxlength="500" placeholder="留空时不过滤记录" /></label>
                 </div>
                 <label class="strategy-toggle"><input name="parameter_extraction" type="checkbox" /><span>启用参数抽取；抽取为空时回退到已发布默认参数</span></label>
-                <fieldset id="agent-model-routes"><legend>允许路由的模型</legend><label><input type="checkbox" value="gpt-5.6-sol" checked /><span>gpt-5.6-sol<small>复杂推理与生产任务</small></span></label><label><input type="checkbox" value="gpt-5.5" /><span>gpt-5.5<small>平衡的通用执行</small></span></label><label><input type="checkbox" value="gpt-5.4-mini" /><span>gpt-5.4-mini<small>快速与低成本任务</small></span></label></fieldset>
+                <fieldset id="agent-model-routes"><legend>允许路由的模型</legend><label><input type="checkbox" value="deepseek-v4-flash" checked /><span>deepseek-v4-flash<small>高性价比 Agent 与通用执行</small></span></label><label><input type="checkbox" value="deepseek-v4-pro" /><span>deepseek-v4-pro<small>复杂推理与高质量生产任务</small></span></label><label><input type="checkbox" value="gpt-5.6-sol" /><span>gpt-5.6-sol<small>复杂推理与生产任务</small></span></label><label><input type="checkbox" value="gpt-5.5" /><span>gpt-5.5<small>平衡的通用执行</small></span></label><label><input type="checkbox" value="gpt-5.4-mini" /><span>gpt-5.4-mini<small>快速与低成本任务</small></span></label></fieldset>
               </section>
               <label><span>发布知识快照</span><select name="knowledge_base_id" id="agent-knowledge-base"><option value="">不绑定知识库</option></select></label>
               <label><span>发布 Database Operation 快照</span><select name="database_operation_binding" id="agent-database-operation"><option value="">不绑定 Database Operation</option></select><small>绑定精确的只读操作版本；查询列、过滤、排序与行数上限均由发布快照控制。</small></label>

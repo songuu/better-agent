@@ -399,6 +399,8 @@ test('packages the PostgreSQL client dependency required by the product runtime'
 test('configures model credentials through a private file without logging their value', () => {
   assert.match(deploymentWorkflow, /secrets\.BETTER_AGENT_MODEL_API_KEY/u);
   assert.match(deploymentWorkflow, /test -n "\$\{MODEL_API_KEY:-\}"/u);
+  assert.match(deploymentWorkflow, /vars\.BETTER_AGENT_MODEL_NAME/u);
+  assert.match(deploymentWorkflow, /BETTER_AGENT_MODEL_NAME=%s/u);
   assert.doesNotMatch(
     deploymentWorkflow,
     /when provisioned|preserving current host configuration/u,
@@ -423,6 +425,8 @@ test('requires a real production model response before deployment can pass', () 
   assert.match(modelConfigurator, /postgres\/env\/product\.env/u);
   assert.match(modelConfigurator, /\/better-agent\/api\/product\/login/u);
   assert.match(modelConfigurator, /\/better-agent\/api\/product\/role-assist/u);
+  assert.match(modelConfigurator, /BETTER_AGENT_MODEL_NAME/u);
+  assert.doesNotMatch(modelConfigurator, /"model":"gpt-5\.6-sol"/u);
   assert.match(modelConfigurator, /instructions\.length<1/u);
   assert.match(modelConfigurator, /rollback/u);
   assert.ok(

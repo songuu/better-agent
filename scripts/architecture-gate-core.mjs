@@ -576,6 +576,7 @@ function validateMigrationFiles(value) {
       '044',
       '045',
       '046',
+      '047',
     ],
     'migration IDs',
   );

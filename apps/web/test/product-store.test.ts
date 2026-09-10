@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  PRODUCT_MODELS,
   compileStructuredAgentInstructions,
   createDefaultAgentStrategyProfile,
   parseAgentStrategyProfile,
@@ -24,6 +25,13 @@ import {
   validateRunInput,
   validateSkillPackInput,
 } from '../src/product-store.js';
+
+describe('product model catalog', () => {
+  it('supports the current DeepSeek V4 OpenAI-compatible models', () => {
+    expect(PRODUCT_MODELS).toContain('deepseek-v4-flash');
+    expect(PRODUCT_MODELS).toContain('deepseek-v4-pro');
+  });
+});
 
 describe('product Database Operation input', () => {
   it('accepts a closed read-only policy and rejects columns outside the declared shape', () => {

@@ -13,7 +13,13 @@ import {
 } from './flow-runtime.js';
 import { splitKnowledgeText } from './knowledge-runtime.js';
 
-export const PRODUCT_MODELS = ['gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-sol'] as const;
+export const PRODUCT_MODELS = [
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+  'gpt-5.4-mini',
+  'gpt-5.5',
+  'gpt-5.6-sol',
+] as const;
 export type ProductModel = (typeof PRODUCT_MODELS)[number];
 export type ProductAgentRoutingMode = 'autonomous' | 'fixed';
 export type ProductAgentForcedCapability = 'database' | 'knowledge' | 'none' | 'subagent';

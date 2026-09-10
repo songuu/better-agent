@@ -324,7 +324,7 @@ export function validateDeploymentWorkflow(workflow) {
   const workflowDigest = createHash('sha256')
     .update(workflow.replaceAll('\r\n', '\n'))
     .digest('hex');
-  if (workflowDigest !== 'ee2d916f2c587c4b700a3487c8242f4d87845ac1b5550483b972531205ce2449') {
+  if (workflowDigest !== 'a7d11d271f4a3855446af6930121d8d256bbc1af0765342a87ea347df6f2d781') {
     errors.push('.github/workflows/deploy-foundation.yml: workflow must match the frozen schema');
   }
   const definition = parseCiWorkflow(workflow, errors);
@@ -397,9 +397,11 @@ export function validateDeploymentWorkflow(workflow) {
     typeof validateModel.run !== 'string' ||
     !validateModel.run.includes('test -n "${MODEL_API_KEY:-}"') ||
     !isRecord(configureModel.env) ||
-    Object.keys(configureModel.env).sort().join(',') !== 'MODEL_API_KEY,MODEL_BASE_URL' ||
+    Object.keys(configureModel.env).sort().join(',') !==
+      'MODEL_API_KEY,MODEL_BASE_URL,MODEL_NAME' ||
     configureModel.env.MODEL_API_KEY !== '${{ secrets.BETTER_AGENT_MODEL_API_KEY }}' ||
     configureModel.env.MODEL_BASE_URL !== '${{ vars.BETTER_AGENT_MODEL_BASE_URL }}' ||
+    configureModel.env.MODEL_NAME !== '${{ vars.BETTER_AGENT_MODEL_NAME }}' ||
     typeof configureModel.run !== 'string' ||
     configureModel.run.includes('preserving current host configuration') ||
     !configureModel.run.includes('h.model_runtime!=="configured"')

@@ -143,6 +143,8 @@ function currentCapabilityKinds() {
 }
 
 const modelRouteDescriptions = {
+  'deepseek-v4-flash': '高性价比 Agent 与通用执行',
+  'deepseek-v4-pro': '复杂推理与高质量生产任务',
   'gpt-5.4-mini': '快速与低成本任务',
   'gpt-5.5': '平衡的通用执行',
   'gpt-5.6-sol': '复杂推理与生产任务',
@@ -171,7 +173,7 @@ function readStrategyProfile() {
   };
 }
 
-function populateStrategyProfile(profile = null, model = 'gpt-5.6-sol', version = 1) {
+function populateStrategyProfile(profile = null, model = 'deepseek-v4-flash', version = 1) {
   const strategy = profile || {
     forcedCapability: 'none',
     maxInputTokens: 32000,
@@ -1541,7 +1543,7 @@ function showEditor(agent = null) {
   form.elements.name.value = agent?.name || '';
   form.elements.description.value = agent?.description || '';
   form.elements.instructions.value = agent?.instructions || textRoleTemplate;
-  form.elements.model.value = agent?.model || 'gpt-5.6-sol';
+  form.elements.model.value = agent?.model || 'deepseek-v4-flash';
   populateStrategyProfile(
     agent?.strategyProfile,
     form.elements.model.value,

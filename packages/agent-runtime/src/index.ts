@@ -3,7 +3,12 @@ export interface AgentModelHistoryTurn {
   readonly user: string;
 }
 
-export type AgentModel = 'gpt-5.4-mini' | 'gpt-5.5' | 'gpt-5.6-sol';
+export type AgentModel =
+  | 'deepseek-v4-flash'
+  | 'deepseek-v4-pro'
+  | 'gpt-5.4-mini'
+  | 'gpt-5.5'
+  | 'gpt-5.6-sol';
 export type AgentToolCapability = 'database' | 'knowledge' | 'subagent';
 
 export interface AgentModelGenerationInput {
