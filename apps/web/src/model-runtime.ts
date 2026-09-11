@@ -1,7 +1,4 @@
-import {
-  OpenAiAgentRuntime,
-  type OpenAiAgentRuntimeOptions,
-} from '@better-agent/agent-runtime';
+import { OpenAiAgentRuntime, type OpenAiAgentRuntimeOptions } from '@better-agent/agent-runtime';
 
 import type {
   ProductAgentModelRoute,
