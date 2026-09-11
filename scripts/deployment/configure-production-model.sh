@@ -11,7 +11,7 @@ readonly WORKER_SERVICE_NAME="better-agent-worker.service"
 [[ "$(stat -c %h -- "${SOURCE_FILE}")" == 1 ]]
 [[ "$(wc -l < "${SOURCE_FILE}")" == 2 ]]
 grep -Eq '^BETTER_AGENT_MODEL_BASE_URL=https://[^[:space:]]{1,1000}$' "${SOURCE_FILE}"
-grep -Eq '^BETTER_AGENT_MODEL_NAME=(deepseek-v4-flash|deepseek-v4-pro|gpt-5\.4-mini|gpt-5\.5|gpt-5\.6-sol)$' "${SOURCE_FILE}"
+grep -Eq '^BETTER_AGENT_MODEL_NAME=[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' "${SOURCE_FILE}"
 [[ "$(grep -Ec '^BETTER_AGENT_MODEL_(BASE_URL|NAME)=' "${SOURCE_FILE}")" == 2 ]]
 
 node -e '

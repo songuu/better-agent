@@ -1,4 +1,7 @@
-import { OpenAiAgentRuntime } from '@better-agent/agent-runtime';
+import {
+  OpenAiAgentRuntime,
+  type OpenAiAgentRuntimeOptions,
+} from '@better-agent/agent-runtime';
 
 import type {
   ProductAgentModelRoute,
@@ -65,6 +68,10 @@ export interface ProductModelRuntime {
 }
 
 export class OpenAiResponsesRuntime extends OpenAiAgentRuntime implements ProductModelRuntime {
+  constructor(options: OpenAiAgentRuntimeOptions) {
+    super(options);
+  }
+
   async extractParameters(input: {
     readonly maxOutputTokens: number;
     readonly model: ProductModel;
@@ -151,5 +158,8 @@ export function createModelRuntimeFromEnvironment(): ProductModelRuntime | undef
   return new OpenAiResponsesRuntime({
     apiKey,
     baseUrl: process.env.BETTER_AGENT_MODEL_BASE_URL ?? 'https://api.openai.com/v1',
+    ...(process.env.BETTER_AGENT_MODEL_NAME === undefined
+      ? {}
+      : { providerModel: process.env.BETTER_AGENT_MODEL_NAME }),
   });
 }

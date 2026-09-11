@@ -54,6 +54,38 @@ describe('OpenAI-compatible product model runtime', () => {
     });
   });
 
+  it('uses the host-selected provider model for product-facing model aliases', async () => {
+    const requests: RequestInit[] = [];
+    const fetchImplementation: typeof fetch = async (_input, init) => {
+      requests.push(init ?? {});
+      return new Response(
+        JSON.stringify({
+          id: 'resp_provider_model',
+          output_text: '已完成。',
+          usage: { input_tokens: 2, output_tokens: 1 },
+        }),
+        { status: 200 },
+      );
+    };
+    const runtime = new OpenAiResponsesRuntime({
+      apiKey: 'test-secret',
+      baseUrl: 'https://models.example.test/v1',
+      fetchImplementation,
+      providerModel: 'deepseek-v4-flash',
+    });
+
+    await runtime.generate({
+      history: [],
+      instructions: '只回答已核验事实。',
+      model: 'gpt-5.6-sol',
+      prompt: '现在状态如何？',
+    });
+
+    const request = requests[0];
+    if (request === undefined) throw new Error('expected model request options');
+    expect(JSON.parse(String(request.body))).toMatchObject({ model: 'deepseek-v4-flash' });
+  });
+
   it('selects only an allowed autonomous route from strict provider JSON', async () => {
     const runtime = new OpenAiResponsesRuntime({
       apiKey: 'test-secret',

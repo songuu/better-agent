@@ -10,15 +10,19 @@ export interface OpenAiAgentRuntimeOptions {
   readonly apiKey: string;
   readonly baseUrl: string;
   readonly fetchImplementation?: typeof fetch;
+  /** Provider-native model selected by the deployment, if it differs from the product alias. */
+  readonly providerModel?: string;
   readonly timeoutMs?: number;
 }
 
 export interface AgentRuntimeEnvironment {
   readonly BETTER_AGENT_MODEL_API_KEY?: string;
   readonly BETTER_AGENT_MODEL_BASE_URL?: string;
+  readonly BETTER_AGENT_MODEL_NAME?: string;
 }
 
 const MAX_PROVIDER_RESPONSE_BYTES = 1024 * 1024;
+const PROVIDER_MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u;
 
 async function readBoundedProviderJson(response: Response): Promise<Record<string, unknown>> {
   const contentLength = response.headers.get('content-length');
@@ -88,10 +92,25 @@ function responseOutputText(payload: Record<string, unknown>): string {
   return parts.join('\n').trim();
 }
 
+function isDeepSeekV4Model(model: string): boolean {
+  return /^deepseek-v4-[A-Za-z0-9._-]+$/u.test(model);
+}
+
+function isOutputBudgetExhausted(payload: Record<string, unknown>): boolean {
+  if (payload.status !== 'incomplete') return false;
+  const details = payload.incomplete_details;
+  return (
+    typeof details === 'object' &&
+    details !== null &&
+    (details as Record<string, unknown>).reason === 'max_output_tokens'
+  );
+}
+
 export class OpenAiAgentRuntime implements AgentModelRuntime {
   readonly #apiKey: string;
   readonly #baseUrl: string;
   readonly #fetch: typeof fetch;
+  readonly #providerModel: string | undefined;
   readonly #timeoutMs: number;
 
   constructor(options: OpenAiAgentRuntimeOptions) {
@@ -105,9 +124,13 @@ export class OpenAiAgentRuntime implements AgentModelRuntime {
     if (url.protocol !== 'https:' && url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') {
       throw new Error('model_base_url_requires_https');
     }
+    if (options.providerModel !== undefined && !PROVIDER_MODEL_NAME.test(options.providerModel)) {
+      throw new Error('model_name_is_invalid');
+    }
     this.#apiKey = options.apiKey;
     this.#baseUrl = url.toString().replace(/\/$/u, '');
     this.#fetch = options.fetchImplementation ?? fetch;
+    this.#providerModel = options.providerModel;
     this.#timeoutMs = options.timeoutMs ?? 60_000;
   }
 
@@ -117,6 +140,7 @@ export class OpenAiAgentRuntime implements AgentModelRuntime {
       { content: turn.assistant, role: 'assistant' },
     ]);
     messages.push({ content: input.prompt, role: 'user' });
+    const providerModel = this.#providerModel ?? input.model;
     let response: Response;
     try {
       response = await this.#fetch(`${this.#baseUrl}/responses`, {
@@ -124,7 +148,10 @@ export class OpenAiAgentRuntime implements AgentModelRuntime {
           input: messages,
           instructions: input.instructions,
           max_output_tokens: input.maxOutputTokens ?? 2_000,
-          model: input.model,
+          model: providerModel,
+          // DeepSeek thinking tokens share max_output_tokens with the visible answer. Agent
+          // protocol calls need the bounded answer, not hidden reasoning that can consume it all.
+          ...(isDeepSeekV4Model(providerModel) ? { reasoning: { effort: 'none' } } : {}),
           store: false,
           ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
         }),
@@ -141,6 +168,9 @@ export class OpenAiAgentRuntime implements AgentModelRuntime {
     if (!response.ok) throw new Error(`model_provider_http_${String(response.status)}`);
     const payload = await readBoundedProviderJson(response);
     const outputText = responseOutputText(payload);
+    if (outputText.length < 1 && isOutputBudgetExhausted(payload)) {
+      throw new Error('model_provider_output_budget_exhausted');
+    }
     if (outputText.length < 1 || outputText.length > 50_000) {
       throw new Error('model_provider_invalid_output');
     }
@@ -240,5 +270,8 @@ export function createAgentModelRuntimeFromEnvironment(
   return new OpenAiAgentRuntime({
     apiKey,
     baseUrl: environment.BETTER_AGENT_MODEL_BASE_URL ?? 'https://api.openai.com/v1',
+    ...(environment.BETTER_AGENT_MODEL_NAME === undefined
+      ? {}
+      : { providerModel: environment.BETTER_AGENT_MODEL_NAME }),
   });
 }
