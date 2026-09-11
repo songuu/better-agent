@@ -20,6 +20,13 @@
 
 /* Product Studio — dense industrial control plane. */
 .studio-shell {
+  color-scheme: dark;
+  --panel: #08130f;
+  --ink: #eef7f1;
+  --muted: #71877c;
+  --line: #304039;
+  --line-bright: #3b5a4d;
+  --accent: #45f2ac;
   min-height: 100vh;
   display: grid;
   grid-template-columns: 260px 1fr;
@@ -2600,14 +2607,54 @@ body::before {
 }
 
 .custom-api-form {
+  min-width: 0;
   align-content: start;
   padding: 20px;
   border: 1px solid var(--line);
 }
 
 .custom-api-form label {
+  min-width: 0;
   display: grid;
   gap: 7px;
+}
+
+.custom-api-form label > span {
+  color: #91a69c;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.custom-api-form input,
+.custom-api-form select,
+.custom-api-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #304039;
+  border-radius: 0;
+  outline: none;
+  background: #091511;
+  color: #edf6f0;
+  padding: 11px 12px;
+  font: 500 11px / 1.6 inherit;
+  caret-color: #45f2ac;
+}
+
+.custom-api-form input::placeholder,
+.custom-api-form textarea::placeholder {
+  color: #53675e;
+  opacity: 1;
+}
+
+.custom-api-form input:focus,
+.custom-api-form select:focus,
+.custom-api-form textarea:focus {
+  border-color: #45f2ac;
+  box-shadow: 0 0 0 2px rgba(69, 242, 172, 0.08);
+}
+
+.custom-api-form .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .custom-api-form footer,
@@ -2840,15 +2887,23 @@ body::before {
 /* Live runtime overlays extend the Studio's industrial control-plane language. */
 .run-dialog,
 .runs-dialog {
+  color-scheme: dark;
   width: min(760px, calc(100% - 32px));
   max-width: none;
   height: min(760px, calc(100vh - 42px));
+  overflow: hidden;
   padding: 0;
   border: 1px solid #375047;
   background: #07110f;
   color: #eef7f1;
   box-shadow: 0 34px 120px rgba(0, 0, 0, 0.76);
   font-family: "IBM Plex Mono", "Noto Sans SC", monospace;
+}
+.run-dialog[open],
+.runs-dialog[open] {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 .runs-dialog {
   width: min(940px, calc(100% - 32px));
@@ -2892,8 +2947,11 @@ body::before {
   cursor: pointer;
 }
 .run-messages {
-  height: calc(100% - 190px);
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #3b5a4d #07110f;
+  scrollbar-width: thin;
   padding: 28px;
   display: flex;
   flex-direction: column;
@@ -2954,6 +3012,7 @@ body::before {
   align-items: end;
 }
 #run-form label {
+  min-width: 0;
   display: grid;
   gap: 7px;
 }
@@ -2963,6 +3022,8 @@ body::before {
   letter-spacing: 0.16em;
 }
 #run-form textarea {
+  width: 100%;
+  min-width: 0;
   min-height: 62px;
   max-height: 140px;
   resize: vertical;
@@ -2973,9 +3034,25 @@ body::before {
   font: 500 11px / 1.6 inherit;
 }
 .runs-list {
-  height: calc(100% - 86px);
+  min-height: 0;
   padding: 18px 28px 28px;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #3b5a4d #07110f;
+  scrollbar-width: thin;
+}
+.run-messages::-webkit-scrollbar,
+.runs-list::-webkit-scrollbar {
+  width: 8px;
+}
+.run-messages::-webkit-scrollbar-track,
+.runs-list::-webkit-scrollbar-track {
+  background: #07110f;
+}
+.run-messages::-webkit-scrollbar-thumb,
+.runs-list::-webkit-scrollbar-thumb {
+  border: 2px solid #07110f;
+  background: #3b5a4d;
 }
 .run-row {
   min-height: 82px;
@@ -3030,9 +3107,6 @@ body::before {
     grid-template-columns: 1fr;
   }
   .run-dialog {
-    height: calc(100vh - 20px);
-  }
-  .run-messages {
-    height: calc(100% - 236px);
+    height: calc(100dvh - 20px);
   }
 }

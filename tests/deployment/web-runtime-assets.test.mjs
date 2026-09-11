@@ -343,6 +343,22 @@ test('ships workspace Custom Plugin authoring and exact Flow binding controls', 
   }
 });
 
+test('keeps resource authoring and runtime overlays inside the Studio visual system', () => {
+  assert.match(
+    publicCss,
+    /\.studio-shell\s*\{[\s\S]*?--panel:\s*#08130f;[\s\S]*?--accent:\s*#45f2ac;/u,
+  );
+  assert.match(
+    publicCss,
+    /\.custom-api-form input,[\s\S]*?\.custom-api-form select,[\s\S]*?\.custom-api-form textarea\s*\{[\s\S]*?background:\s*#091511;[\s\S]*?color:\s*#edf6f0;/u,
+  );
+  assert.match(
+    publicCss,
+    /\.run-dialog\[open\],[\s\S]*?\.runs-dialog\[open\]\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-rows:\s*auto minmax\(0, 1fr\) auto;[\s\S]*?overflow:\s*hidden;/u,
+  );
+  assert.match(publicCss, /\.run-messages\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*auto;/u);
+});
+
 test('ships versioned Skill Pack resources and exact Agent binding controls', () => {
   for (const marker of [
     'id="agent-skill-pack"',
