@@ -2976,7 +2976,9 @@ body::before {
   background: #0b1814;
 }
 .run-message.is-user {
+  position: relative;
   margin-left: auto;
+  margin-bottom: 21px;
   border-color: #386553;
   background: #10241c;
 }
@@ -2996,6 +2998,49 @@ body::before {
 .run-message.is-pending {
   opacity: 0.58;
   animation: runtime-pulse 1.2s ease-in-out infinite alternate;
+}
+.run-message-actions {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 7px);
+  z-index: 1;
+  display: flex;
+  gap: 5px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+.run-message.is-user:hover .run-message-actions,
+.run-message.is-user:focus-within .run-message-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.run-message-actions button {
+  min-height: 28px;
+  border: 1px solid #386553;
+  background: #0d1c16;
+  color: #bdebd4;
+  cursor: pointer;
+  font: 600 9px / 1 inherit;
+  letter-spacing: 0.04em;
+  padding: 0 9px;
+}
+.run-message-actions button:hover,
+.run-message-actions button:focus-visible {
+  border-color: #45f2ac;
+  color: #45f2ac;
+  outline: none;
+}
+@media (hover: none) {
+  .run-message.is-user .run-message-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
 }
 @keyframes runtime-pulse {
   to {

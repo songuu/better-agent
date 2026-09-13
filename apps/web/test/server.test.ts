@@ -1263,6 +1263,17 @@ describe('Better Agent web runtime', () => {
     expect(await response.text()).toContain(marker);
   });
 
+  it('ships editable and retryable failed-run controls', async () => {
+    const origin = await start();
+    const response = await localRequest(origin, '/better-agent/assets/app.js');
+    const source = await response.text();
+
+    expect(source).toContain('编辑后运行');
+    expect(source).toContain("retry.textContent = '重试'");
+    expect(source).toContain('async function submitRun(message)');
+    expect(source).toContain('function runFailureMessage(error)');
+  });
+
   it('reports bounded same-origin runtime identity without environment secrets', async () => {
     const origin = await start({ buildSha: 'a'.repeat(40) });
     const response = await localRequest(origin, '/better-agent/api/healthz');

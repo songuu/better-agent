@@ -27,6 +27,7 @@ const state = {
   mcpServers: [],
   plugins: [],
   releaseTargets: [],
+  runPending: false,
   runs: [],
   skillPacks: [],
   view: 'agents',
@@ -2250,6 +2251,32 @@ byId('database-query-form').addEventListener('submit', async (event) => {
   }
 });
 
+function focusQuestionForEditing(message) {
+  if (state.runPending) return;
+  const textarea = byId('run-form').elements.message;
+  textarea.value = message;
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  toast('问题已回填；修改后点击“运行”。');
+}
+
+function appendQuestionActions(article, message) {
+  const actions = document.createElement('div');
+  actions.className = 'run-message-actions';
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.textContent = '编辑后运行';
+  edit.title = '将这条问题回填到输入框';
+  edit.addEventListener('click', () => focusQuestionForEditing(message));
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.textContent = '重试';
+  retry.title = '使用原问题重新运行';
+  retry.addEventListener('click', () => void submitRun(message));
+  actions.append(edit, retry);
+  article.append(actions);
+}
+
 function appendMessage(role, text, pending = false) {
   const messages = byId('run-messages');
   messages.querySelector('.run-empty')?.remove();
@@ -2260,25 +2287,37 @@ function appendMessage(role, text, pending = false) {
   const body = document.createElement('p');
   body.textContent = text;
   article.append(label, body);
+  if (role === 'user' && !pending) appendQuestionActions(article, text);
   messages.append(article);
   messages.scrollTop = messages.scrollHeight;
   return article;
 }
 
-byId('test-agent').addEventListener('click', () => {
-  if (!state.current || state.current.status !== 'published') return;
-  byId('run-agent-name').textContent = state.current.name;
-  byId('run-dialog').showModal();
-  byId('run-form').elements.message.focus();
-});
-byId('run-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (!state.current) return;
-  const textarea = event.currentTarget.elements.message;
-  const message = textarea.value.trim();
-  if (!message) return;
+function runFailureMessage(error) {
+  const code = error instanceof Error ? error.message : 'model_provider_failed';
+  if (code === 'model_runtime_not_configured')
+    return '模型服务尚未配置，请联系管理员检查运行时凭据。';
+  if (code === 'model_provider_unreachable') return '无法连接模型服务，请稍后重试或检查服务地址。';
+  if (/^model_provider_http_(401|403)$/u.test(code)) {
+    return '模型服务认证失败，请检查 API 密钥和权限。';
+  }
+  if (code === 'model_provider_http_404') {
+    return '模型接口或部署模型名称不可用，请检查模型服务地址和模型名称。';
+  }
+  if (code === 'model_provider_http_429') return '模型服务繁忙或配额不足，请稍后重试。';
+  if (/^model_provider_http_5[0-9]{2}$/u.test(code)) return '模型服务暂时异常，请稍后重试。';
+  return `执行未完成（${code}）。`;
+}
+
+async function submitRun(message) {
+  if (!state.current || state.runPending) return;
+  const runForm = byId('run-form');
+  const textarea = runForm.elements.message;
+  const submit = runForm.querySelector('button[type="submit"]');
+  state.runPending = true;
   textarea.value = '';
   textarea.disabled = true;
+  submit.disabled = true;
   appendMessage('user', message);
   const pending = appendMessage('assistant', '正在调用已发布模型……', true);
   try {
@@ -2298,12 +2337,31 @@ byId('run-form').addEventListener('submit', async (event) => {
     await loadRuns();
   } catch (error) {
     pending.remove();
-    appendMessage('assistant', `运行失败：${error.message}`);
+    appendMessage(
+      'assistant',
+      `运行失败：${runFailureMessage(error)}\n可编辑问题后再次运行，或直接点击“重试”。`,
+    );
     await loadRuns().catch(() => undefined);
   } finally {
+    state.runPending = false;
     textarea.disabled = false;
+    submit.disabled = false;
     textarea.focus();
   }
+}
+
+byId('test-agent').addEventListener('click', () => {
+  if (!state.current || state.current.status !== 'published') return;
+  byId('run-agent-name').textContent = state.current.name;
+  byId('run-dialog').showModal();
+  byId('run-form').elements.message.focus();
+});
+byId('run-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const textarea = event.currentTarget.elements.message;
+  const message = textarea.value.trim();
+  if (!message) return;
+  await submitRun(message);
 });
 
 byId('show-runs').addEventListener('click', async () => {
