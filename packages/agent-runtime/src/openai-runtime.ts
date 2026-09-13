@@ -135,6 +135,10 @@ export class OpenAiAgentRuntime implements AgentModelRuntime {
   }
 
   async generate(input: AgentModelGenerationInput): Promise<AgentModelGenerationResult> {
+    input.signal?.throwIfAborted();
+    const timeoutSignal = AbortSignal.timeout(this.#timeoutMs);
+    const requestSignal =
+      input.signal === undefined ? timeoutSignal : AbortSignal.any([input.signal, timeoutSignal]);
     const messages = input.history.flatMap((turn) => [
       { content: turn.user, role: 'user' },
       { content: turn.assistant, role: 'assistant' },
@@ -160,13 +164,22 @@ export class OpenAiAgentRuntime implements AgentModelRuntime {
           'Content-Type': 'application/json',
         },
         method: 'POST',
-        signal: AbortSignal.timeout(this.#timeoutMs),
+        signal: requestSignal,
       });
     } catch (error) {
+      input.signal?.throwIfAborted();
       throw new Error('model_provider_unreachable', { cause: error });
     }
+    input.signal?.throwIfAborted();
     if (!response.ok) throw new Error(`model_provider_http_${String(response.status)}`);
-    const payload = await readBoundedProviderJson(response);
+    let payload: Record<string, unknown>;
+    try {
+      payload = await readBoundedProviderJson(response);
+    } catch (error) {
+      input.signal?.throwIfAborted();
+      throw error;
+    }
+    input.signal?.throwIfAborted();
     const outputText = responseOutputText(payload);
     if (outputText.length < 1 && isOutputBudgetExhausted(payload)) {
       throw new Error('model_provider_output_budget_exhausted');
@@ -222,6 +235,7 @@ export class OpenAiAgentRuntime implements AgentModelRuntime {
       ].join('\n'),
       model: input.model,
       prompt: input.prompt,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
       ...(input.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.maxOutputTokens }),
       ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
     });

@@ -100,4 +100,26 @@ describe('PostgresWorkerJobStore', () => {
 
     await expect(store.claim()).rejects.toThrow('async_subagent_job_invalid');
   });
+
+  it('classifies only the exact PostgreSQL lease conflict as lost authority', async () => {
+    const conflict = Object.assign(new Error('async SubAgent lease conflict'), { code: '40001' });
+    const query = vi.fn().mockRejectedValue(conflict);
+    const store = new PostgresWorkerJobStore({ query }, 'worker-a');
+
+    await expect(store.renew(lease)).rejects.toMatchObject({
+      name: 'WorkerLeaseLostError',
+      message: 'worker_lease_lost',
+      cause: conflict,
+    });
+    for (const error of [
+      Object.assign(new Error('could not serialize access due to concurrent update'), {
+        code: '40001',
+      }),
+      Object.assign(new Error('async SubAgent terminal conflict'), { code: '40001' }),
+      Object.assign(new Error('async SubAgent lease conflict'), { code: '08006' }),
+    ]) {
+      query.mockRejectedValueOnce(error);
+      await expect(store.renew(lease)).rejects.toBe(error);
+    }
+  });
 });

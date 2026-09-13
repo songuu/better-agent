@@ -176,4 +176,110 @@ describe('shared OpenAI-compatible Agent runtime', () => {
       }),
     ).toThrow('model_name_is_invalid');
   });
+
+  it.each(['generate', 'decideAction'] as const)(
+    'cancels an in-flight %s provider request',
+    async (operation) => {
+      const controller = new AbortController();
+      const lostLease = new Error('lost lease');
+      let providerSignal: AbortSignal | null | undefined;
+      let rejectRequest: ((error: unknown) => void) | undefined;
+      const runtime = new OpenAiAgentRuntime({
+        apiKey: 'test-secret',
+        baseUrl: 'https://models.example.test/v1',
+        fetchImplementation: async (_input, init) => {
+          providerSignal = init?.signal;
+          return await new Promise<Response>((_resolve, reject) => {
+            rejectRequest = reject;
+            providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), {
+              once: true,
+            });
+          });
+        },
+      });
+      const execution = runtime[operation]({
+        availableCapabilities: [],
+        history: [],
+        instructions: 'verify',
+        model: 'gpt-5.5',
+        prompt: 'status',
+        signal: controller.signal,
+      }).then(
+        (value) => value,
+        (error: unknown) => error,
+      );
+      controller.abort(lostLease);
+      const wasAborted = providerSignal?.aborted;
+      // Release the test transport even when the implementation drops the caller's signal.
+      rejectRequest?.(new Error('transport cleanup'));
+
+      expect(await execution).toBe(lostLease);
+      expect(wasAborted).toBe(true);
+    },
+  );
+
+  it('keeps the provider timeout active when a caller cancellation signal is supplied', async () => {
+    const controller = new AbortController();
+    let providerSignal: AbortSignal | null | undefined;
+    const runtime = new OpenAiAgentRuntime({
+      apiKey: 'test-secret',
+      baseUrl: 'https://models.example.test/v1',
+      timeoutMs: 1,
+      fetchImplementation: async (_input, init) => {
+        providerSignal = init?.signal;
+        return await new Promise<Response>((_resolve, reject) => {
+          providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), {
+            once: true,
+          });
+        });
+      },
+    });
+
+    await expect(
+      runtime.generate({
+        history: [],
+        instructions: 'verify',
+        model: 'gpt-5.5',
+        prompt: 'status',
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('model_provider_unreachable');
+    expect(controller.signal.aborted).toBe(false);
+    expect(providerSignal?.reason).toMatchObject({ name: 'TimeoutError' });
+  });
+
+  it('preserves cancellation during response-body consumption', async () => {
+    const controller = new AbortController();
+    const lostLease = new Error('lost lease');
+    const runtime = new OpenAiAgentRuntime({
+      apiKey: 'test-secret',
+      baseUrl: 'https://models.example.test/v1',
+      fetchImplementation: async (_input, init) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(body) {
+              init?.signal?.addEventListener('abort', () => body.error(init.signal?.reason), {
+                once: true,
+              });
+            },
+          }),
+        ),
+    });
+    const execution = runtime
+      .generate({
+        history: [],
+        instructions: 'verify',
+        model: 'gpt-5.5',
+        prompt: 'status',
+        signal: controller.signal,
+      })
+      .then(
+        (value) => value,
+        (error: unknown) => error,
+      );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort(lostLease);
+
+    expect(await execution).toBe(lostLease);
+  });
 });

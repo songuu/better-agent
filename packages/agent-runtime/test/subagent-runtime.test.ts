@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   executeParallelSubagents,
@@ -99,5 +99,60 @@ describe('shared SubAgent runtime', () => {
       ),
     ).rejects.toThrow('model_subagent_chain_invalid');
     expect(called).toBe(false);
+  });
+
+  it('passes cancellation to every parallel branch and rejects late outputs without receipts', async () => {
+    const controller = new AbortController();
+    const lostLease = new Error('lost lease');
+    const signals: (AbortSignal | undefined)[] = [];
+    let finish: (() => void) | undefined;
+    const generation = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const recordInvocation = vi.fn();
+    const execution = executeParallelSubagents(
+      [[leaf(1, 'Billing')], [leaf(2, 'Security')]],
+      'verify release',
+      1,
+      {
+        async generate(input) {
+          signals.push(input.signal);
+          await generation;
+          return {
+            inputTokens: 1,
+            outputTokens: 1,
+            outputText: 'late evidence',
+            providerRequestId: 'late-response',
+          };
+        },
+      },
+      recordInvocation,
+      controller.signal,
+    );
+    controller.abort(lostLease);
+    finish?.();
+
+    await expect(execution).rejects.toBe(lostLease);
+    expect(signals).toEqual([controller.signal, controller.signal]);
+    expect(recordInvocation).not.toHaveBeenCalled();
+  });
+
+  it('rejects already-cancelled execution before starting any model request', async () => {
+    const controller = new AbortController();
+    const lostLease = new Error('lost lease');
+    controller.abort(lostLease);
+    const generate = vi.fn();
+
+    await expect(
+      executeRecursiveSubagent(
+        [leaf(1, 'Billing')],
+        'verify release',
+        1,
+        { generate },
+        vi.fn(),
+        controller.signal,
+      ),
+    ).rejects.toBe(lostLease);
+    expect(generate).not.toHaveBeenCalled();
   });
 });

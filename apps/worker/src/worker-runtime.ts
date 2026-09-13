@@ -42,9 +42,17 @@ export interface WorkerJobStore {
   renew(lease: WorkerLeaseIdentity): Promise<void>;
 }
 
+export class WorkerLeaseLostError extends Error {
+  constructor(cause: unknown) {
+    super('worker_lease_lost', { cause });
+    this.name = 'WorkerLeaseLostError';
+  }
+}
+
 interface WorkerCycleOptions {
   readonly heartbeatIntervalMs?: number;
   readonly sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  readonly storageDrainTimeoutMs?: number;
 }
 
 async function abortableSleep(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -73,9 +81,39 @@ export async function runWorkerCycle(
   modelRuntime: AgentModelRuntime,
   options: WorkerCycleOptions = {},
 ): Promise<boolean> {
+  const storageDrainTimeoutMs = options.storageDrainTimeoutMs ?? 5_000;
+  if (
+    !Number.isSafeInteger(storageDrainTimeoutMs) ||
+    storageDrainTimeoutMs < 1 ||
+    storageDrainTimeoutMs > 30_000
+  ) {
+    throw new Error('worker_storage_drain_timeout_invalid');
+  }
   const job = await store.claim();
   if (job === undefined) return false;
   const lease = leaseIdentity(job);
+  const executionController = new AbortController();
+  const pendingMutations = new Set<Promise<void>>();
+  const storageFailures: unknown[] = [];
+  const mutateStore = async (operation: () => Promise<void>): Promise<void> => {
+    executionController.signal.throwIfAborted();
+    const mutation = (async () => {
+      try {
+        await operation();
+      } catch (error) {
+        storageFailures.push(error);
+        // Losing storage authority must stop sibling and nested model calls immediately.
+        executionController.abort(error);
+        throw error;
+      }
+    })();
+    pendingMutations.add(mutation);
+    try {
+      await mutation;
+    } finally {
+      pendingMutations.delete(mutation);
+    }
+  };
 
   try {
     const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 10_000;
@@ -88,7 +126,9 @@ export async function runWorkerCycle(
       job.prompt,
       job.parentIteration,
       modelRuntime,
-      async (invocation) => await store.recordInvocation({ ...lease, invocation }),
+      async (invocation) =>
+        await mutateStore(() => store.recordInvocation({ ...lease, invocation })),
+      executionController.signal,
     ).then(
       (value) => ({ status: 'fulfilled' as const, value }),
       (reason: unknown) => ({ reason, status: 'rejected' as const }),
@@ -96,21 +136,26 @@ export async function runWorkerCycle(
     let result: Awaited<ReturnType<typeof executeParallelSubagents>>;
     while (true) {
       const waitController = new AbortController();
-      const outcome = await Promise.race([
-        execution,
-        sleep(heartbeatIntervalMs, waitController.signal).then(() => undefined),
-      ]);
+      const outcome = await (async () => {
+        try {
+          return await Promise.race([
+            execution,
+            sleep(heartbeatIntervalMs, waitController.signal).then(() => undefined),
+          ]);
+        } finally {
+          waitController.abort();
+        }
+      })();
       if (outcome === undefined) {
-        await store.renew(lease);
+        await mutateStore(() => store.renew(lease));
         continue;
       }
-      waitController.abort();
       if (outcome.status === 'rejected') throw outcome.reason;
       result = outcome.value;
       break;
     }
     const singleBranch = result.branches.length === 1 ? result.branches[0] : undefined;
-    await store.complete({
+    const completion: WorkerCompletion = {
       ...lease,
       aggregateInputTokens: result.aggregateInputTokens,
       aggregateOutputTokens: result.aggregateOutputTokens,
@@ -119,9 +164,40 @@ export async function runWorkerCycle(
           ? withParallelSubagentContext(result.branches)
           : withSubagentContext(singleBranch.name, singleBranch.outputText),
       providerRequestId: result.providerRequestId,
-    });
-  } catch {
-    await store.fail({ ...lease, errorCode: 'async_subagent_execution_failed' });
+    };
+    await mutateStore(() => store.complete(completion));
+  } catch (error) {
+    executionController.abort(error);
+    // Observe already-started writes; a lease conflict cannot hide another branch's outage.
+    // Model promises may ignore cancellation, so only storage mutations join this boundary.
+    if (pendingMutations.size > 0) {
+      let drainTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.allSettled([...pendingMutations]),
+          new Promise<never>((_resolve, reject) => {
+            drainTimer = setTimeout(
+              () => reject(new Error('worker_storage_drain_timeout', { cause: error })),
+              storageDrainTimeoutMs,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(drainTimer);
+      }
+    }
+    if (storageFailures.length > 0) {
+      const unexpected = storageFailures.findIndex(
+        (failure) => !(failure instanceof WorkerLeaseLostError),
+      );
+      if (unexpected !== -1) throw storageFailures[unexpected];
+      return true;
+    }
+    try {
+      await store.fail({ ...lease, errorCode: 'async_subagent_execution_failed' });
+    } catch (failure) {
+      if (!(failure instanceof WorkerLeaseLostError)) throw failure;
+    }
   }
   return true;
 }

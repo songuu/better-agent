@@ -2,9 +2,11 @@
 
 BetterYeah AI 兼容面与私有化平台的文档设计。
 
-证据基线：官方手册全站 60+ 页 + **43 篇更新日志全量**（2024-04-19 → 2026-03-05）+ 3 个产品页。
+历史公开资料基线：官方手册全站 60+ 页 + **43 篇更新日志全量**（2024-04-19 → 2026-03-05）+ 3 个产品页。新增产品实测见 [2026-09-13 浏览器研究](./research/betteryeah-browser-architecture-2026-09-13.md)；页面可见行为、运行协议与内部架构推断分别记录。
 
-> 当前阶段：竞品逆向需求基线 + HLD + 局部 LLD + G0 工程底座。2026-08-26 第四轮最终架构 Review 未发现文档级 P0/P1，Gate A 文档冻结通过；G0-01～G0-04 已落地，G0-05 的 strict contract、release-core、003 Release/Deployment/typed grant/browser-session 数据与无公开 handler 的组合框架已实现并进入代码 Review。审查发现的 publisher 自证 hash 与 grant revoke 竞态已按 fail-closed 修复：application control role 无 content-addressed publisher 权限，direct resolver 不接受 original-Run scope，最终加锁查询重新校验授权事实。Agent compiler/closure、Run/profile、公开 HTTP、真实连接池和后续 runtime 仍未实现；G0-08 未通过前不能进入 G1，本地 DDL/API 边界不能表述为已部署能力。
+> 当前阶段（2026-09-13）：G0/G1 内核已有历史验收或本地闭环记录，产品代码已扩展到 Web/Studio、同源 API、资源管理、迁移 046 异步 SubAgent worker 与 047 DeepSeek 模型契约。父 Product Run 仍在 Web 请求处理器内执行并等待子 Run；任务中心、对外发布集成与成员治理仍有缺口。具体代码依据与边界以 [完整应用交付总图](./plans/2026-09-02-complete-agent-application-delivery.md#当前状态2026-09-13) 为准。
+>
+> 代码资产、本轮验证、生产验收必须分开记录；本次入口文档核对没有重跑完整门禁或验证当前生产。历史 G0/G1 证据不覆盖新增源码，也不能替代最终产品验收。
 
 | 文件 | 内容 |
 |---|---|
@@ -20,9 +22,12 @@ BetterYeah AI 兼容面与私有化平台的文档设计。
 | [database/004-运行与计费.sql](./database/004-运行与计费.sql) | PostgreSQL 16 Run、事件、恢复、outbox 与积分冻结草案 |
 | [08-待补信息.md](./08-待补信息.md) | 手册截图内缺失项 |
 | [09-角色设定深研.md](./09-角色设定深研.md) | 双轨模式 · 四份实证样本 · 七主题权重 · 公开线索与自定安全装配规格 |
-| [10-技能系统深研.md](./10-技能系统深研.md) | Plugin/Flow/SubAgent 兼容证据 · 自有 Instruction Skill/Strategy · BetterYeah 独立 Skill 待补实证 · `skill_pack` 扩展 |
+| [10-技能系统深研.md](./10-技能系统深研.md) | Plugin/Flow/SubAgent 兼容证据 · Instruction Skill 与工具包区分 · BetterYeah Skill 发布/绑定实证及生命周期未知项 |
 | [research/agent-configuration-evidence-2026-08.md](./research/agent-configuration-evidence-2026-08.md) | Agent 编辑页截图、官方公开资料与行业参考的证据分级；明确事实、推断和待补实验 |
 | [research/agent-platform-comparison-2026-08.md](./research/agent-platform-comparison-2026-08.md) | Dify、Coze、Flowise、Stack AI、Gumloop 横向证据；Skill/Strategy/Deployment/Credential/HITL/Eval 架构收敛 |
+| [research/betteryeah-browser-architecture-2026-09-13.md](./research/betteryeah-browser-architecture-2026-09-13.md) | 本轮 BetterYeah 浏览器研究、证据边界与产品架构差距 |
+| [plans/2026-09-02-complete-agent-application-delivery.md](./plans/2026-09-02-complete-agent-application-delivery.md) | 完整应用范围、当前代码资产、剩余产品能力与最终验收条件 |
+| [plans/2026-09-13-product-architecture-convergence.md](./plans/2026-09-13-product-architecture-convergence.md) | Product/G1 执行链收敛、Skill/Flow/资源/发布/治理切片依赖与失败验收矩阵 |
 | [adr/001-兼容性与安全默认值.md](./adr/001-兼容性与安全默认值.md) | 兼容边界、secure-by-default 与兼容 profile |
 | [adr/002-部署画像与出网边界.md](./adr/002-部署画像与出网边界.md) | 离线、受控出网、部署单元与存储演进 |
 | [adr/003-多租户与凭据模型.md](./adr/003-多租户与凭据模型.md) | RLS、租户传播、凭据分级与轮换 |
@@ -32,9 +37,11 @@ BetterYeah AI 兼容面与私有化平台的文档设计。
 | [architecture/agent-runtime-strategy-v1.md](./architecture/agent-runtime-strategy-v1.md) | Agent 主循环 ABI、durable state、model-call attempt、checkpoint、恢复、终止与计费 |
 | [architecture/compiled-capability-closure-v1.md](./architecture/compiled-capability-closure-v1.md) | Agent/Flow 嵌套依赖、凭据、出网、数据分类、operation 与副作用上限的 canonical closure |
 | [api/SSE与异步操作契约.md](./api/SSE与异步操作契约.md) | SSE 序列、重连、取消、幂等与脱敏 |
-| [plans/2026-08-25-architecture-readiness-and-implementation.md](./plans/2026-08-25-architecture-readiness-and-implementation.md) | 当前架构就绪矩阵、A1～A7 修复任务、G0/G1 文件 ownership、依赖、证据与停止条件 |
+| [plans/2026-08-25-architecture-readiness-and-implementation.md](./plans/2026-08-25-architecture-readiness-and-implementation.md) | 历史架构就绪矩阵、A1～A7 修复任务、G0/G1 文件 ownership、依赖、证据与停止条件 |
 
-## G0 本地实施证据
+## 历史 G0 本地实施证据
+
+以下保留各切片记录时的证据与边界；“尚无”“未完成”描述当时状态，不作为当前代码缺口清单。G0-08 的历史准入完成状态见 [验收记录](./plans/.handoff/active-sprint.json)。
 
 | 切片 | 可执行资产与本地证据 | 明确边界 |
 |---|---|---|
@@ -63,6 +70,8 @@ BetterYeah AI 兼容面与私有化平台的文档设计。
 | 工期 | 原 12 周表为能力库存，设计冻结与最小纵向闭环验收后再重新估算 |
 
 ## 两级架构门
+
+以下是历史准入门的判据，继续约束后续实现的证据质量；Gate A/G0-08 的历史通过记录不代表新源码已自动通过。
 
 ### Gate A：进入 G0-01 前的文档冻结门
 

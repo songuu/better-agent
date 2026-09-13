@@ -281,8 +281,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/agent-runtime',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 9,
-    successMarker: '@better-agent/agent-runtime:test:       Tests  9 passed (9)',
+    testCount: 15,
+    successMarker: '@better-agent/agent-runtime:test:       Tests  15 passed (15)',
   }),
   Object.freeze({
     packageName: '@better-agent/api',
@@ -366,8 +366,8 @@ const EXPECTED_WORKSPACE_TESTS = Object.freeze([
   Object.freeze({
     packageName: '@better-agent/worker',
     script: 'vitest run --config vitest.config.ts --configLoader native',
-    testCount: 10,
-    successMarker: '@better-agent/worker:test:       Tests  10 passed (10)',
+    testCount: 25,
+    successMarker: '@better-agent/worker:test:       Tests  25 passed (25)',
   }),
 ]);
 

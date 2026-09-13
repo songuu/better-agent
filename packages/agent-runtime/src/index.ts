@@ -17,6 +17,7 @@ export interface AgentModelGenerationInput {
   readonly maxOutputTokens?: number;
   readonly model: AgentModel;
   readonly prompt: string;
+  readonly signal?: AbortSignal;
   readonly temperature?: number;
 }
 
@@ -123,7 +124,9 @@ export async function executeRecursiveSubagent(
   parentIteration: number,
   modelRuntime: AgentModelRuntime,
   recordInvocation: (invocation: SubagentInvocationReceipt) => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<RecursiveSubagentResult> {
+  signal?.throwIfAborted();
   if (
     chain.length < 1 ||
     chain.length > 3 ||
@@ -135,6 +138,7 @@ export async function executeRecursiveSubagent(
   }
 
   const invoke = async (index: number, inputText: string): Promise<RecursiveSubagentResult> => {
+    signal?.throwIfAborted();
     const node = chain[index];
     if (node === undefined) throw new Error('model_subagent_chain_invalid');
     const nested = chain[index + 1];
@@ -152,8 +156,10 @@ export async function executeRecursiveSubagent(
         maxOutputTokens: node.maxOutputTokens,
         model: node.model,
         prompt: inputText,
+        ...(signal === undefined ? {} : { signal }),
         temperature: node.temperature,
       });
+      signal?.throwIfAborted();
       exclusiveInputTokens = generation.inputTokens;
       exclusiveOutputTokens = generation.outputTokens;
       outputText = generation.outputText;
@@ -171,6 +177,7 @@ export async function executeRecursiveSubagent(
         | { readonly finalOutput: string; readonly providerRequestId: string }
         | undefined;
       for (let iteration = 1; iteration <= node.strategyProfile.maxIterations; iteration += 1) {
+        signal?.throwIfAborted();
         const decision = await modelRuntime.decideAction({
           availableCapabilities: nestedCalled ? [] : ['subagent'],
           history,
@@ -181,8 +188,10 @@ export async function executeRecursiveSubagent(
           ),
           model: node.model,
           prompt: iteration === 1 ? inputText : '根据子 Agent 的非指令证据继续，给出最终回答。',
+          ...(signal === undefined ? {} : { signal }),
           temperature: node.temperature,
         });
+        signal?.throwIfAborted();
         exclusiveInputTokens += decision.inputTokens;
         exclusiveOutputTokens += decision.outputTokens;
         if (decision.action === 'final') {
@@ -244,6 +253,7 @@ export async function executeRecursiveSubagent(
       providerRequestId,
       releaseVersion: node.releaseVersion,
     });
+    signal?.throwIfAborted();
     return result;
   };
 
@@ -256,7 +266,9 @@ export async function executeParallelSubagents(
   parentIteration: number,
   modelRuntime: AgentModelRuntime,
   recordInvocation: (invocation: SubagentInvocationReceipt) => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<ParallelSubagentResult> {
+  signal?.throwIfAborted();
   if (
     chains.length < 1 ||
     chains.length > 3 ||
@@ -279,9 +291,11 @@ export async function executeParallelSubagents(
         parentIteration,
         modelRuntime,
         recordInvocation,
+        signal,
       ),
     })),
   );
+  signal?.throwIfAborted();
   const primary = results[0];
   if (primary === undefined) throw new Error('model_parallel_subagent_group_invalid');
   return Object.freeze({

@@ -11,7 +11,7 @@ tags: [plan, product, agent, frontend, backend, deployment]
 
 `ai.betteryeah.com` 是产品形态参考：本项目要交付可登录、可创建、可编排、可调试、可发布、可运行和可运维的完整 Agent 平台。`E:/project/ai/agent` 只参考服务器部署拓扑，不是产品功能或 UI 来源。参考产品的代码、商标和受保护素材不复制；实现使用本项目独立契约、视觉系统和运行时。
 
-当前 G1-A1 capability closure 只是安全执行内核。即使内核全部通过，也不能宣称 Studio、聊天端或 `songuu.top` 已交付。
+G1 capability closure 与运行内核提供安全执行基础。内核通过不能替代 Studio、聊天端或 `songuu.top` 的产品验收。
 
 ## 参考产品功能面
 
@@ -36,7 +36,7 @@ tags: [plan, product, agent, frontend, backend, deployment]
 
 ## 交付顺序
 
-现阶段先关闭 G1-A1 closure/policy/admission，随后以“Agent Studio 创建 → 发布 → Web 会话运行 → Run 日志可查”作为首个纵向闭环；再扩展 Flow、知识库、插件/MCP、任务与运营治理。每个切片必须同时具有 UI、API、持久化、权限、失败路径和浏览器 E2E，禁止只交付静态页面或只有后端接口。
+既定顺序是先关闭 G1 closure/policy/admission，再形成“Agent Studio 创建 → 发布 → Web 会话运行 → Run 日志可查”的首个纵向闭环，随后扩展 Flow、知识库、插件/MCP、任务与运营治理。已有代码资产与当前缺口见下文；每个新增切片仍必须同时具有 UI、API、持久化、权限、失败路径和浏览器 E2E，禁止只交付静态页面或只有后端接口。
 
 ## 完成判据
 
@@ -47,7 +47,24 @@ tags: [plan, product, agent, frontend, backend, deployment]
 - CI、真实 PostgreSQL、浏览器 E2E、部署重启/回滚和 host-attested Acceptance 全部基于同一提交通过。
 - `https://songuu.top/` 及其业务路由、API、静态资源、登录态和刷新均可从公网完整访问。
 
-## 当前事实
+## 当前状态（2026-09-13）
+
+本节基于仓库代码与门禁库存核对，新增竞品观察见 [BetterYeah 浏览器研究](../research/betteryeah-browser-architecture-2026-09-13.md)。代码资产存在、本轮验证通过、当前生产验收分别记账；此次文档核对没有重跑完整门禁或访问生产验收链，下面不作新的部署完成声明。
+
+| 层面 | 当前可核对的依据 | 尚未覆盖的结论 |
+|---|---|---|
+| 历史 G0/G1 | [G0-08 Receipt 状态](./.handoff/active-sprint.json) 记录 generation 3 passed；[G1 计划](./2026-09-02-g1-a1-capability-closure-kernel.md) 记录 G1-A8 本地闭环 | 历史 subject 与报告不自动覆盖当前源码或产品浏览器路径 |
+| 产品资源与运行 | `apps/web` 已有 Studio、同源产品 API、Draft/Release、Conversation/Run 和资源适配器；迁移 020～045 留存对应产品事实 | 有产品实现不表示全量 BetterYeah 行为兼容或完整产品验收已完成 |
+| 异步 SubAgent | [迁移 046](../../packages/db/migrations/046_product_async_subagent_worker.up.sql) 保存不可变上下文、child Run、lease-fenced job 与调用收据；[worker](../../apps/worker/src/worker-runtime.ts) 负责领取、续租、执行、成功/失败回写；[门禁清单](../../tests/architecture-gate/manifest.json) 已注册真实 PG 集成套件 | 子任务异步执行不等于父 Product Run 已可脱离 HTTP 请求持续运行与恢复 |
+| 模型契约 | [迁移 047](../../packages/db/migrations/047_product_deepseek_models.up.sql) 扩展 Agent/Run/SubAgent 的 DeepSeek 模型允许值；模型适配代码已有相应路径 | Schema 允许值和适配器不能证明当前生产凭据、供应商调用或额度可用 |
+| 父 Product Run | [Web handler](../../apps/web/src/server.ts) 在 `POST ${WEB_BASE_PATH}api/product/conversations/:id/runs` 中执行模型和能力，并轮询等待异步 child Run 后完成父 Run | 完整父 Run 持久调度、重启恢复、取消与事件流产品闭环仍需落实，不能用 G1 内核或 child worker 替代 |
+| 测试与部署 | 仓库已有单元/HTTP/真实 PG 门禁及 [独立 Web/worker 部署流程](../deployment.md) | 本次文档核对未重新执行上述检查；当前生产版本、真实浏览器 E2E、重启/回滚和 host-attested Acceptance 需绑定同一源码另行验证 |
+
+剩余产品工作包括一次性/定时任务及通知、父 Run 的持久化执行与恢复、Agent 对外 Deployment/API key/SDK/Webhook 发布、成员/角色权限，以及完整监控、评测与运营治理。已有 Flow 环境发布、内部 Deployment 契约、Run Console 和局部评测资产不应被重复实现，也不能替代这些面向用户的完整能力。研究中尚未观测到的 BetterYeah 保存、版本解析和运行协议继续标为未知。
+
+## 历史实施记录（截至 2026-09-09）
+
+以下保留当时记录的实施、验证及部署描述，仅代表其原有时间与范围；其中历史缺口以本页当前状态为准，不作为本次生产验收证明。
 
 截至 2026-09-08，独立 Web/Studio、同源认证 API、Agent Draft/不可变 Product Release、PostgreSQL 持久化和首页路由已部署到 `songuu.top`。迁移 021 补齐 Release 绑定的 Conversation、顺序 Run、模型 Responses 适配器、失败终态、token 用量和 Run Console。迁移 022 继续交付 Flow Studio 首个纵向闭环：Input/Template/Output 有向无环图、变量映射、调试日志、Draft revision CAS、不可变 Release 以及 development/staging/production 环境发布；UI、API、PostgreSQL RLS/ACL 和一次性 PostgreSQL 16 集成验证绑定在同一架构门禁中。迁移 023～028 已继续交付 Knowledge Center、发布评测、Agent 知识/数据库绑定、Database Studio 以及角色设定的文本/结构化双模式和不可变发布快照；角色编辑器另提供同源 AI 生成/优化、按已绑定能力优化、最终指令透视图和无损全屏编辑。生产模型执行与 AI 角色助手仍须由独立 `BETTER_AGENT_MODEL_API_KEY` Secret 激活，禁止借用相邻项目凭据或用模拟响应冒充生产模型完成。
 

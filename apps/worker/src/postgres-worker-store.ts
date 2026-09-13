@@ -1,5 +1,6 @@
 import type { SubagentNode } from '@better-agent/agent-runtime';
 
+import { WorkerLeaseLostError } from './worker-runtime.js';
 import type {
   ClaimedSubagentJob,
   WorkerCompletion,
@@ -78,7 +79,7 @@ export class PostgresWorkerJobStore implements WorkerJobStore {
   }
 
   async recordInvocation(receipt: WorkerInvocationReceipt): Promise<void> {
-    await this.#pool.query(
+    await this.#mutate(
       'SELECT app.record_agent_product_async_subagent_invocation($1::uuid, $2::uuid, $3::bigint, $4::jsonb)',
       [
         receipt.childRunId,
@@ -90,14 +91,14 @@ export class PostgresWorkerJobStore implements WorkerJobStore {
   }
 
   async renew(lease: WorkerLeaseIdentity): Promise<void> {
-    await this.#pool.query(
+    await this.#mutate(
       'SELECT app.renew_agent_product_async_subagent_job($1::uuid, $2::uuid, $3::bigint, $4::integer)',
       [lease.childRunId, lease.leaseToken, lease.leaseGeneration, this.#leaseSeconds],
     );
   }
 
   async complete(completion: WorkerCompletion): Promise<void> {
-    await this.#pool.query(
+    await this.#mutate(
       'SELECT app.complete_agent_product_async_subagent_job($1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::bigint, $6::text, $7::text)',
       [
         completion.childRunId,
@@ -112,9 +113,28 @@ export class PostgresWorkerJobStore implements WorkerJobStore {
   }
 
   async fail(failure: WorkerFailure): Promise<void> {
-    await this.#pool.query(
+    await this.#mutate(
       'SELECT app.fail_agent_product_async_subagent_job($1::uuid, $2::uuid, $3::bigint, $4::text)',
       [failure.childRunId, failure.leaseToken, failure.leaseGeneration, failure.errorCode],
     );
+  }
+
+  async #mutate(sql: string, values: readonly unknown[]): Promise<void> {
+    try {
+      await this.#pool.query(sql, values);
+    } catch (error) {
+      // SQLSTATE alone also covers serialization failures and unrelated terminal conflicts.
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === '40001' &&
+        'message' in error &&
+        error.message === 'async SubAgent lease conflict'
+      ) {
+        throw new WorkerLeaseLostError(error);
+      }
+      throw error;
+    }
   }
 }
